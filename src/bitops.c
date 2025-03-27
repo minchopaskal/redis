@@ -28,7 +28,7 @@ long long redisPopcount(void *s, long count) {
                          * __builtin_cpu_supports() is not available. */
 #endif
     static const unsigned char bitsinbyte[256] = {0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4,1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7,1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7,2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7,3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7,4,5,5,6,5,6,6,7,5,6,6,7,6,7,7,8};
-    
+
     /* Count initial bytes not aligned to 64-bit when using the POPCNT instruction,
      * otherwise align to 32-bit. */
     int align = use_popcnt ? 7 : 3;
@@ -411,6 +411,16 @@ void printBits(unsigned char *p, unsigned long count) {
 #define BITOP_OR    1
 #define BITOP_XOR   2
 #define BITOP_NOT   3
+#define BITOP_DIFF  4 /* DIFF(X, A1, A2, ..., An) = X & !(A1 | A2 | ... | An) */
+#define BITOP_DIFF1 5 /* DIFF1(X, A1, A2, ..., An) = !X & (A1 | A2 | ... | An) */
+#define BITOP_ANDOR 6 /* ANDOR(X, A1, A2, ..., An) = X & (A1 | A2 | ... | An) *//* */
+
+/* ONE(A1, A2, ..., An) = X.
+ * If X[i] is the i-th bit of X then:
+ * X[i] == 1 iff there is m such that:
+ * Am[i] == 1 and Al[i] == 0 for all l != m.
+ * */
+#define BITOP_ONE   7
 
 #define BITFIELDOP_GET 0
 #define BITFIELDOP_SET 1
@@ -490,11 +500,11 @@ int getBitfieldTypeFromArgument(client *c, robj *o, int *sign, int *bits) {
  * so that the 'maxbit' bit can be addressed. The object is finally
  * returned. Otherwise if the key holds a wrong type NULL is returned and
  * an error is sent to the client.
- * 
+ *
  * (Must provide all the arguments to the function)
  */
-static robj *lookupStringForBitCommand(client *c, uint64_t maxbit, 
-                                       size_t *strOldSize, size_t *strGrowSize) 
+static robj *lookupStringForBitCommand(client *c, uint64_t maxbit,
+                                       size_t *strOldSize, size_t *strGrowSize)
 {
     size_t byte = maxbit >> 3;
     robj *o = lookupKeyWrite(c->db,c->argv[1]);
@@ -567,7 +577,7 @@ void setbitCommand(client *c) {
     }
 
     size_t strOldSize, strGrowSize;
-    if ((o = lookupStringForBitCommand(c,bitoffset,&strOldSize,&strGrowSize)) == NULL) 
+    if ((o = lookupStringForBitCommand(c,bitoffset,&strOldSize,&strGrowSize)) == NULL)
         return;
 
     /* Get current values */
@@ -588,11 +598,11 @@ void setbitCommand(client *c) {
         notifyKeyspaceEvent(NOTIFY_STRING,"setbit",c->argv[1],c->db->id);
         server.dirty++;
 
-        /* If this is not a new key (old size not 0) and size changed, then 
-         * update the keysizes histogram. Otherwise, the histogram already 
+        /* If this is not a new key (old size not 0) and size changed, then
+         * update the keysizes histogram. Otherwise, the histogram already
          * updated in lookupStringForBitCommand() by calling dbAdd(). */
         if ((strOldSize > 0) && (strGrowSize != 0))
-            updateKeysizesHist(c->db, getKeySlot(c->argv[1]->ptr), OBJ_STRING, 
+            updateKeysizesHist(c->db, getKeySlot(c->argv[1]->ptr), OBJ_STRING,
                                strOldSize, strOldSize + strGrowSize);
     }
 
@@ -641,15 +651,23 @@ void bitopCommand(client *c) {
     unsigned char *res = NULL; /* Resulting string. */
 
     /* Parse the operation name. */
-    if ((opname[0] == 'a' || opname[0] == 'A') && !strcasecmp(opname,"and"))
+    if ((opname[0] == 'a' || opname[0] == 'A') && !strcasecmp(opname,"and")) {
         op = BITOP_AND;
-    else if((opname[0] == 'o' || opname[0] == 'O') && !strcasecmp(opname,"or"))
+    } else if((opname[0] == 'o' || opname[0] == 'O') && !strcasecmp(opname,"or")) {
         op = BITOP_OR;
-    else if((opname[0] == 'x' || opname[0] == 'X') && !strcasecmp(opname,"xor"))
+    } else if((opname[0] == 'x' || opname[0] == 'X') && !strcasecmp(opname,"xor")) {
         op = BITOP_XOR;
-    else if((opname[0] == 'n' || opname[0] == 'N') && !strcasecmp(opname,"not"))
+    } else if((opname[0] == 'n' || opname[0] == 'N') && !strcasecmp(opname,"not")) {
         op = BITOP_NOT;
-    else {
+    } else if ((opname[0] == 'd' || opname[0] == 'D') && !strcasecmp(opname,"diff")) {
+        op = BITOP_DIFF;
+    } else if ((opname[0] == 'd' || opname[0] == 'D') && !strcasecmp(opname,"diff1")) {
+        op = BITOP_DIFF1;
+    } else if ((opname[0] == 'a' || opname[0] == 'A') && !strcasecmp(opname,"andor")) {
+        op = BITOP_ANDOR;
+    } else if ((opname[0] == 'o' || opname[0] == 'O') && !strcasecmp(opname,"one")) {
+        op = BITOP_ONE;
+    } else {
         addReplyErrorObject(c,shared.syntaxerr);
         return;
     }
@@ -657,6 +675,11 @@ void bitopCommand(client *c) {
     /* Sanity check: NOT accepts only a single key argument. */
     if (op == BITOP_NOT && c->argc != 4) {
         addReplyError(c,"BITOP NOT must be called with a single source key.");
+        return;
+    }
+
+    if ((op == BITOP_DIFF || op == BITOP_DIFF1 || op == BITOP_ANDOR) && c->argc < 5) {
+        addReplyError(c,"BITOP <DIFF|DIFF1|ANDOR> must be called with at least two source keys.");
         return;
     }
 
@@ -697,7 +720,7 @@ void bitopCommand(client *c) {
     /* Compute the bit operation, if at least one string is not empty. */
     if (maxlen) {
         res = (unsigned char*) sdsnewlen(NULL,maxlen);
-        unsigned char output, byte;
+        unsigned char output, byte, disjunction, multi_cnt;
         unsigned long i;
 
         /* Fast path: as far as we have data for all the input bitmaps we
@@ -710,26 +733,38 @@ void bitopCommand(client *c) {
         if (minlen >= sizeof(unsigned long)*4 && numkeys <= 16) {
             unsigned long *lp[16];
             unsigned long *lres = (unsigned long*) res;
+            unsigned long *first_key = (unsigned long*)src[0];
+            unsigned long *multi_cnt = NULL;
+
+            size_t step = sizeof(unsigned long)*4;
+            size_t processed = 0;
 
             memcpy(lp,src,sizeof(unsigned long*)*numkeys);
-            memcpy(res,src[0],minlen);
+
+            if (op != BITOP_DIFF && op != BITOP_DIFF1 && op != BITOP_ANDOR) {
+                memcpy(lres,src[0],minlen);
+            }
+
+            if (op == BITOP_ONE) {
+                multi_cnt = (unsigned long*) zmalloc(maxlen);
+            }
 
             /* Different branches per different operations for speed (sorry). */
             if (op == BITOP_AND) {
-                while(minlen >= sizeof(unsigned long)*4) {
+                while(minlen >= step) {
                     for (i = 1; i < numkeys; i++) {
                         lres[0] &= lp[i][0];
                         lres[1] &= lp[i][1];
                         lres[2] &= lp[i][2];
                         lres[3] &= lp[i][3];
-                        lp[i]+=4;
+                        lp[i] += 4;
                     }
-                    lres+=4;
-                    j += sizeof(unsigned long)*4;
-                    minlen -= sizeof(unsigned long)*4;
+                    lres += 4;
+                    j += step;
+                    minlen -= step;
                 }
             } else if (op == BITOP_OR) {
-                while(minlen >= sizeof(unsigned long)*4) {
+                while(minlen >= step) {
                     for (i = 1; i < numkeys; i++) {
                         lres[0] |= lp[i][0];
                         lres[1] |= lp[i][1];
@@ -737,12 +772,12 @@ void bitopCommand(client *c) {
                         lres[3] |= lp[i][3];
                         lp[i]+=4;
                     }
-                    lres+=4;
-                    j += sizeof(unsigned long)*4;
-                    minlen -= sizeof(unsigned long)*4;
+                    lres += 4;
+                    j += step;
+                    minlen -= step;
                 }
             } else if (op == BITOP_XOR) {
-                while(minlen >= sizeof(unsigned long)*4) {
+                while(minlen >= step) {
                     for (i = 1; i < numkeys; i++) {
                         lres[0] ^= lp[i][0];
                         lres[1] ^= lp[i][1];
@@ -750,19 +785,92 @@ void bitopCommand(client *c) {
                         lres[3] ^= lp[i][3];
                         lp[i]+=4;
                     }
-                    lres+=4;
-                    j += sizeof(unsigned long)*4;
-                    minlen -= sizeof(unsigned long)*4;
+                    lres += 4;
+                    j += step;
+                    minlen -= step;
                 }
             } else if (op == BITOP_NOT) {
-                while(minlen >= sizeof(unsigned long)*4) {
+                while(minlen >= step) {
                     lres[0] = ~lres[0];
                     lres[1] = ~lres[1];
                     lres[2] = ~lres[2];
                     lres[3] = ~lres[3];
-                    lres+=4;
-                    j += sizeof(unsigned long)*4;
-                    minlen -= sizeof(unsigned long)*4;
+                    lres += 4;
+                    j += step;
+                    minlen -= step;
+                }
+            } else if (op == BITOP_DIFF || op == BITOP_DIFF1 || op == BITOP_ANDOR) {
+                while(minlen >= step) {
+                    for (i = 1; i < numkeys; i++) {
+                        lres[0] |= lp[i][0];
+                        lres[1] |= lp[i][1];
+                        lres[2] |= lp[i][2];
+                        lres[3] |= lp[i][3];
+                        lp[i] += 4;
+                    }
+                    lres += 4;
+                    j += step;
+                    minlen -= step;
+                    processed += step;
+                }
+
+                lres = (unsigned long*) res;
+                switch (op) {
+                case BITOP_DIFF:
+                    for (i = 0; i < processed; i += step) {
+                        lres[0] = (first_key[0] & ~lres[0]);
+                        lres[1] = (first_key[1] & ~lres[1]);
+                        lres[2] = (first_key[2] & ~lres[2]);
+                        lres[3] = (first_key[3] & ~lres[3]);
+                        lres += 4;
+                        first_key += 4;
+                    }
+                    break;
+                case BITOP_DIFF1:
+                    for (i = 0; i < processed; i += step) {
+                        lres[0] = (~first_key[0] & lres[0]);
+                        lres[1] = (~first_key[1] & lres[1]);
+                        lres[2] = (~first_key[2] & lres[2]);
+                        lres[3] = (~first_key[3] & lres[3]);
+                        lres += 4;
+                        first_key += 4;
+                    }
+                    break;
+                case BITOP_ANDOR:
+                    for (i = 0; i < processed; i += step) {
+                        lres[0] = (first_key[0] & lres[0]);
+                        lres[1] = (first_key[1] & lres[1]);
+                        lres[2] = (first_key[2] & lres[2]);
+                        lres[3] = (first_key[3] & lres[3]);
+                        lres += 4;
+                        first_key += 4;
+                    }
+                    break;
+                }
+            } else if (op == BITOP_ONE) {
+                while(minlen >= step) {
+                    for (i = 1; i < numkeys; i++) {
+                        multi_cnt[0] |= (lres[0] & lp[i][0]);
+                        multi_cnt[1] |= (lres[1] & lp[i][1]);
+                        multi_cnt[2] |= (lres[2] & lp[i][2]);
+                        multi_cnt[3] |= (lres[3] & lp[i][3]);
+
+                        lres[0] ^= lp[i][0];
+                        lres[1] ^= lp[i][1];
+                        lres[2] ^= lp[i][2];
+                        lres[3] ^= lp[i][3];
+
+                        lres[0] &= ~multi_cnt[0];
+                        lres[1] &= ~multi_cnt[1];
+                        lres[2] &= ~multi_cnt[2];
+                        lres[3] &= ~multi_cnt[3];
+
+                        lp[i] += 4;
+                    }
+                    lres += 4;
+                    multi_cnt += 4;
+                    j += step;
+                    minlen -= step;
                 }
             }
         }
@@ -772,6 +880,9 @@ void bitopCommand(client *c) {
         for (; j < maxlen; j++) {
             output = (len[0] <= j) ? 0 : src[0][j];
             if (op == BITOP_NOT) output = ~output;
+            disjunction = 0;
+            multi_cnt = 0;
+
             for (i = 1; i < numkeys; i++) {
                 int skip = 0;
                 byte = (len[i] <= j) ? 0 : src[i][j];
@@ -784,14 +895,76 @@ void bitopCommand(client *c) {
                     output |= byte;
                     skip = (output == 0xff);
                     break;
-                case BITOP_XOR: output ^= byte; break;
+                case BITOP_XOR:
+                    output ^= byte;
+                    break;
+
+                /* For DIFF, DIFF1 and ANDOR we compute the disjunction of all key arguments except
+                 * the first one. After that we do their respective bit op on said first arg and that
+                 * disjunction. */
+                case BITOP_DIFF:
+                case BITOP_DIFF1:
+                case BITOP_ANDOR:
+                    disjunction |= byte;
+                    skip = (disjunction == 0xff);
+                    break;
+
+                /* BITOP ONE dest key_1 [key_2...]
+                 * If dest[i] is the i-th bit of dest then:
+                 * dest[i] == 1 if and only if there is j such that key_j[i] == 1 and key_n[i] == 0
+                 * for all n != j.
+                 * In order to compute that on each step we track which bits were seen in more than
+                 * one key and store that in a helper variable. Then the operation is just XOR but on
+                 * each step we nullify the bits that are set in the helper.
+                 * Logically, this operation is the same as nulifying the helper bits only once at
+                 * the end, but performance-wise it had no significant benefit and makes the code
+                 * only more unclear.
+                 *
+                 * F.e:
+                 * 0001 0111 # key1
+                 * 0010 0110 # key2
+                 *
+                 * 0011 0001 # intermediate1
+                 * 0000 0110 # helper
+                 * 0011 0001 # intermediate1 & ~helper
+                 *
+                 * 0100 1101 # key3
+                 *
+                 * 0111 1100 # intermediate2
+                 * 0000 0111 # helper
+                 * 0111 1000 # intermediate2 & ~helper
+                 * ---------
+                 * 0111 1000 # result
+                 * */
+                case BITOP_ONE:
+                    multi_cnt |= (output & byte);
+                    output ^= byte;
+                    output &= ~multi_cnt;
+                    skip = (multi_cnt == 0xff);
+                    break;
+                default:
+                    break;
                 }
 
                 if (skip) {
                     break;
                 }
             }
-            res[j] = output;
+
+            switch(op) {
+            case BITOP_DIFF:
+                res[j] = (output & ~disjunction);
+                break;
+            case BITOP_DIFF1:
+                res[j] = (~output & disjunction);
+                break;
+            case BITOP_ANDOR:
+                res[j] = (output & disjunction);
+                break;
+            default:
+                res[j] = output;
+                break;
+            }
         }
     }
     for (j = 0; j < numkeys; j++) {
@@ -1301,13 +1474,13 @@ void bitfieldGeneric(client *c, int flags) {
 
     if (changes) {
 
-        /* If this is not a new key (old size not 0) and size changed, then 
-         * update the keysizes histogram. Otherwise, the histogram already 
+        /* If this is not a new key (old size not 0) and size changed, then
+         * update the keysizes histogram. Otherwise, the histogram already
          * updated in lookupStringForBitCommand() by calling dbAdd(). */
         if ((strOldSize > 0) && (strGrowSize != 0))
             updateKeysizesHist(c->db, getKeySlot(c->argv[1]->ptr), OBJ_STRING,
                                strOldSize, strOldSize + strGrowSize);
-        
+
         signalModifiedKey(c,c->db,c->argv[1]);
         notifyKeyspaceEvent(NOTIFY_STRING,"setbit",c->argv[1],c->db->id);
         server.dirty += changes;
