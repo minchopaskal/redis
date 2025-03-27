@@ -411,6 +411,16 @@ void printBits(unsigned char *p, unsigned long count) {
 #define BITOP_OR    1
 #define BITOP_XOR   2
 #define BITOP_NOT   3
+#define BITOP_DIFF  4 /* DIFF(X, A1, A2, ..., An) = X & !(A1 | A2 | ... | An) */
+#define BITOP_DIFF1 5 /* DIFF1(X, A1, A2, ..., An) = !X & (A1 | A2 | ... | An) */
+#define BITOP_ANDOR 6 /* ANDOR(X, A1, A2, ..., An) = X & (A1 | A2 | ... | An) */
+
+/* ONE(A1, A2, ..., An) = X.
+ * If X[i] is the i-th bit of X then:
+ * X[i] == 1 if and only if there is m such that:
+ * Am[i] == 1 and Al[i] == 0 for all l != m.
+ * */
+#define BITOP_ONE   7
 
 #define BITFIELDOP_GET 0
 #define BITFIELDOP_SET 1
@@ -649,6 +659,14 @@ void bitopCommand(client *c) {
         op = BITOP_XOR;
     else if((opname[0] == 'n' || opname[0] == 'N') && !strcasecmp(opname,"not"))
         op = BITOP_NOT;
+    else if ((opname[0] == 'd' || opname[0] == 'D') && !strcasecmp(opname,"diff"))
+        op = BITOP_DIFF;
+    else if ((opname[0] == 'd' || opname[0] == 'D') && !strcasecmp(opname,"diff1"))
+        op = BITOP_DIFF1;
+    else if ((opname[0] == 'a' || opname[0] == 'A') && !strcasecmp(opname,"andor"))
+        op = BITOP_ANDOR;
+    else if ((opname[0] == 'o' || opname[0] == 'O') && !strcasecmp(opname,"one"))
+        op = BITOP_ONE;
     else {
         addReplyErrorObject(c,shared.syntaxerr);
         return;
@@ -657,6 +675,11 @@ void bitopCommand(client *c) {
     /* Sanity check: NOT accepts only a single key argument. */
     if (op == BITOP_NOT && c->argc != 4) {
         addReplyError(c,"BITOP NOT must be called with a single source key.");
+        return;
+    }
+
+    if ((op == BITOP_DIFF || op == BITOP_DIFF1 || op == BITOP_ANDOR) && c->argc < 5) {
+        addReplyError(c,"BITOP <DIFF|DIFF1|ANDOR> must be called with at least two source keys.");
         return;
     }
 
@@ -697,7 +720,7 @@ void bitopCommand(client *c) {
     /* Compute the bit operation, if at least one string is not empty. */
     if (maxlen) {
         res = (unsigned char*) sdsnewlen(NULL,maxlen);
-        unsigned char output, byte;
+        unsigned char output, byte, disjunction, common_bits;
         unsigned long i;
 
         /* Fast path: as far as we have data for all the input bitmaps we
@@ -710,26 +733,33 @@ void bitopCommand(client *c) {
         if (minlen >= sizeof(unsigned long)*4 && numkeys <= 16) {
             unsigned long *lp[16];
             unsigned long *lres = (unsigned long*) res;
+            unsigned long *first_key = (unsigned long*)src[0];
+            unsigned long lcommon_bits[4];
+
+            size_t step = sizeof(unsigned long)*4;
+            size_t processed = 0;
 
             memcpy(lp,src,sizeof(unsigned long*)*numkeys);
-            memcpy(res,src[0],minlen);
+
+            if (op != BITOP_DIFF && op != BITOP_DIFF1 && op != BITOP_ANDOR)
+                memcpy(lres,src[0],minlen);
 
             /* Different branches per different operations for speed (sorry). */
             if (op == BITOP_AND) {
-                while(minlen >= sizeof(unsigned long)*4) {
+                while(minlen >= step) {
                     for (i = 1; i < numkeys; i++) {
                         lres[0] &= lp[i][0];
                         lres[1] &= lp[i][1];
                         lres[2] &= lp[i][2];
                         lres[3] &= lp[i][3];
-                        lp[i]+=4;
+                        lp[i] += 4;
                     }
-                    lres+=4;
-                    j += sizeof(unsigned long)*4;
-                    minlen -= sizeof(unsigned long)*4;
+                    lres += 4;
+                    j += step;
+                    minlen -= step;
                 }
             } else if (op == BITOP_OR) {
-                while(minlen >= sizeof(unsigned long)*4) {
+                while(minlen >= step) {
                     for (i = 1; i < numkeys; i++) {
                         lres[0] |= lp[i][0];
                         lres[1] |= lp[i][1];
@@ -737,12 +767,12 @@ void bitopCommand(client *c) {
                         lres[3] |= lp[i][3];
                         lp[i]+=4;
                     }
-                    lres+=4;
-                    j += sizeof(unsigned long)*4;
-                    minlen -= sizeof(unsigned long)*4;
+                    lres += 4;
+                    j += step;
+                    minlen -= step;
                 }
             } else if (op == BITOP_XOR) {
-                while(minlen >= sizeof(unsigned long)*4) {
+                while(minlen >= step) {
                     for (i = 1; i < numkeys; i++) {
                         lres[0] ^= lp[i][0];
                         lres[1] ^= lp[i][1];
@@ -750,19 +780,93 @@ void bitopCommand(client *c) {
                         lres[3] ^= lp[i][3];
                         lp[i]+=4;
                     }
-                    lres+=4;
-                    j += sizeof(unsigned long)*4;
-                    minlen -= sizeof(unsigned long)*4;
+                    lres += 4;
+                    j += step;
+                    minlen -= step;
                 }
             } else if (op == BITOP_NOT) {
-                while(minlen >= sizeof(unsigned long)*4) {
+                while(minlen >= step) {
                     lres[0] = ~lres[0];
                     lres[1] = ~lres[1];
                     lres[2] = ~lres[2];
                     lres[3] = ~lres[3];
-                    lres+=4;
-                    j += sizeof(unsigned long)*4;
-                    minlen -= sizeof(unsigned long)*4;
+                    lres += 4;
+                    j += step;
+                    minlen -= step;
+                }
+            } else if (op == BITOP_DIFF || op == BITOP_DIFF1 || op == BITOP_ANDOR) {
+                while(minlen >= step) {
+                    for (i = 1; i < numkeys; i++) {
+                        lres[0] |= lp[i][0];
+                        lres[1] |= lp[i][1];
+                        lres[2] |= lp[i][2];
+                        lres[3] |= lp[i][3];
+                        lp[i] += 4;
+                    }
+                    lres += 4;
+                    j += step;
+                    minlen -= step;
+                    processed += step;
+                }
+
+                lres = (unsigned long*) res;
+                switch (op) {
+                case BITOP_DIFF:
+                    for (i = 0; i < processed; i += step) {
+                        lres[0] = (first_key[0] & ~lres[0]);
+                        lres[1] = (first_key[1] & ~lres[1]);
+                        lres[2] = (first_key[2] & ~lres[2]);
+                        lres[3] = (first_key[3] & ~lres[3]);
+                        lres += 4;
+                        first_key += 4;
+                    }
+                    break;
+                case BITOP_DIFF1:
+                    for (i = 0; i < processed; i += step) {
+                        lres[0] = (~first_key[0] & lres[0]);
+                        lres[1] = (~first_key[1] & lres[1]);
+                        lres[2] = (~first_key[2] & lres[2]);
+                        lres[3] = (~first_key[3] & lres[3]);
+                        lres += 4;
+                        first_key += 4;
+                    }
+                    break;
+                case BITOP_ANDOR:
+                    for (i = 0; i < processed; i += step) {
+                        lres[0] = (first_key[0] & lres[0]);
+                        lres[1] = (first_key[1] & lres[1]);
+                        lres[2] = (first_key[2] & lres[2]);
+                        lres[3] = (first_key[3] & lres[3]);
+                        lres += 4;
+                        first_key += 4;
+                    }
+                    break;
+                }
+            } else if (op == BITOP_ONE) {
+                while(minlen >= step) {
+                    memset(lcommon_bits, 0, sizeof(unsigned long)*4);
+
+                    for (i = 1; i < numkeys; i++) {
+                        lcommon_bits[0] |= (lres[0] & lp[i][0]);
+                        lcommon_bits[1] |= (lres[1] & lp[i][1]);
+                        lcommon_bits[2] |= (lres[2] & lp[i][2]);
+                        lcommon_bits[3] |= (lres[3] & lp[i][3]);
+
+                        lres[0] ^= lp[i][0];
+                        lres[1] ^= lp[i][1];
+                        lres[2] ^= lp[i][2];
+                        lres[3] ^= lp[i][3];
+
+                        lres[0] &= ~lcommon_bits[0];
+                        lres[1] &= ~lcommon_bits[1];
+                        lres[2] &= ~lcommon_bits[2];
+                        lres[3] &= ~lcommon_bits[3];
+
+                        lp[i] += 4;
+                    }
+                    lres += 4;
+                    j += step;
+                    minlen -= step;
                 }
             }
         }
@@ -772,6 +876,9 @@ void bitopCommand(client *c) {
         for (; j < maxlen; j++) {
             output = (len[0] <= j) ? 0 : src[0][j];
             if (op == BITOP_NOT) output = ~output;
+            disjunction = 0;
+            common_bits = 0;
+
             for (i = 1; i < numkeys; i++) {
                 int skip = 0;
                 byte = (len[i] <= j) ? 0 : src[i][j];
@@ -784,14 +891,76 @@ void bitopCommand(client *c) {
                     output |= byte;
                     skip = (output == 0xff);
                     break;
-                case BITOP_XOR: output ^= byte; break;
+                case BITOP_XOR:
+                    output ^= byte;
+                    break;
+
+                /* For DIFF, DIFF1 and ANDOR we compute the disjunction of all key arguments except
+                 * the first one. After that we do their respective bit op on said first arg and that
+                 * disjunction. */
+                case BITOP_DIFF:
+                case BITOP_DIFF1:
+                case BITOP_ANDOR:
+                    disjunction |= byte;
+                    skip = (disjunction == 0xff);
+                    break;
+
+                /* BITOP ONE dest key_1 [key_2...]
+                 * If dest[i] is the i-th bit of dest then:
+                 * dest[i] == 1 if and only if there is j such that key_j[i] == 1 and key_n[i] == 0
+                 * for all n != j.
+                 * In order to compute that on each step we track which bits were seen in more than
+                 * one key and store that in a helper variable. Then the operation is just XOR but on
+                 * each step we nullify the bits that are set in the helper.
+                 * Logically, this operation is the same as nullifying the helper bits only once at
+                 * the end, but performance-wise it had no significant benefit and makes the code
+                 * only more unclear.
+                 *
+                 * e.g:
+                 * 0001 0111 # key1
+                 * 0010 0110 # key2
+                 *
+                 * 0011 0001 # intermediate1
+                 * 0000 0110 # helper
+                 * 0011 0001 # intermediate1 & ~helper
+                 *
+                 * 0100 1101 # key3
+                 *
+                 * 0111 1100 # intermediate2
+                 * 0000 0111 # helper
+                 * 0111 1000 # intermediate2 & ~helper
+                 * ---------
+                 * 0111 1000 # result
+                 * */
+                case BITOP_ONE:
+                    common_bits |= (output & byte);
+                    output ^= byte;
+                    output &= ~common_bits;
+                    skip = (common_bits == 0xff);
+                    break;
+                default:
+                    break;
                 }
 
                 if (skip) {
                     break;
                 }
             }
-            res[j] = output;
+
+            switch(op) {
+            case BITOP_DIFF:
+                res[j] = (output & ~disjunction);
+                break;
+            case BITOP_DIFF1:
+                res[j] = (~output & disjunction);
+                break;
+            case BITOP_ANDOR:
+                res[j] = (output & disjunction);
+                break;
+            default:
+                res[j] = output;
+                break;
+            }
         }
     }
     for (j = 0; j < numkeys; j++) {
