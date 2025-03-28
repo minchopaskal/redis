@@ -651,23 +651,23 @@ void bitopCommand(client *c) {
     unsigned char *res = NULL; /* Resulting string. */
 
     /* Parse the operation name. */
-    if ((opname[0] == 'a' || opname[0] == 'A') && !strcasecmp(opname,"and")) {
+    if ((opname[0] == 'a' || opname[0] == 'A') && !strcasecmp(opname,"and"))
         op = BITOP_AND;
-    } else if((opname[0] == 'o' || opname[0] == 'O') && !strcasecmp(opname,"or")) {
+    else if((opname[0] == 'o' || opname[0] == 'O') && !strcasecmp(opname,"or"))
         op = BITOP_OR;
-    } else if((opname[0] == 'x' || opname[0] == 'X') && !strcasecmp(opname,"xor")) {
+    else if((opname[0] == 'x' || opname[0] == 'X') && !strcasecmp(opname,"xor"))
         op = BITOP_XOR;
-    } else if((opname[0] == 'n' || opname[0] == 'N') && !strcasecmp(opname,"not")) {
+    else if((opname[0] == 'n' || opname[0] == 'N') && !strcasecmp(opname,"not"))
         op = BITOP_NOT;
-    } else if ((opname[0] == 'd' || opname[0] == 'D') && !strcasecmp(opname,"diff")) {
+    else if ((opname[0] == 'd' || opname[0] == 'D') && !strcasecmp(opname,"diff"))
         op = BITOP_DIFF;
-    } else if ((opname[0] == 'd' || opname[0] == 'D') && !strcasecmp(opname,"diff1")) {
+    else if ((opname[0] == 'd' || opname[0] == 'D') && !strcasecmp(opname,"diff1"))
         op = BITOP_DIFF1;
-    } else if ((opname[0] == 'a' || opname[0] == 'A') && !strcasecmp(opname,"andor")) {
+    else if ((opname[0] == 'a' || opname[0] == 'A') && !strcasecmp(opname,"andor"))
         op = BITOP_ANDOR;
-    } else if ((opname[0] == 'o' || opname[0] == 'O') && !strcasecmp(opname,"one")) {
+    else if ((opname[0] == 'o' || opname[0] == 'O') && !strcasecmp(opname,"one"))
         op = BITOP_ONE;
-    } else {
+    else {
         addReplyErrorObject(c,shared.syntaxerr);
         return;
     }
