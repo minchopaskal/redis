@@ -8,7 +8,6 @@
  */
 
 #include "server.h"
-#include <string.h>
 
 /* -----------------------------------------------------------------------------
  * Helpers and low level bit functions.
@@ -29,7 +28,7 @@ long long redisPopcount(void *s, long count) {
                          * __builtin_cpu_supports() is not available. */
 #endif
     static const unsigned char bitsinbyte[256] = {0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4,1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7,1,2,2,3,2,3,3,4,2,3,3,4,3,4,4,5,2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7,2,3,3,4,3,4,4,5,3,4,4,5,4,5,5,6,3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7,3,4,4,5,4,5,5,6,4,5,5,6,5,6,6,7,4,5,5,6,5,6,6,7,5,6,6,7,6,7,7,8};
-
+    
     /* Count initial bytes not aligned to 64-bit when using the POPCNT instruction,
      * otherwise align to 32-bit. */
     int align = use_popcnt ? 7 : 3;
@@ -414,11 +413,11 @@ void printBits(unsigned char *p, unsigned long count) {
 #define BITOP_NOT   3
 #define BITOP_DIFF  4 /* DIFF(X, A1, A2, ..., An) = X & !(A1 | A2 | ... | An) */
 #define BITOP_DIFF1 5 /* DIFF1(X, A1, A2, ..., An) = !X & (A1 | A2 | ... | An) */
-#define BITOP_ANDOR 6 /* ANDOR(X, A1, A2, ..., An) = X & (A1 | A2 | ... | An) *//* */
+#define BITOP_ANDOR 6 /* ANDOR(X, A1, A2, ..., An) = X & (A1 | A2 | ... | An) */
 
 /* ONE(A1, A2, ..., An) = X.
  * If X[i] is the i-th bit of X then:
- * X[i] == 1 iff there is m such that:
+ * X[i] == 1 if and only if there is m such that:
  * Am[i] == 1 and Al[i] == 0 for all l != m.
  * */
 #define BITOP_ONE   7
@@ -501,11 +500,11 @@ int getBitfieldTypeFromArgument(client *c, robj *o, int *sign, int *bits) {
  * so that the 'maxbit' bit can be addressed. The object is finally
  * returned. Otherwise if the key holds a wrong type NULL is returned and
  * an error is sent to the client.
- *
+ * 
  * (Must provide all the arguments to the function)
  */
-static robj *lookupStringForBitCommand(client *c, uint64_t maxbit,
-                                       size_t *strOldSize, size_t *strGrowSize)
+static robj *lookupStringForBitCommand(client *c, uint64_t maxbit, 
+                                       size_t *strOldSize, size_t *strGrowSize) 
 {
     size_t byte = maxbit >> 3;
     robj *o = lookupKeyWrite(c->db,c->argv[1]);
@@ -578,7 +577,7 @@ void setbitCommand(client *c) {
     }
 
     size_t strOldSize, strGrowSize;
-    if ((o = lookupStringForBitCommand(c,bitoffset,&strOldSize,&strGrowSize)) == NULL)
+    if ((o = lookupStringForBitCommand(c,bitoffset,&strOldSize,&strGrowSize)) == NULL) 
         return;
 
     /* Get current values */
@@ -599,11 +598,11 @@ void setbitCommand(client *c) {
         notifyKeyspaceEvent(NOTIFY_STRING,"setbit",c->argv[1],c->db->id);
         server.dirty++;
 
-        /* If this is not a new key (old size not 0) and size changed, then
-         * update the keysizes histogram. Otherwise, the histogram already
+        /* If this is not a new key (old size not 0) and size changed, then 
+         * update the keysizes histogram. Otherwise, the histogram already 
          * updated in lookupStringForBitCommand() by calling dbAdd(). */
         if ((strOldSize > 0) && (strGrowSize != 0))
-            updateKeysizesHist(c->db, getKeySlot(c->argv[1]->ptr), OBJ_STRING,
+            updateKeysizesHist(c->db, getKeySlot(c->argv[1]->ptr), OBJ_STRING, 
                                strOldSize, strOldSize + strGrowSize);
     }
 
@@ -742,9 +741,8 @@ void bitopCommand(client *c) {
 
             memcpy(lp,src,sizeof(unsigned long*)*numkeys);
 
-            if (op != BITOP_DIFF && op != BITOP_DIFF1 && op != BITOP_ANDOR) {
+            if (op != BITOP_DIFF && op != BITOP_DIFF1 && op != BITOP_ANDOR)
                 memcpy(lres,src[0],minlen);
-            }
 
             /* Different branches per different operations for speed (sorry). */
             if (op == BITOP_AND) {
@@ -914,11 +912,11 @@ void bitopCommand(client *c) {
                  * In order to compute that on each step we track which bits were seen in more than
                  * one key and store that in a helper variable. Then the operation is just XOR but on
                  * each step we nullify the bits that are set in the helper.
-                 * Logically, this operation is the same as nulifying the helper bits only once at
+                 * Logically, this operation is the same as nullifying the helper bits only once at
                  * the end, but performance-wise it had no significant benefit and makes the code
                  * only more unclear.
                  *
-                 * F.e:
+                 * e.g:
                  * 0001 0111 # key1
                  * 0010 0110 # key2
                  *
@@ -1472,13 +1470,13 @@ void bitfieldGeneric(client *c, int flags) {
 
     if (changes) {
 
-        /* If this is not a new key (old size not 0) and size changed, then
-         * update the keysizes histogram. Otherwise, the histogram already
+        /* If this is not a new key (old size not 0) and size changed, then 
+         * update the keysizes histogram. Otherwise, the histogram already 
          * updated in lookupStringForBitCommand() by calling dbAdd(). */
         if ((strOldSize > 0) && (strGrowSize != 0))
             updateKeysizesHist(c->db, getKeySlot(c->argv[1]->ptr), OBJ_STRING,
                                strOldSize, strOldSize + strGrowSize);
-
+        
         signalModifiedKey(c,c->db,c->argv[1]);
         notifyKeyspaceEvent(NOTIFY_STRING,"setbit",c->argv[1],c->db->id);
         server.dirty += changes;
