@@ -280,7 +280,7 @@ start_server {tags {"bitops"}} {
                 set veckeys {}
                 set numvec [expr {[randomInt 10]+$min_args}]
                 for {set j 0} {$j < $numvec} {incr j} {
-                    set str [randstring 0 10]
+                    set str [randstring 0 1000]
                     lappend vec $str
                     lappend veckeys vector_$j{t}
                     r set vector_$j{t} $str

@@ -8,6 +8,7 @@
  */
 
 #include "server.h"
+#include <string.h>
 
 /* -----------------------------------------------------------------------------
  * Helpers and low level bit functions.
@@ -720,7 +721,7 @@ void bitopCommand(client *c) {
     /* Compute the bit operation, if at least one string is not empty. */
     if (maxlen) {
         res = (unsigned char*) sdsnewlen(NULL,maxlen);
-        unsigned char output, byte, disjunction, multi_cnt;
+        unsigned char output, byte, disjunction, common_bits;
         unsigned long i;
 
         /* Fast path: as far as we have data for all the input bitmaps we
@@ -734,7 +735,7 @@ void bitopCommand(client *c) {
             unsigned long *lp[16];
             unsigned long *lres = (unsigned long*) res;
             unsigned long *first_key = (unsigned long*)src[0];
-            unsigned long *multi_cnt = NULL;
+            unsigned long lcommon_bits[4];
 
             size_t step = sizeof(unsigned long)*4;
             size_t processed = 0;
@@ -743,10 +744,6 @@ void bitopCommand(client *c) {
 
             if (op != BITOP_DIFF && op != BITOP_DIFF1 && op != BITOP_ANDOR) {
                 memcpy(lres,src[0],minlen);
-            }
-
-            if (op == BITOP_ONE) {
-                multi_cnt = (unsigned long*) zmalloc(maxlen);
             }
 
             /* Different branches per different operations for speed (sorry). */
@@ -849,26 +846,27 @@ void bitopCommand(client *c) {
                 }
             } else if (op == BITOP_ONE) {
                 while(minlen >= step) {
+                    memset(lcommon_bits, 0, sizeof(unsigned long)*4);
+
                     for (i = 1; i < numkeys; i++) {
-                        multi_cnt[0] |= (lres[0] & lp[i][0]);
-                        multi_cnt[1] |= (lres[1] & lp[i][1]);
-                        multi_cnt[2] |= (lres[2] & lp[i][2]);
-                        multi_cnt[3] |= (lres[3] & lp[i][3]);
+                        lcommon_bits[0] |= (lres[0] & lp[i][0]);
+                        lcommon_bits[1] |= (lres[1] & lp[i][1]);
+                        lcommon_bits[2] |= (lres[2] & lp[i][2]);
+                        lcommon_bits[3] |= (lres[3] & lp[i][3]);
 
                         lres[0] ^= lp[i][0];
                         lres[1] ^= lp[i][1];
                         lres[2] ^= lp[i][2];
                         lres[3] ^= lp[i][3];
 
-                        lres[0] &= ~multi_cnt[0];
-                        lres[1] &= ~multi_cnt[1];
-                        lres[2] &= ~multi_cnt[2];
-                        lres[3] &= ~multi_cnt[3];
+                        lres[0] &= ~lcommon_bits[0];
+                        lres[1] &= ~lcommon_bits[1];
+                        lres[2] &= ~lcommon_bits[2];
+                        lres[3] &= ~lcommon_bits[3];
 
                         lp[i] += 4;
                     }
                     lres += 4;
-                    multi_cnt += 4;
                     j += step;
                     minlen -= step;
                 }
@@ -881,7 +879,7 @@ void bitopCommand(client *c) {
             output = (len[0] <= j) ? 0 : src[0][j];
             if (op == BITOP_NOT) output = ~output;
             disjunction = 0;
-            multi_cnt = 0;
+            common_bits = 0;
 
             for (i = 1; i < numkeys; i++) {
                 int skip = 0;
@@ -937,10 +935,10 @@ void bitopCommand(client *c) {
                  * 0111 1000 # result
                  * */
                 case BITOP_ONE:
-                    multi_cnt |= (output & byte);
+                    common_bits |= (output & byte);
                     output ^= byte;
-                    output &= ~multi_cnt;
-                    skip = (multi_cnt == 0xff);
+                    output &= ~common_bits;
+                    skip = (common_bits == 0xff);
                     break;
                 default:
                     break;
