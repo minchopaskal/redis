@@ -2729,6 +2729,7 @@ static size_t get_ready_to_signal_threads_tids(int sig_num, pid_t tids[TIDS_MAX_
     int current_thread_index = -1;
     long nread;
     char buff[PATH_MAX];
+    memset(buff, 0, PATH_MAX * sizeof(char));
 
     /* readdir() is not async-signal-safe (AS-safe).
     Hence, we read the file using SYS_getdents64, which is considered AS-sync*/

@@ -89,11 +89,20 @@
 #if defined(__has_attribute)
 # if __has_attribute(no_sanitize)
 #  define NO_SANITIZE(sanitizer) __attribute__((no_sanitize(sanitizer)))
+#  if defined(__has_feature)
+#   if __has_feature(memory_sanitizer)
+#    define NO_MSAN __attribute__((no_sanitize("memory")))
+#   endif
+#  endif
 # endif
 #endif
 
 #if !defined(NO_SANITIZE)
 # define NO_SANITIZE(sanitizer)
+#endif
+
+#if !defined(NO_MSAN)
+# define NO_MSAN
 #endif
 
 /*
@@ -105,6 +114,7 @@
  *
  */
 NO_SANITIZE("alignment")
+NO_MSAN
 size_t
 lzf_compress (const void *const in_data, size_t in_len,
 	      void *out_data, size_t out_len
