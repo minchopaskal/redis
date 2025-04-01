@@ -7,7 +7,24 @@
  * (RSALv2) or the Server Side Public License v1 (SSPLv1).
  */
 
+#include "config.h"
 #include "server.h"
+#include <stdint.h>
+#include <stdlib.h>
+#include <sys/cdefs.h>
+
+#ifdef HAVE_AVX2
+/* Define __MM_MALLOC_H to prevent importing the memory aligned
+ * allocation functions, which we don't use. */
+#define __MM_MALLOC_H
+#include <immintrin.h>
+#endif
+
+#ifdef HAVE_AVX2
+#define BITOP_USE_AVX2 (__builtin_cpu_supports("avx2"))
+#else
+#define BITOP_USE_AVX2 0
+#endif
 
 /* -----------------------------------------------------------------------------
  * Helpers and low level bit functions.
@@ -637,7 +654,142 @@ void getbitCommand(client *c) {
     addReply(c, bitval ? shared.cone : shared.czero);
 }
 
+#ifdef HAVE_AVX2
+/* Compute the given bitop operation using AVX2 intrinsics.
+ * Return how many bytes were successfully processed, as AVX2 operates on
+ * 256-bit registers so if `minlen` is not a multiple of 32 some of the bytes
+ * will be skipped. They will be taken care for in the unoptimized loop in the
+ * main bitopCommand function. */
+ATTRIBUTE_TARGET_AVX2
+unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res, 
+                              unsigned long op, unsigned long numkeys,
+                              unsigned long minlen) {
+    int i;
+    int processed = 0;
+
+    // TODO: this is debug code, remove.
+    char *bitop_disable_avx_env = getenv("BITOP_DISABLE_AVX");
+    if (bitop_disable_avx_env && strncmp(bitop_disable_avx_env, "1", 1)) {
+        return 0;
+    }
+
+    if (!(BITOP_USE_AVX2)) {
+        return 0;
+    }
+
+    const unsigned long step = sizeof(__m256i);
+    if (minlen < step) {
+        return 0;
+    }
+
+    memcpy(res, keys[0], minlen);
+
+    __m256i max256 = _mm256_set1_epi64x(-1);
+
+    switch (op) {
+    case BITOP_AND:
+        while (minlen >= step) {
+            #if defined(AVX2_USE_LOADU)
+            __m256i lres = _mm256_loadu_si256((__m256i*)res);
+            #else
+             __m256i lres = _mm256_lddqu_si256((__m256i*)res);
+            #endif
+            for (i = 1; i < numkeys; i++) {
+                #if defined(AVX2_USE_LOADU)
+                __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
+                #else
+                __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
+                #endif
+
+                lres = _mm256_and_si256(lres, lkey);
+                keys[i] += step;
+            }
+            _mm256_storeu_si256((__m256i*)res, lres);
+            res += step;
+            processed += step;
+            minlen -= step;
+        }
+        break;
+    case BITOP_OR:
+        while (minlen >= step) {
+            #if defined(AVX2_USE_LOADU)
+            __m256i lres = _mm256_loadu_si256((__m256i*)res);
+            #else
+             __m256i lres = _mm256_lddqu_si256((__m256i*)res);
+            #endif
+            for (i = 1; i < numkeys; i++) {
+                #if defined(AVX2_USE_LOADU)
+                __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
+                #else
+                __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
+                #endif
+
+                lres = _mm256_or_si256(lres, lkey);
+                keys[i] += step;
+            }
+            _mm256_storeu_si256((__m256i*)res, lres);
+            res += step;
+            processed += step;
+            minlen -= step;
+        }
+        break;
+    case BITOP_XOR:
+        while (minlen >= step) {
+            #if defined(AVX2_USE_LOADU)
+            __m256i lres = _mm256_loadu_si256((__m256i*)res);
+            #else
+             __m256i lres = _mm256_lddqu_si256((__m256i*)res);
+            #endif
+            for (i = 1; i < numkeys; i++) {
+                #if defined(AVX2_USE_LOADU)
+                __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
+                #else
+                __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
+                #endif
+
+                lres = _mm256_xor_si256(lres, lkey);
+                keys[i] += step;
+            }
+            _mm256_storeu_si256((__m256i*)res, lres);
+            res += step;
+            processed += step;
+            minlen -= step;
+        }
+        break;
+    case BITOP_NOT:
+        while (minlen >= step) {
+            #if defined(AVX2_USE_LOADU)
+            __m256i lres = _mm256_loadu_si256((__m256i*)res);
+            #else
+             __m256i lres = _mm256_lddqu_si256((__m256i*)res);
+            #endif
+            lres = _mm256_xor_si256(lres, max256);
+            _mm256_storeu_si256((__m256i*)res, lres);
+            res += step;
+            processed += step;
+            minlen -= step;
+        }
+        break;
+    case BITOP_DIFF:
+        break;
+    case BITOP_DIFF1:
+        break;
+    case BITOP_ANDOR:
+        break;
+    case BITOP_ONE:
+        break;
+    default:
+        break;
+    }
+
+    return processed;
+}
+#endif // HAVE_AVX2
+
 /* BITOP op_name target_key src_key1 src_key2 src_key3 ... src_keyN */
+#ifdef HAVE_AVX2
+ATTRIBUTE_TARGET_AVX2
+#endif
 REDIS_NO_SANITIZE("alignment")
 void bitopCommand(client *c) {
     char *opname = c->argv[1]->ptr;
@@ -723,20 +875,26 @@ void bitopCommand(client *c) {
         unsigned char output, byte, disjunction, common_bits;
         unsigned long i;
 
-        /* Fast path: as far as we have data for all the input bitmaps we
+        j = 0;
+
+#if defined(HAVE_AVX2)
+        j = bitopCommandAVX(src, res, op, numkeys, minlen);
+#endif
+
+#if !defined(USE_ALIGNED_ACCESS)
+        /* We don't have AVX2 but we still have fast path:
+         * as far as we have data for all the input bitmaps we
          * can take a fast path that performs much better than the
          * vanilla algorithm. On ARM we skip the fast path since it will
          * result in GCC compiling the code using multiple-words load/store
          * operations that are not supported even in ARM >= v6. */
-        j = 0;
-        #ifndef USE_ALIGNED_ACCESS
         if (minlen >= sizeof(unsigned long)*4 && numkeys <= 16) {
             unsigned long *lp[16];
             unsigned long *lres = (unsigned long*) res;
             unsigned long *first_key = (unsigned long*)src[0];
             unsigned long lcommon_bits[4];
 
-            size_t step = sizeof(unsigned long)*4;
+            const size_t step = sizeof(unsigned long)*4;
             size_t processed = 0;
 
             memcpy(lp,src,sizeof(unsigned long*)*numkeys);
@@ -870,7 +1028,7 @@ void bitopCommand(client *c) {
                 }
             }
         }
-        #endif
+#endif // !defined(USE_ALIGNED_ACCESS)
 
         /* j is set to the next byte to process by the previous loop. */
         for (; j < maxlen; j++) {
