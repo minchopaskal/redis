@@ -7,7 +7,6 @@
  * (RSALv2) or the Server Side Public License v1 (SSPLv1).
  */
 
-#include "config.h"
 #include "server.h"
 #include <stdint.h>
 #include <stdlib.h>
