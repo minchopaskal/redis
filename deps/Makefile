@@ -22,8 +22,10 @@ CLANG := $(findstring clang,$(shell sh -c '$(CC) --version | head -1'))
 # MSan doesn't know about it and will spit false positive error when that memory is then used.
 ifeq ($(SANITIZER),memory)
 ifeq (clang, $(CLANG))
-	DEPS_CFLAGS+=-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer
+	DEPS_CFLAGS+=-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-sanitize-recover=all -fno-omit-frame-pointer
 	DEPS_LDFLAGS+=-fsanitize=memory
+else
+    $(error "MemorySanitizer needs to be compiled and linked with clang. Use CC=clang CXX=clang LD=clang.")
 endif
 endif
 
