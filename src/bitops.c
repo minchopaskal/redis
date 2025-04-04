@@ -664,7 +664,7 @@ ATTRIBUTE_TARGET_AVX2
 unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res, 
                               unsigned long op, unsigned long numkeys,
                               unsigned long minlen) {
-    int i;
+    unsigned long i;
     int processed = 0;
 
     // TODO: this is debug code, remove.
