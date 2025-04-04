@@ -119,7 +119,7 @@ else
 ifeq ($(SANITIZER),memory)
 ifeq (clang, $(CLANG))
 	MALLOC=libc # MSan provides its own allocator so make sure not to use jemalloc as they clash
-	CFLAGS+=-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-sanitize-memory-param-retval -fno-omit-frame-pointer
+	CFLAGS+=-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer
 	LDFLAGS+=-fsanitize=memory
 endif
 else

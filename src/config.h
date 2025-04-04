@@ -159,7 +159,7 @@
 #endif
 
 #if defined(__has_attribute)
-#if __has_attribute(no_sanitize)
+#if __has_attribute(no_sanitize) && (sanitizer != memory || defined(__clang__))
 #define REDIS_NO_SANITIZE(sanitizer) __attribute__((no_sanitize(sanitizer)))
 #endif
 #endif

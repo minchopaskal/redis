@@ -1377,6 +1377,7 @@ static void* getAndSetMcontextEip(ucontext_t *uc, void *eip) {
 #undef NOT_SUPPORTED
 }
 
+REDIS_NO_SANITIZE("memory")
 REDIS_NO_SANITIZE("address")
 void logStackContent(void **sp) {
     if (server.hide_user_data_from_log) {
