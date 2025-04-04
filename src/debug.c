@@ -1377,8 +1377,8 @@ static void* getAndSetMcontextEip(ucontext_t *uc, void *eip) {
 #undef NOT_SUPPORTED
 }
 
-REDIS_NO_SANITIZE("memory")
-REDIS_NO_SANITIZE("address")
+REDIS_NO_SANITIZE(memory)
+REDIS_NO_SANITIZE(address)
 void logStackContent(void **sp) {
     if (server.hide_user_data_from_log) {
         serverLog(LL_NOTICE,"hide-user-data-from-log is on, skip logging stack content to avoid spilling PII.");

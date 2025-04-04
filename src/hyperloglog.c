@@ -391,7 +391,7 @@ static int simd_enabled = 1;
 /* Our hash function is MurmurHash2, 64 bit version.
  * It was modified for Redis in order to provide the same result in
  * big and little endian archs (endian neutral). */
-REDIS_NO_SANITIZE("alignment")
+REDIS_NO_SANITIZE(alignment)
 uint64_t MurmurHash64A (const void * key, int len, unsigned int seed) {
     const uint64_t m = 0xc6a4a7935bd1e995;
     const int r = 47;

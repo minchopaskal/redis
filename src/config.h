@@ -158,14 +158,32 @@
 #define unlikely(x) (x)
 #endif
 
+/* BEGIN DO NOT use directly! */
 #if defined(__has_attribute)
-#if __has_attribute(no_sanitize) && (sanitizer != memory || defined(__clang__))
-#define REDIS_NO_SANITIZE(sanitizer) __attribute__((no_sanitize(sanitizer)))
+#if __has_attribute(no_sanitize)
+#define __REDIS_NO_SANITIZE(sanitizer) __attribute__((no_sanitize( #sanitizer )))
 #endif
 #endif
-#if !defined(REDIS_NO_SANITIZE)
-#define REDIS_NO_SANITIZE(sanitizer)
+
+#if !defined(__REDIS_NO_SANITIZE)
+#define __REDIS_NO_SANITIZE(sanitizer)
 #endif
+
+#define _NO_SANITIZE(sanitizer) _NO_SANITIZE_##sanitizer
+#define _NO_SANITIZE_address __REDIS_NO_SANITIZE(address)
+#define _NO_SANITIZE_alignment __REDIS_NO_SANITIZE(alignment)
+#define _NO_SANITIZE_bounds __REDIS_NO_SANITIZE(bounds)
+#define _NO_SANITIZE_thread __REDIS_NO_SANITIZE(thread)
+#define _NO_SANITIZE_undefined __REDIS_NO_SANITIZE(undefined)
+
+#if defined(__clang__)
+#define _NO_SANITIZE_memory __REDIS_NO_SANITIZE(memory)
+#else 
+#define _NO_SANITIZE_memory
+#endif
+/* END DO NOT use directly! */
+
+#define REDIS_NO_SANITIZE(sanitizer) _NO_SANITIZE(sanitizer)
 
 /* Define rdb_fsync_range to sync_file_range() on Linux, otherwise we use
  * the plain fsync() call. */

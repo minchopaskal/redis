@@ -3784,7 +3784,7 @@ void clusterBroadcastPong(int target) {
  * As all the struct is used as a buffer, when more than 8 bytes are copied into
  * the 'bulk_data', sanitizer generates an out-of-bounds error which is a false
  * positive in this context. */
-REDIS_NO_SANITIZE("bounds")
+REDIS_NO_SANITIZE(bounds)
 clusterMsgSendBlock *clusterCreatePublishMsgBlock(robj *channel, robj *message, uint16_t type) {
 
     uint32_t channel_len, message_len;

@@ -53,20 +53,6 @@
 #define CLIENT_GET_EVENTLOOP(c) \
     (c->thread_id >= 0 ? config.threads[c->thread_id]->el : config.el)
 
-#if defined(__has_attribute)
-# if __has_attribute(no_sanitize)
-#  if defined(__has_feature)
-#   if __has_feature(memory_sanitizer)
-#    define NO_MSAN __attribute__((no_sanitize("memory")))
-#   endif
-#  endif
-# endif
-#endif
-
-#if !defined(NO_MSAN)
-# define NO_MSAN
-#endif
-
 struct benchmarkThread;
 struct clusterNode;
 struct redisConfig;
@@ -451,7 +437,7 @@ static void clientDone(client c) {
     }
 }
 
-NO_MSAN
+REDIS_NO_SANITIZE(memory)
 static void readHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     client c = privdata;
     void *reply = NULL;
