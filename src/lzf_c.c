@@ -87,13 +87,19 @@
 #define expect_true(expr)  expect ((expr) != 0, 1)
 
 #if defined(__has_attribute)
-# if __has_attribute(no_sanitize) && (sanitizer != memory || defined(__clang__))
+# if __has_attribute(no_sanitize)
 #  define NO_SANITIZE(sanitizer) __attribute__((no_sanitize(sanitizer)))
 # endif
 #endif
 
 #if !defined(NO_SANITIZE)
 # define NO_SANITIZE(sanitizer)
+#endif
+
+#if defined(__clang__)
+#define NO_SANITIZE_MSAN(sanitizer) NO_SANITIZE(sanitizer)
+#else
+#define NO_SANITIZE_MSAN(sanitizer)
 #endif
 
 /*
@@ -105,7 +111,7 @@
  *
  */
 NO_SANITIZE("alignment")
-NO_SANITIZE("memory")
+NO_SANITIZE_MSAN("memory")
 size_t
 lzf_compress (const void *const in_data, size_t in_len,
 	      void *out_data, size_t out_len

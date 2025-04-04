@@ -159,12 +159,18 @@
 #endif
 
 #if defined(__has_attribute)
-#if __has_attribute(no_sanitize) && (sanitizer != memory || defined(__clang__))
+#if __has_attribute(no_sanitize)
 #define REDIS_NO_SANITIZE(sanitizer) __attribute__((no_sanitize(sanitizer)))
 #endif
 #endif
 #if !defined(REDIS_NO_SANITIZE)
 #define REDIS_NO_SANITIZE(sanitizer)
+#endif
+
+#if defined(__clang__)
+#define REDIS_NO_SANITIZE_MSAN(sanitizer) REDIS_NO_SANITIZE(sanitizer)
+#else
+#define REDIS_NO_SANITIZE_MSAN(sanitizer)
 #endif
 
 /* Define rdb_fsync_range to sync_file_range() on Linux, otherwise we use
