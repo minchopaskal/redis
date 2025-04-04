@@ -787,9 +787,6 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
 #endif // HAVE_AVX2
 
 /* BITOP op_name target_key src_key1 src_key2 src_key3 ... src_keyN */
-#ifdef HAVE_AVX2
-ATTRIBUTE_TARGET_AVX2
-#endif
 REDIS_NO_SANITIZE("alignment")
 void bitopCommand(client *c) {
     char *opname = c->argv[1]->ptr;
