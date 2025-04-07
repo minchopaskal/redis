@@ -25,7 +25,7 @@ ifeq (clang, $(CLANG))
 	DEPS_CFLAGS+=-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-sanitize-recover=all -fno-omit-frame-pointer
 	DEPS_LDFLAGS+=-fsanitize=memory
 else
-    $(error "MemorySanitizer needs to be compiled and linked with clang. Use CC=clang CXX=clang LD=clang.")
+    $(error "MemorySanitizer needs to be compiled and linked with clang. Please use CC=clang")
 endif
 endif
 

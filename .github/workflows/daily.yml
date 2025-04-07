@@ -614,8 +614,6 @@ jobs:
     timeout-minutes: 14400
     env:
       CC: clang # MSan work only with clang
-      CXX: clang # needed for compiling fast_float dep
-      LD: clang
     steps:
       - name: prep
         if: github.event_name == 'workflow_dispatch'

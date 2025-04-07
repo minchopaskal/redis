@@ -15,11 +15,12 @@ CLANG := $(findstring clang,$(shell sh -c '$(CC) --version | head -1'))
 
 ifeq ($(SANITIZER),memory)
 ifeq (clang, $(CLANG))
+	LD=clang
 	MALLOC=libc
 	CFLAGS+=-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-sanitize-recover=all -fno-omit-frame-pointer
 	LDFLAGS+=-fsanitize=memory
 else
-    $(error "MemorySanitizer needs to be compiled and linked with clang. Use CC=clang LD=clang.")
+    $(error "MemorySanitizer needs to be compiled and linked with clang. Please use CC=clang")
 endif
 endif
 
