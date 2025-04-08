@@ -679,6 +679,7 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
         return 0;
     }
 
+    if (minlen < step) {
         return 0;
     }
 
