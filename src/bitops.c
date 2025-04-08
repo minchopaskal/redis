@@ -666,7 +666,7 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
     const unsigned long step = sizeof(__m256i);
 
     unsigned long i;
-    int processed = 0;
+    unsigned long processed = 0;
     unsigned char *res_start = res;
     unsigned char *fst_key = keys[0];
     // TODO: this is debug code, remove.
