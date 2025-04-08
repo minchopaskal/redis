@@ -663,12 +663,15 @@ ATTRIBUTE_TARGET_AVX2
 unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res, 
                               unsigned long op, unsigned long numkeys,
                               unsigned long minlen) {
+    const unsigned long step = sizeof(__m256i);
+
     unsigned long i;
     int processed = 0;
-
+    unsigned char *res_start = res;
+    unsigned char *fst_key = keys[0];
     // TODO: this is debug code, remove.
     char *bitop_disable_avx_env = getenv("BITOP_DISABLE_AVX");
-    if (bitop_disable_avx_env && strncmp(bitop_disable_avx_env, "1", 1)) {
+    if (bitop_disable_avx_env && !strncmp(bitop_disable_avx_env, "1", 1)) {
         return 0;
     }
 
@@ -676,12 +679,12 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
         return 0;
     }
 
-    const unsigned long step = sizeof(__m256i);
-    if (minlen < step) {
         return 0;
     }
 
-    memcpy(res, keys[0], minlen);
+    if (op != BITOP_DIFF && op != BITOP_DIFF1 && op != BITOP_ANDOR) {
+        memcpy(res, fst_key, minlen);
+    }
 
     __m256i max256 = _mm256_set1_epi64x(-1);
 
@@ -697,11 +700,10 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
                 #if defined(AVX2_USE_LOADU)
                 __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
                 #else
-                __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
+                __m256i lkey = _mm256_lddqu_si256((__m256i*)keys[i]+processed);
                 #endif
 
                 lres = _mm256_and_si256(lres, lkey);
-                keys[i] += step;
             }
             _mm256_storeu_si256((__m256i*)res, lres);
             res += step;
@@ -709,6 +711,9 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
             minlen -= step;
         }
         break;
+    case BITOP_DIFF:
+    case BITOP_DIFF1:
+    case BITOP_ANDOR:
     case BITOP_OR:
         while (minlen >= step) {
             #if defined(AVX2_USE_LOADU)
@@ -720,11 +725,10 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
                 #if defined(AVX2_USE_LOADU)
                 __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
                 #else
-                __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
+                __m256i lkey = _mm256_lddqu_si256((__m256i*)keys[i]+processed);
                 #endif
 
                 lres = _mm256_or_si256(lres, lkey);
-                keys[i] += step;
             }
             _mm256_storeu_si256((__m256i*)res, lres);
             res += step;
@@ -743,11 +747,10 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
                 #if defined(AVX2_USE_LOADU)
                 __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
                 #else
-                __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
+                __m256i lkey = _mm256_lddqu_si256((__m256i*)keys[i]+processed);
                 #endif
 
                 lres = _mm256_xor_si256(lres, lkey);
-                keys[i] += step;
             }
             _mm256_storeu_si256((__m256i*)res, lres);
             res += step;
@@ -769,13 +772,58 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
             minlen -= step;
         }
         break;
+    case BITOP_ONE:
+        break;
+    default:
+        break;
+    }
+
+    res = res_start;
+    switch (op) {
     case BITOP_DIFF:
+        for (i = 0; i < processed; i += step) {
+            #if defined(AVX2_USE_LOADU)
+            __m256i lres = _mm256_loadu_si256((__m256i*)res);
+            #else
+            __m256i lres = _mm256_lddqu_si256((__m256i*)res);
+            __m256i fkey = _mm256_lddqu_si256((__m256i*)fst_key);
+            #endif
+            lres = _mm256_andnot_si256(lres, fkey);
+            _mm256_storeu_si256((__m256i*)res, lres);
+
+            res += step;
+            fst_key += step;
+        }
         break;
     case BITOP_DIFF1:
+        for (i = 0; i < processed; i += step) {
+            #if defined(AVX2_USE_LOADU)
+            __m256i lres = _mm256_loadu_si256((__m256i*)res);
+            #else
+            __m256i lres = _mm256_lddqu_si256((__m256i*)res);
+            __m256i fkey = _mm256_lddqu_si256((__m256i*)fst_key);
+            #endif
+            lres = _mm256_andnot_si256(fkey, lres);
+            _mm256_storeu_si256((__m256i*)res, lres);
+
+            res += step;
+            fst_key += step;
+        }
         break;
     case BITOP_ANDOR:
-        break;
-    case BITOP_ONE:
+        for (i = 0; i < processed; i += step) {
+            #if defined(AVX2_USE_LOADU)
+            __m256i lres = _mm256_loadu_si256((__m256i*)res);
+            #else
+            __m256i lres = _mm256_lddqu_si256((__m256i*)res);
+            __m256i fkey = _mm256_lddqu_si256((__m256i*)fst_key);
+            #endif
+            lres = _mm256_and_si256(fkey, lres);
+            _mm256_storeu_si256((__m256i*)res, lres);
+
+            res += step;
+            fst_key += step;
+        }
         break;
     default:
         break;
@@ -875,6 +923,7 @@ void bitopCommand(client *c) {
 
 #if defined(HAVE_AVX2)
         j = bitopCommandAVX(src, res, op, numkeys, minlen);
+        minlen -= j;
 #endif
 
 #if !defined(USE_ALIGNED_ACCESS)
