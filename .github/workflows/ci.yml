@@ -49,6 +49,9 @@ jobs:
         apt-get update && apt-get install -y build-essential
         echo $(gcc --version)
         make REDIS_CFLAGS='-Werror'
+        nm src/bitops.o
+        nm src/hyperloglog.o
+        nm -u src/redis-server
 
   build-macos-latest:
     runs-on: macos-latest
