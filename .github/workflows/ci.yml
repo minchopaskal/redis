@@ -47,6 +47,7 @@ jobs:
     - name: make
       run: |
         apt-get update && apt-get install -y build-essential
+        echo $(gcc --version)
         make REDIS_CFLAGS='-Werror'
 
   build-macos-latest:
@@ -80,6 +81,7 @@ jobs:
     - name: make
       run: |
         dnf -y install which gcc gcc-c++ make
+        echo $(gcc --version)
         make REDIS_CFLAGS='-Werror'
 
   build-old-chain-jemalloc:
@@ -99,5 +101,4 @@ jobs:
         apt-get install -y make gcc-4.8 g++-4.8
         update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.8 100
         update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-4.8 100
-        echo $(gcc --version)
         make CC=gcc REDIS_CFLAGS='-Werror'
