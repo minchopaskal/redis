@@ -666,7 +666,7 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
     const unsigned long step = sizeof(__m256i);
 
     unsigned long i;
-    unsigned int processed = 0;
+    int processed = 0;
     unsigned char *res_start = res;
     unsigned char *fst_key = keys[0];
     // TODO: this is debug code, remove.
@@ -683,27 +683,21 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
         return 0;
     }
 
+
     if (op != BITOP_DIFF && op != BITOP_DIFF1 && op != BITOP_ANDOR) {
-        memcpy(res, fst_key, minlen);
+        memcpy(res, keys[0], minlen);
     }
 
-    __m256i max256 = _mm256_set1_epi64x(-1);
+    const __m256i max256 = _mm256_set1_epi64x(-1);
+    const __m256i zero256 = _mm256_set1_epi64x(0);
 
     switch (op) {
     case BITOP_AND:
         while (minlen >= step) {
-            #if defined(AVX2_USE_LOADU)
-            __m256i lres = _mm256_loadu_si256((__m256i*)res);
-            #else
-             __m256i lres = _mm256_lddqu_si256((__m256i*)res);
-            #endif
-            for (i = 1; i < numkeys; i++) {
-                #if defined(AVX2_USE_LOADU)
-                __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
-                #else
-                __m256i lkey = _mm256_lddqu_si256((__m256i*)(keys[i]+processed));
-                #endif
+            __m256i lres = _mm256_lddqu_si256((__m256i*)res);
 
+            for (i = 1; i < numkeys; i++) {
+                __m256i lkey = _mm256_lddqu_si256((__m256i*)(keys[i]+processed));
                 lres = _mm256_and_si256(lres, lkey);
             }
             _mm256_storeu_si256((__m256i*)res, lres);
@@ -717,18 +711,10 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
     case BITOP_ANDOR:
     case BITOP_OR:
         while (minlen >= step) {
-            #if defined(AVX2_USE_LOADU)
-            __m256i lres = _mm256_loadu_si256((__m256i*)res);
-            #else
-             __m256i lres = _mm256_lddqu_si256((__m256i*)res);
-            #endif
-            for (i = 1; i < numkeys; i++) {
-                #if defined(AVX2_USE_LOADU)
-                __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
-                #else
-                __m256i lkey = _mm256_lddqu_si256((__m256i*)(keys[i]+processed));
-                #endif
+            __m256i lres = _mm256_lddqu_si256((__m256i*)res);
 
+            for (i = 1; i < numkeys; i++) {
+                __m256i lkey = _mm256_lddqu_si256((__m256i*)(keys[i]+processed));
                 lres = _mm256_or_si256(lres, lkey);
             }
             _mm256_storeu_si256((__m256i*)res, lres);
@@ -739,18 +725,10 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
         break;
     case BITOP_XOR:
         while (minlen >= step) {
-            #if defined(AVX2_USE_LOADU)
-            __m256i lres = _mm256_loadu_si256((__m256i*)res);
-            #else
-             __m256i lres = _mm256_lddqu_si256((__m256i*)res);
-            #endif
-            for (i = 1; i < numkeys; i++) {
-                #if defined(AVX2_USE_LOADU)
-                __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
-                #else
-                __m256i lkey = _mm256_lddqu_si256((__m256i*)(keys[i]+processed));
-                #endif
+            __m256i lres = _mm256_lddqu_si256((__m256i*)res);
 
+            for (i = 1; i < numkeys; i++) {
+                __m256i lkey = _mm256_lddqu_si256((__m256i*)(keys[i]+processed));
                 lres = _mm256_xor_si256(lres, lkey);
             }
             _mm256_storeu_si256((__m256i*)res, lres);
@@ -761,11 +739,7 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
         break;
     case BITOP_NOT:
         while (minlen >= step) {
-            #if defined(AVX2_USE_LOADU)
-            __m256i lres = _mm256_loadu_si256((__m256i*)res);
-            #else
              __m256i lres = _mm256_lddqu_si256((__m256i*)res);
-            #endif
             lres = _mm256_xor_si256(lres, max256);
             _mm256_storeu_si256((__m256i*)res, lres);
             res += step;
@@ -774,6 +748,23 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
         }
         break;
     case BITOP_ONE:
+	while (minlen >= step) {
+            __m256i lres = _mm256_lddqu_si256((__m256i*)res);
+            __m256i common_bits = zero256;
+
+            for (i = 1; i < numkeys; i++) {
+                __m256i lkey = _mm256_lddqu_si256((__m256i*)(keys[i]+processed));
+                __m256i common = _mm256_and_si256(lres, lkey);
+                common_bits = _mm256_or_si256(common_bits, common);
+
+                lres = _mm256_xor_si256(lres, lkey);
+            }
+            lres = _mm256_andnot_si256(common_bits, lres);
+            _mm256_storeu_si256((__m256i*)res, lres);
+            res += step;
+            processed += step;
+            minlen -= step;
+        }
         break;
     default:
         break;
@@ -783,12 +774,9 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
     switch (op) {
     case BITOP_DIFF:
         for (i = 0; i < processed; i += step) {
-            #if defined(AVX2_USE_LOADU)
-            __m256i lres = _mm256_loadu_si256((__m256i*)res);
-            #else
             __m256i lres = _mm256_lddqu_si256((__m256i*)res);
             __m256i fkey = _mm256_lddqu_si256((__m256i*)fst_key);
-            #endif
+
             lres = _mm256_andnot_si256(lres, fkey);
             _mm256_storeu_si256((__m256i*)res, lres);
 
@@ -798,12 +786,9 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
         break;
     case BITOP_DIFF1:
         for (i = 0; i < processed; i += step) {
-            #if defined(AVX2_USE_LOADU)
-            __m256i lres = _mm256_loadu_si256((__m256i*)res);
-            #else
             __m256i lres = _mm256_lddqu_si256((__m256i*)res);
             __m256i fkey = _mm256_lddqu_si256((__m256i*)fst_key);
-            #endif
+
             lres = _mm256_andnot_si256(fkey, lres);
             _mm256_storeu_si256((__m256i*)res, lres);
 
@@ -813,12 +798,9 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
         break;
     case BITOP_ANDOR:
         for (i = 0; i < processed; i += step) {
-            #if defined(AVX2_USE_LOADU)
-            __m256i lres = _mm256_loadu_si256((__m256i*)res);
-            #else
             __m256i lres = _mm256_lddqu_si256((__m256i*)res);
             __m256i fkey = _mm256_lddqu_si256((__m256i*)fst_key);
-            #endif
+
             lres = _mm256_and_si256(fkey, lres);
             _mm256_storeu_si256((__m256i*)res, lres);
 
@@ -934,16 +916,15 @@ void bitopCommand(client *c) {
          * vanilla algorithm. On ARM we skip the fast path since it will
          * result in GCC compiling the code using multiple-words load/store
          * operations that are not supported even in ARM >= v6. */
-        if (minlen >= sizeof(unsigned long)*4 && numkeys <= 16) {
-            unsigned long *lp[16];
+        if (minlen >= sizeof(unsigned long)*4) {
+            unsigned long **lp = (unsigned long**)src;
             unsigned long *lres = (unsigned long*) res;
             unsigned long *first_key = (unsigned long*)src[0];
             unsigned long lcommon_bits[4];
 
             const size_t step = sizeof(unsigned long)*4;
             size_t processed = 0;
-
-            memcpy(lp,src,sizeof(unsigned long*)*numkeys);
+            size_t k = 0;
 
             if (op != BITOP_DIFF && op != BITOP_DIFF1 && op != BITOP_ANDOR)
                 memcpy(lres,src[0],minlen);
@@ -952,12 +933,12 @@ void bitopCommand(client *c) {
             if (op == BITOP_AND) {
                 while(minlen >= step) {
                     for (i = 1; i < numkeys; i++) {
-                        lres[0] &= lp[i][0];
-                        lres[1] &= lp[i][1];
-                        lres[2] &= lp[i][2];
-                        lres[3] &= lp[i][3];
-                        lp[i] += 4;
+                        lres[0] &= lp[i][k+0];
+                        lres[1] &= lp[i][k+1];
+                        lres[2] &= lp[i][k+2];
+                        lres[3] &= lp[i][k+3];
                     }
+                    k += 4;
                     lres += 4;
                     j += step;
                     minlen -= step;
@@ -965,12 +946,12 @@ void bitopCommand(client *c) {
             } else if (op == BITOP_OR) {
                 while(minlen >= step) {
                     for (i = 1; i < numkeys; i++) {
-                        lres[0] |= lp[i][0];
-                        lres[1] |= lp[i][1];
-                        lres[2] |= lp[i][2];
-                        lres[3] |= lp[i][3];
-                        lp[i]+=4;
+                        lres[0] |= lp[i][k+0];
+                        lres[1] |= lp[i][k+1];
+                        lres[2] |= lp[i][k+2];
+                        lres[3] |= lp[i][k+3];
                     }
+                    k += 4;
                     lres += 4;
                     j += step;
                     minlen -= step;
@@ -978,12 +959,12 @@ void bitopCommand(client *c) {
             } else if (op == BITOP_XOR) {
                 while(minlen >= step) {
                     for (i = 1; i < numkeys; i++) {
-                        lres[0] ^= lp[i][0];
-                        lres[1] ^= lp[i][1];
-                        lres[2] ^= lp[i][2];
-                        lres[3] ^= lp[i][3];
-                        lp[i]+=4;
+                        lres[0] ^= lp[i][k+0];
+                        lres[1] ^= lp[i][k+1];
+                        lres[2] ^= lp[i][k+2];
+                        lres[3] ^= lp[i][k+3];
                     }
+                    k += 4;
                     lres += 4;
                     j += step;
                     minlen -= step;
@@ -1001,12 +982,12 @@ void bitopCommand(client *c) {
             } else if (op == BITOP_DIFF || op == BITOP_DIFF1 || op == BITOP_ANDOR) {
                 while(minlen >= step) {
                     for (i = 1; i < numkeys; i++) {
-                        lres[0] |= lp[i][0];
-                        lres[1] |= lp[i][1];
-                        lres[2] |= lp[i][2];
-                        lres[3] |= lp[i][3];
-                        lp[i] += 4;
+                        lres[0] |= lp[i][k+0];
+                        lres[1] |= lp[i][k+1];
+                        lres[2] |= lp[i][k+2];
+                        lres[3] |= lp[i][k+3];
                     }
+                    k += 4;
                     lres += 4;
                     j += step;
                     minlen -= step;
@@ -1051,23 +1032,23 @@ void bitopCommand(client *c) {
                     memset(lcommon_bits, 0, sizeof(unsigned long)*4);
 
                     for (i = 1; i < numkeys; i++) {
-                        lcommon_bits[0] |= (lres[0] & lp[i][0]);
-                        lcommon_bits[1] |= (lres[1] & lp[i][1]);
-                        lcommon_bits[2] |= (lres[2] & lp[i][2]);
-                        lcommon_bits[3] |= (lres[3] & lp[i][3]);
+                        lcommon_bits[0] |= (lres[0] & lp[i][k+0]);
+                        lcommon_bits[1] |= (lres[1] & lp[i][k+1]);
+                        lcommon_bits[2] |= (lres[2] & lp[i][k+2]);
+                        lcommon_bits[3] |= (lres[3] & lp[i][k+3]);
 
-                        lres[0] ^= lp[i][0];
-                        lres[1] ^= lp[i][1];
-                        lres[2] ^= lp[i][2];
-                        lres[3] ^= lp[i][3];
-
-                        lres[0] &= ~lcommon_bits[0];
-                        lres[1] &= ~lcommon_bits[1];
-                        lres[2] &= ~lcommon_bits[2];
-                        lres[3] &= ~lcommon_bits[3];
-
-                        lp[i] += 4;
+                        lres[0] ^= lp[i][k+0];
+                        lres[1] ^= lp[i][k+1];
+                        lres[2] ^= lp[i][k+2];
+                        lres[3] ^= lp[i][k+3];
                     }
+
+                    lres[0] &= ~lcommon_bits[0];
+                    lres[1] &= ~lcommon_bits[1];
+                    lres[2] &= ~lcommon_bits[2];
+                    lres[3] &= ~lcommon_bits[3];
+
+                    k += 4;
                     lres += 4;
                     j += step;
                     minlen -= step;
