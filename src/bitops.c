@@ -666,7 +666,7 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
     const unsigned long step = sizeof(__m256i);
 
     unsigned long i;
-    int processed = 0;
+    unsigned int processed = 0;
     unsigned char *res_start = res;
     unsigned char *fst_key = keys[0];
     // TODO: this is debug code, remove.
@@ -701,7 +701,7 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
                 #if defined(AVX2_USE_LOADU)
                 __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
                 #else
-                __m256i lkey = _mm256_lddqu_si256((__m256i*)keys[i]+processed);
+                __m256i lkey = _mm256_lddqu_si256((__m256i*)(keys[i]+processed));
                 #endif
 
                 lres = _mm256_and_si256(lres, lkey);
@@ -726,7 +726,7 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
                 #if defined(AVX2_USE_LOADU)
                 __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
                 #else
-                __m256i lkey = _mm256_lddqu_si256((__m256i*)keys[i]+processed);
+                __m256i lkey = _mm256_lddqu_si256((__m256i*)(keys[i]+processed));
                 #endif
 
                 lres = _mm256_or_si256(lres, lkey);
@@ -748,7 +748,7 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
                 #if defined(AVX2_USE_LOADU)
                 __m256i lkey = _mm256_loadu_si256((__m256i*)keys[i]);
                 #else
-                __m256i lkey = _mm256_lddqu_si256((__m256i*)keys[i]+processed);
+                __m256i lkey = _mm256_lddqu_si256((__m256i*)(keys[i]+processed));
                 #endif
 
                 lres = _mm256_xor_si256(lres, lkey);
