@@ -99,4 +99,5 @@ jobs:
         apt-get install -y make gcc-4.8 g++-4.8
         update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.8 100
         update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-4.8 100
+        echo $(gcc --version)
         make CC=gcc REDIS_CFLAGS='-Werror'
