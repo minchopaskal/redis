@@ -675,14 +675,9 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
         return 0;
     }
 
-    if (!(BITOP_USE_AVX2)) {
-        return 0;
-    }
-
     if (minlen < step) {
         return 0;
     }
-
 
     if (op != BITOP_DIFF && op != BITOP_DIFF1 && op != BITOP_ANDOR) {
         memcpy(res, keys[0], minlen);
@@ -905,8 +900,10 @@ void bitopCommand(client *c) {
         j = 0;
 
 #if defined(HAVE_AVX2)
-        j = bitopCommandAVX(src, res, op, numkeys, minlen);
-        minlen -= j;
+        if (BITOP_USE_AVX2) {
+            j = bitopCommandAVX(src, res, op, numkeys, minlen);
+            minlen -= j;
+        }
 #endif
 
 #if !defined(USE_ALIGNED_ACCESS)
