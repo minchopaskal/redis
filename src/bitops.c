@@ -8,9 +8,6 @@
  */
 
 #include "server.h"
-#include <stdint.h>
-#include <stdlib.h>
-#include <sys/cdefs.h>
 
 #ifdef HAVE_AVX2
 /* Define __MM_MALLOC_H to prevent importing the memory aligned
