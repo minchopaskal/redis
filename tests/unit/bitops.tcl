@@ -228,6 +228,11 @@ start_server {tags {"bitops"}} {
         r get dest{t}
     } "\x55\xff\x00\xaa"
 
+    test {BITOP NOT with multiple source keys} {
+        r set s{t} "\xaa\x00\xff\x55"
+        assert_error "ERR BITOP NOT*" { r bitop not dest{t} s{t} s{t} }
+    }
+
     test {BITOP where dest and target are the same key} {
         r set s "\xaa\x00\xff\x55"
         r bitop not s s
@@ -243,10 +248,17 @@ start_server {tags {"bitops"}} {
         list [r get res1{t}] [r get res2{t}] [r get res3{t}] [r get res4{t}]
     } [list "\x01\x02\xff" "\x01\x02\xff" "\x01\x02\xff" "\x01\x02\xff"]
 
+    test {BITOP DIFF|DIFF1|ANDOR with one source key} {
+        r set s{t} ""
+        assert_error "ERR BITOP <DIFF|DIFF1|ANDOR>*" { r bitop diff dest{t} s{t} }
+        assert_error "ERR BITOP <DIFF|DIFF1|ANDOR>*" { r bitop diff1 dest{t} s{t} }
+        assert_error "ERR BITOP <DIFF|DIFF1|ANDOR>*" { r bitop andor dest{t} s{t} }
+    }
+
     test {BITOP missing key is considered a stream of zero} {
         r set a{t} "\x01\x02\xff"
-        r bitop and   res1{t} no-suck-key{t} a{t}
-        r bitop or    res2{t} no-suck-key{t} a{t} no-such-key{t}
+        r bitop and   res1{t} no-such-key{t} a{t}
+        r bitop or    res2{t} no-such-key{t} a{t} no-such-key{t}
         r bitop xor   res3{t} no-such-key{t} a{t}
         r bitop diff  res4{t} a{t} no-such-key{t}
         r bitop diff1 res5{t} a{t} no-such-key{t}

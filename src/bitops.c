@@ -1023,7 +1023,7 @@ void bitopCommand(client *c) {
                 }
             } else if (op == BITOP_ONE) {
                 while(minlen >= step) {
-                    memset(lcommon_bits, 0, sizeof(unsigned long)*4);
+                    memset(lcommon_bits, 0, sizeof(lcommon_bits));
 
                     for (i = 1; i < numkeys; i++) {
                         lcommon_bits[0] |= (lres[0] & lp[i][k+0]);
@@ -1074,9 +1074,10 @@ void bitopCommand(client *c) {
                     output ^= byte;
                     break;
 
-                /* For DIFF, DIFF1 and ANDOR we compute the disjunction of all key arguments except
-                 * the first one. After that we do their respective bit op on said first arg and that
-                 * disjunction. */
+                /* For DIFF, DIFF1 and ANDOR we compute the disjunction of all
+                 * key arguments except the first one. After that we do their 
+                 * respective bit op on said first arg and that disjunction.
+                 * */
                 case BITOP_DIFF:
                 case BITOP_DIFF1:
                 case BITOP_ANDOR:
@@ -1086,14 +1087,16 @@ void bitopCommand(client *c) {
 
                 /* BITOP ONE dest key_1 [key_2...]
                  * If dest[i] is the i-th bit of dest then:
-                 * dest[i] == 1 if and only if there is j such that key_j[i] == 1 and key_n[i] == 0
-                 * for all n != j.
-                 * In order to compute that on each step we track which bits were seen in more than
-                 * one key and store that in a helper variable. Then the operation is just XOR but on
-                 * each step we nullify the bits that are set in the helper.
-                 * Logically, this operation is the same as nullifying the helper bits only once at
-                 * the end, but performance-wise it had no significant benefit and makes the code
-                 * only more unclear.
+                 * dest[i] == 1 if and only if there is j such that key_j[i] == 1
+                 * and key_n[i] == 0 for all n != j.
+                 *
+                 * In order to compute that on each step we track which bits
+                 * were seen in more than one key and store that in a helper
+                 * variable. Then the operation is just XOR but on each step we
+                 * nullify the bits that are set in the helper.
+                 * Logically, this operation is the same as nullifying the
+                 * helper bits only once at the end, but performance-wise it had
+                 * no significant benefit and makes the code only more unclear.
                  *
                  * e.g:
                  * 0001 0111 # key1
