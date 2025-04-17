@@ -548,15 +548,21 @@ int streamAppendItem(stream *s, robj **argv, int64_t numfields, streamID *added_
         if (server.stream_node_max_bytes > 0 && server.stream_node_max_bytes < prealloc) {
             prealloc = server.stream_node_max_bytes;
         }
-        lp = lpNew(prealloc);
-        lp = lpAppendInteger(lp,1); /* One item, the one we are adding. */
-        lp = lpAppendInteger(lp,0); /* Zero deleted so far. */
-        lp = lpAppendInteger(lp,numfields);
+
+        int numEntries = 3 + numfields + 1;
+        listpackEntry *entries = zmalloc(sizeof(listpackEntry)*numEntries);
+        entries[0].lval = 1; /* One item, the one we are adding. */
+        entries[1].lval = 0; /* Zero deleted so far. */
+        entries[2].lval = numfields;
         for (int64_t i = 0; i < numfields; i++) {
             sds field = argv[i*2]->ptr;
-            lp = lpAppend(lp,(unsigned char*)field,sdslen(field));
+            entries[i+3].sval = (unsigned char*)field;
+            entries[i+3].slen = sdslen(field);
         }
-        lp = lpAppendInteger(lp,0); /* Master entry zero terminator. */
+        entries[numfields+3].lval = 0; /* Master entry zero terminator. */
+
+        lp = lpNew(prealloc);
+        lp = lpBatchAppend(lp, entries, numEntries);
         raxInsert(s->rax,(unsigned char*)&rax_key,sizeof(rax_key),lp,NULL);
         /* The first entry we insert, has obviously the same fields of the
          * master entry. */
@@ -619,26 +625,36 @@ int streamAppendItem(stream *s, robj **argv, int64_t numfields, streamID *added_
      * in reverse order: we can just start from the end of the listpack, read
      * the entry, and jump back N times to seek the "flags" field to read
      * the stream full entry. */
-    lp = lpAppendInteger(lp,flags);
-    lp = lpAppendInteger(lp,id.ms - master_id.ms);
-    lp = lpAppendInteger(lp,id.seq - master_id.seq);
-    if (!(flags & STREAM_ITEM_FLAG_SAMEFIELDS))
-        lp = lpAppendInteger(lp,numfields);
-    for (int64_t i = 0; i < numfields; i++) {
-        sds field = argv[i*2]->ptr, value = argv[i*2+1]->ptr;
-        if (!(flags & STREAM_ITEM_FLAG_SAMEFIELDS))
-            lp = lpAppend(lp,(unsigned char*)field,sdslen(field));
-        lp = lpAppend(lp,(unsigned char*)value,sdslen(value));
-    }
-    /* Compute and store the lp-count field. */
-    int64_t lp_count = numfields;
-    lp_count += 3; /* Add the 3 fixed fields flags + ms-diff + seq-diff. */
+
+    /* 3 fixed fields flags + ms-diff + seq-diff; numfields and lp-count field */ 
+    int numEntries = 3 + numfields + 1;
     if (!(flags & STREAM_ITEM_FLAG_SAMEFIELDS)) {
         /* If the item is not compressed, it also has the fields other than
          * the values, and an additional num-fields field. */
-        lp_count += numfields+1;
+        numEntries += numfields + 1;
     }
-    lp = lpAppendInteger(lp,lp_count);
+    listpackEntry *entries = zmalloc(sizeof(listpackEntry)*numEntries);
+    int idx = 0;
+    entries[idx++].lval = flags;
+    entries[idx++].lval = id.ms - master_id.ms;
+    entries[idx++].lval = id.seq - master_id.seq;
+    if (!(flags & STREAM_ITEM_FLAG_SAMEFIELDS))
+        entries[idx++].lval = numfields;
+    for (int64_t i = 0; i < numfields; i++) {
+        sds field = argv[i*2]->ptr, value = argv[i*2+1]->ptr;
+        if (!(flags & STREAM_ITEM_FLAG_SAMEFIELDS)) {
+            entries[idx].sval = (unsigned char*)field;
+            entries[idx++].slen = sdslen(field);
+        }
+        entries[idx].sval = (unsigned char*)value;
+        entries[idx++].slen = sdslen(value);
+    }
+
+    /* The lp-count field doesn't count itself. */
+    const int64_t lp_count = numEntries - 1;
+    entries[idx++].lval = lp_count;
+
+    lp = lpBatchAppend(lp, entries, numEntries);
 
     /* Insert back into the tree in order to update the listpack pointer. */
     if (ri.data != lp)
