@@ -551,6 +551,7 @@ int streamAppendItem(stream *s, robj **argv, int64_t numfields, streamID *added_
 
         int numEntries = 3 + numfields + 1;
         listpackEntry *entries = zmalloc(sizeof(listpackEntry)*numEntries);
+        memset(entries, 0, sizeof(listpackEntry)*numEntries);
         entries[0].lval = 1; /* One item, the one we are adding. */
         entries[1].lval = 0; /* Zero deleted so far. */
         entries[2].lval = numfields;
@@ -626,7 +627,7 @@ int streamAppendItem(stream *s, robj **argv, int64_t numfields, streamID *added_
      * the entry, and jump back N times to seek the "flags" field to read
      * the stream full entry. */
 
-    /* 3 fixed fields flags + ms-diff + seq-diff; numfields and lp-count field */ 
+    /* 3 fixed fields flags + ms-diff + seq-diff; numfields values and lp-count field */ 
     int numEntries = 3 + numfields + 1;
     if (!(flags & STREAM_ITEM_FLAG_SAMEFIELDS)) {
         /* If the item is not compressed, it also has the fields other than
@@ -634,6 +635,8 @@ int streamAppendItem(stream *s, robj **argv, int64_t numfields, streamID *added_
         numEntries += numfields + 1;
     }
     listpackEntry *entries = zmalloc(sizeof(listpackEntry)*numEntries);
+    memset(entries, 0, sizeof(listpackEntry)*numEntries);
+
     int idx = 0;
     entries[idx++].lval = flags;
     entries[idx++].lval = id.ms - master_id.ms;
@@ -653,6 +656,8 @@ int streamAppendItem(stream *s, robj **argv, int64_t numfields, streamID *added_
     /* The lp-count field doesn't count itself. */
     const int64_t lp_count = numEntries - 1;
     entries[idx++].lval = lp_count;
+
+    serverAssert(idx == numEntries);
 
     lp = lpBatchAppend(lp, entries, numEntries);
 
