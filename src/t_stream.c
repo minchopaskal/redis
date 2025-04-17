@@ -564,6 +564,9 @@ int streamAppendItem(stream *s, robj **argv, int64_t numfields, streamID *added_
 
         lp = lpNew(prealloc);
         lp = lpBatchAppend(lp, entries, numEntries);
+
+        zfree(entries);
+
         raxInsert(s->rax,(unsigned char*)&rax_key,sizeof(rax_key),lp,NULL);
         /* The first entry we insert, has obviously the same fields of the
          * master entry. */
@@ -660,6 +663,8 @@ int streamAppendItem(stream *s, robj **argv, int64_t numfields, streamID *added_
     serverAssert(idx == numEntries);
 
     lp = lpBatchAppend(lp, entries, numEntries);
+    
+    zfree(entries);
 
     /* Insert back into the tree in order to update the listpack pointer. */
     if (ri.data != lp)
