@@ -1452,8 +1452,29 @@ int zsetAdd(robj *zobj, double score, sds ele, int in_flags, int *out_flags, dou
 
             /* Remove and re-insert when score changed. */
             if (score != curscore) {
-                zobj->ptr = zzlDelete(zobj->ptr,eptr);
-                zobj->ptr = zzlInsert(zobj->ptr,ele,score);
+                unsigned char *sptr = lpNext(zobj->ptr, eptr);
+
+                /* If we are updating the score of the last element(i.e the one
+                 * with the biggest score) with bigger score, then it's 
+                 * enough to just replace its score. This will preserve the
+                 * ordering and save us some iterations over the listpack. */
+                int is_last = (lpNext(zobj->ptr, sptr) == NULL);
+                if (is_last && score > curscore) {
+                    char scorebuf[MAX_D2STRING_CHARS];
+                    int scorelen = 0;
+                    long long lscore;
+                    int score_is_long = double2ll(score, &lscore);
+                    if (!score_is_long)
+                        scorelen = d2string(scorebuf,sizeof(scorebuf),score);
+
+                    if (score_is_long)
+                        zobj->ptr = lpReplaceInteger(zobj->ptr, &sptr, lscore);
+                    else
+                        zobj->ptr = lpReplace(zobj->ptr, &sptr, (unsigned char*)scorebuf, scorelen);
+                } else {
+                    zobj->ptr = zzlDelete(zobj->ptr,eptr);
+                    zobj->ptr = zzlInsert(zobj->ptr,ele,score);
+                }
                 *out_flags |= ZADD_OUT_UPDATED;
             }
             return 1;
