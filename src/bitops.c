@@ -431,8 +431,7 @@ void printBits(unsigned char *p, unsigned long count) {
 /* ONE(A1, A2, ..., An) = X.
  * If X[i] is the i-th bit of X then:
  * X[i] == 1 if and only if there is m such that:
- * Am[i] == 1 and Al[i] == 0 for all l != m.
- * */
+ * Am[i] == 1 and Al[i] == 0 for all l != m. */
 #define BITOP_ONE   7
 
 #define BITFIELDOP_GET 0
@@ -666,16 +665,15 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
     unsigned long processed = 0;
     unsigned char *res_start = res;
     unsigned char *fst_key = keys[0];
-    // TODO: this is debug code, remove.
-    char *bitop_disable_avx_env = getenv("BITOP_DISABLE_AVX");
-    if (bitop_disable_avx_env && !strncmp(bitop_disable_avx_env, "1", 1)) {
-        return 0;
-    }
 
     if (minlen < step) {
         return 0;
     }
 
+    /* Unlike other operations that do the same with all source keys
+     * DIFF, DIFF1 and ANDOR all compute the disjunction of all the source keys
+     * but the first one. We first store that disjunction in `lres` and later 
+     * compute the final operation using the first source key. */
     if (op != BITOP_DIFF && op != BITOP_DIFF1 && op != BITOP_ANDOR) {
         memcpy(res, keys[0], minlen);
     }
@@ -740,7 +738,7 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
         }
         break;
     case BITOP_ONE:
-	while (minlen >= step) {
+        while (minlen >= step) {
             __m256i lres = _mm256_lddqu_si256((__m256i*)res);
             __m256i common_bits = zero256;
 
@@ -806,7 +804,7 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
 
     return processed;
 }
-#endif // HAVE_AVX2
+#endif /* HAVE_AVX2 */
 
 /* BITOP op_name target_key src_key1 src_key2 src_key3 ... src_keyN */
 REDIS_NO_SANITIZE("alignment")
@@ -893,13 +891,19 @@ void bitopCommand(client *c) {
         res = (unsigned char*) sdsnewlen(NULL,maxlen);
         unsigned char output, byte, disjunction, common_bits;
         unsigned long i;
+        int useAVX2 = 0;
 
+        /* Number of bytes processed from each source key */
         j = 0;
 
 #if defined(HAVE_AVX2)
         if (BITOP_USE_AVX2) {
             j = bitopCommandAVX(src, res, op, numkeys, minlen);
+
+            serverAssert(minlen >= j);
             minlen -= j;
+
+            useAVX2 = 1;
         }
 #endif
 
@@ -910,7 +914,7 @@ void bitopCommand(client *c) {
          * vanilla algorithm. On ARM we skip the fast path since it will
          * result in GCC compiling the code using multiple-words load/store
          * operations that are not supported even in ARM >= v6. */
-        if (minlen >= sizeof(unsigned long)*4) {
+        if (!useAVX2 && minlen >= sizeof(unsigned long)*4) {
             unsigned long **lp = (unsigned long**)src;
             unsigned long *lres = (unsigned long*) res;
             unsigned long *first_key = (unsigned long*)src[0];
@@ -918,8 +922,15 @@ void bitopCommand(client *c) {
 
             const size_t step = sizeof(unsigned long)*4;
             size_t processed = 0;
+
+            /* Index over the unsigned long version of the source keys */
             size_t k = 0;
 
+            /* Unlike other operations that do the same with all source keys
+             * DIFF, DIFF1 and ANDOR all compute the disjunction of all the
+             * source keys but the first one. We first store that disjunction
+             * in `lres` and later compute the final operation using the first
+             * source key. */
             if (op != BITOP_DIFF && op != BITOP_DIFF1 && op != BITOP_ANDOR)
                 memcpy(lres,src[0],minlen);
 
