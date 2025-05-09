@@ -64,51 +64,81 @@ start_server {tags {"introspection"}} {
         return ""
     }
 
-    test {client input output and command process statistics} {
+    test {CLIENT INFO input/output/cmds-processed stats} {
         set info1 [r client info]
         set input1 [get_field_in_client_info $info1 "tot-net-in"]
         set output1 [get_field_in_client_info $info1 "tot-net-out"]
         set cmd1 [get_field_in_client_info $info1 "tot-cmds"]
+
+        # Run a command by that client and test if the stats change correctly
         set info2 [r client info]
         set input2 [get_field_in_client_info $info2 "tot-net-in"]
         set output2 [get_field_in_client_info $info2 "tot-net-out"]
         set cmd2 [get_field_in_client_info $info2 "tot-cmds"]
-        assert_equal [expr $input1+26] $input2
-        assert {[expr $output1+300] < $output2}
-        assert_equal [expr $cmd1+1] $cmd2
-        # test blocking command
+
+        # NOTE if CLIENT INFO changes it's stats the output_bytes here and in the
+        # other related tests will need to be updated.
+        set input_bytes 26 ; # CLIENT INFO request
+        set output_bytes 361 ; # CLIENT INFO result
+        set cmds_processed 1 ; # processed the command CLIENT INFO
+        assert_equal [expr $input1+$input_bytes] $input2
+        assert_equal [expr $output1+$output_bytes] $output2
+        assert_equal [expr $cmd1+$cmds_processed] $cmd2
+    }
+
+    test {CLIENT INFO input/output/cmds-processed stats for blocking command} {
         r del mylist
         set rd [redis_deferring_client]
         $rd client id
         set rd_id [$rd read]
+ 
+        set info_list [r client list]
+        set input1 [get_field_in_client_list $rd_id $info_list "tot-net-in"]
+        set output1 [get_field_in_client_list $rd_id $info_list "tot-net-out"]
+        set cmd1 [get_field_in_client_list $rd_id $info_list "tot-cmds"]
+        $rd blpop mylist 0
+
+        # Make sure to wait for the $rd client to be blocked
+        #wait_for_blocked_client
+
+        # Check if input stats have changed for $rd. Since command is blocking
+        # and has not been unblocked yet we expect no change in output/cmds-processed
+        # stats.
+        set info_list [r client list]
+        set input2 [get_field_in_client_list $rd_id $info_list "tot-net-in"]
+        set output2 [get_field_in_client_list $rd_id $info_list "tot-net-out"]
+        set cmd2 [get_field_in_client_list $rd_id $info_list "tot-cmds"]
+        assert_equal [expr $input1+34] $input2
+        assert_equal $output1 $output2
+        assert_equal $cmd1 $cmd2
+
+        # Unblock the $rd client (which will send a reply and thus update output
+        # and cmd-processed stats).
+        r lpush mylist a
+
+        # Note that the per-client stats are from the POV of the server. The
+        # deferred client may have not read the response yet, but the stats
+        # are still updated.
         set info_list [r client list]
         set input3 [get_field_in_client_list $rd_id $info_list "tot-net-in"]
         set output3 [get_field_in_client_list $rd_id $info_list "tot-net-out"]
         set cmd3 [get_field_in_client_list $rd_id $info_list "tot-cmds"]
-        $rd blpop mylist 0
-        set info_list [r client list]
-        set input4 [get_field_in_client_list $rd_id $info_list "tot-net-in"]
-        set output4 [get_field_in_client_list $rd_id $info_list "tot-net-out"]
-        set cmd4 [get_field_in_client_list $rd_id $info_list "tot-cmds"]
-        assert_equal [expr $input3+34] $input4
-        assert_equal $output3 $output4
-        assert_equal $cmd3 $cmd4
-        r lpush mylist a
-        set info_list [r client list]
-        set input5 [get_field_in_client_list $rd_id $info_list "tot-net-in"]
-        set output5 [get_field_in_client_list $rd_id $info_list "tot-net-out"]
-        set cmd5 [get_field_in_client_list $rd_id $info_list "tot-cmds"]
-        assert_equal $input4 $input5
-        assert_equal [expr $output4+23] $output5
-        assert_equal [expr $cmd4+1] $cmd5
+        assert_equal $input2 $input3
+        assert_equal [expr $output2+23] $output3
+        assert_equal [expr $cmd2+1] $cmd3
+
         $rd close
-        # test recursive command
+    }
+
+    test {CLIENT INFO cmds-processed stats for recursive command} {
         set info [r client info]
-        set cmd6 [get_field_in_client_info $info "tot-cmds"]
+        set tot_cmd_before [get_field_in_client_info $info "tot-cmds"]
         r eval "redis.call('ping')" 0
         set info [r client info]
-        set cmd7 [get_field_in_client_info $info "tot-cmds"]
-        assert_equal [expr $cmd6+3] $cmd7
+        set tot_cmd_after [get_field_in_client_info $info "tot-cmds"]
+
+        # We executed 3 commands - EVAL, which in turn executed PING and finally CLIENT INFO
+        assert_equal [expr $tot_cmd_before+3] $tot_cmd_after
     }
 
     test {CLIENT KILL with illegal arguments} {
