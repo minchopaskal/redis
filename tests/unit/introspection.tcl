@@ -99,7 +99,7 @@ start_server {tags {"introspection"}} {
         $rd blpop mylist 0
 
         # Make sure to wait for the $rd client to be blocked
-        #wait_for_blocked_client
+        wait_for_blocked_client
 
         # Check if input stats have changed for $rd. Since command is blocking
         # and has not been unblocked yet we expect no change in output/cmds-processed
