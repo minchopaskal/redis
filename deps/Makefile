@@ -64,16 +64,15 @@ distclean:
 
 .PHONY: distclean
 
-# Special care is needed to pass additional CFLAGS/LDFLAGS to hiredis as it
-# modifies these variables in its Makefile.
-HIREDIS_MAKE_FLAGS=MYCFLAGS=$(DEPS_CFLAGS) MYLDFLAGS=$(DEPS_LDFLAGS)
 ifneq (,$(filter $(BUILD_TLS),yes module))
-    HIREDIS_MAKE_FLAGS += USE_SSL=1
+    HIREDIS_MAKE_FLAGS = USE_SSL=1
 endif
 
+# Special care is needed to pass additional CFLAGS/LDFLAGS to hiredis as it
+# modifies these variables in its Makefile.
 hiredis: .make-prerequisites
 	@printf '%b %b\n' $(MAKECOLOR)MAKE$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR)
-	cd hiredis && $(MAKE) static $(HIREDIS_MAKE_FLAGS)
+	cd hiredis && $(MAKE) static $(HIREDIS_MAKE_FLAGS) HIREDIS_CFLAGS="$(DEPS_CFLAGS)" HIREDIS_LDFLAGS="$(DEPS_LDFLAGS)"
 
 .PHONY: hiredis
 
