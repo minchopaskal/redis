@@ -1333,8 +1333,8 @@ REDISMODULE_API void (*RedisModule_RdbStreamFree)(RedisModuleRdbStream *stream) 
 REDISMODULE_API int (*RedisModule_RdbLoad)(RedisModuleCtx *ctx, RedisModuleRdbStream *stream, int flags) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_RdbSave)(RedisModuleCtx *ctx, RedisModuleRdbStream *stream, int flags) REDISMODULE_ATTR;
 REDISMODULE_API const char * (*RedisModule_GetInternalSecret)(RedisModuleCtx *ctx, size_t *len) REDISMODULE_ATTR;
-REDISMODULE_API int (*RedisModule_ServerConfigSet)(RedisModuleCtx *ctx, const char *name, const char *value);
-REDISMODULE_API RedisModuleString * (*RedisModule_ServerConfigGet)(RedisModuleCtx *ctx, const char *name);
+REDISMODULE_API int (*RedisModule_ServerConfigSet)(RedisModuleCtx *ctx, const char *name, const char *value) REDISMODULE_ATTR;
+REDISMODULE_API RedisModuleString * (*RedisModule_ServerConfigGet)(RedisModuleCtx *ctx, const char *name) REDISMODULE_ATTR;
 
 #define RedisModule_IsAOFClient(id) ((id) == UINT64_MAX)
 
