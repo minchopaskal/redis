@@ -3439,6 +3439,55 @@ void addModuleNumericConfig(sds name, sds alias, int flags, void *privdata, long
     }
 }
 
+int moduleServerConfigSet(client *c, sds name, sds value) {
+    standardConfig *config = lookupConfig(name);
+
+    if (!config) return 0;
+
+    if (config->flags & MODULE_CONFIG) return 0;
+
+    if (config->flags & IMMUTABLE_CONFIG ||
+        (config->flags & PROTECTED_CONFIG &&
+         !allowProtectedAction(server.enable_protected_configs, c)))
+        return 0;
+
+    if (server.loading && config->flags & DENY_LOADING_CONFIG) return 0;
+
+    sds old_value = config->interface.get(config);
+    const char *errstr = NULL;
+    int res = performInterfaceSet(config, value, &errstr);
+    if (!res) {
+        serverLog(LL_WARNING, "Failed setting new configuration from module. Error setting %s: %s", config->name, errstr);
+        goto err;
+    }
+    if (res != 1) goto end; /* VOLATILE_CONFIG */
+
+    if (!config->interface.apply) goto end;
+
+    if (!config->interface.apply(&errstr)) {
+        serverLog(LL_WARNING, "Failed applying new configuration from module. Error applying %s: %s", config->name, errstr);
+        goto err;
+    }
+
+    goto end;
+
+err:
+    restoreBackupConfig(&config, &old_value, 1, NULL, NULL);
+    sdsfree(old_value);
+    return 0;
+end:
+    sdsfree(old_value);
+    return 1;
+}
+
+sds moduleServerConfigGet(sds name) {
+    standardConfig *config = lookupConfig(name);
+    if (!config) return NULL;
+    if (config->flags & MODULE_CONFIG) return NULL;
+
+    return config->interface.get(config);
+}
+
 /*-----------------------------------------------------------------------------
  * CONFIG HELP
  *----------------------------------------------------------------------------*/

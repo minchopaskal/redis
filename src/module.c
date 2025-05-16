@@ -13512,6 +13512,35 @@ const char* RM_GetInternalSecret(RedisModuleCtx *ctx, size_t *len) {
     return secret;
 }
 
+/* CONFIG SET
+ * Set the value of the config. If the config does not exist or is a module
+ * config return REDISMODULE_ERR */
+int RM_ServerConfigSet(RedisModuleCtx *ctx, const char *name, const char *value) {
+    sds config_name = sdsnew(name);
+    sds config_value = sdsnew(value);
+    int res = moduleServerConfigSet(ctx->client, config_name, config_value);
+    sdsfree(config_name);
+    sdsfree(config_value);
+
+    if (res) return REDISMODULE_OK;
+    return REDISMODULE_ERR;
+}
+
+/* CONFIG GET
+ * Return the value of the config. If the config does not exist or is a module
+ * config return NULL */
+RedisModuleString* RM_ServerConfigGet(RedisModuleCtx *ctx, const char *name) {
+    sds config_name = sdsnew(name);
+    sds value = moduleServerConfigGet(config_name);
+    sdsfree(config_name);
+
+    if (!value) return NULL;
+
+    RedisModuleString *ret = RM_CreateString(ctx, (const char*)value, sdslen(value));
+    sdsfree(value);
+    return ret;
+}
+
 /* Redis MODULE command.
  *
  * MODULE LIST
@@ -14548,4 +14577,6 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(RdbLoad);
     REGISTER_API(RdbSave);
     REGISTER_API(GetInternalSecret);
+    REGISTER_API(ServerConfigSet);
+    REGISTER_API(ServerConfigGet);
 }
