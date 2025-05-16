@@ -3608,6 +3608,10 @@ int setModuleEnumConfig(ModuleConfig *config, int val, const char **err);
 long long getModuleNumericConfig(ModuleConfig *module_config);
 int setModuleNumericConfig(ModuleConfig *config, long long val, const char **err);
 
+/* API for modules to access server config values. */
+int moduleServerConfigSet(client *c, sds name, sds value);
+sds moduleServerConfigGet(sds name);
+
 /* db.c -- Keyspace access API */
 void updateKeysizesHist(redisDb *db, int didx, uint32_t type, int64_t oldLen, int64_t newLen);
 void dbgAssertKeysizesHist(redisDb *db);
