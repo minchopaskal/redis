@@ -5,7 +5,7 @@ start_server {tags {"modules"}} {
     r module load $testmodule
     r module loadex $othermodule CONFIG moduleconfigs.mutable_bool yes
 
-    test {Test RM_ServerConfigGet with standard Redis configs} {
+    test {Test server config get with standard Redis configs} {
         # Test getting a standard Redis config
         set port [r config get port]
         assert_match [lindex $port 1] [r serverconfig.get port]
@@ -23,13 +23,13 @@ start_server {tags {"modules"}} {
         assert_equal [lindex $appendfsync 1] [r serverconfig.get appendfsync]
     }
 
-    test {Test RM_ServerConfigGet with non-existent configs} {
+    test {Test server config get with non-existent configs} {
         # Test getting a non-existent config
         catch {r serverconfig.get nonexistent_config} err
         assert_match "ERR*" $err
     }
 
-    test {Test RM_ServerConfigGet with module configs} {
+    test {Test server config get with module configs} {
         # Test getting module configs registered by the module
         catch {r serverconfig.get serverconfig.bool} err
         assert_match "ERR*" $err
@@ -42,7 +42,7 @@ start_server {tags {"modules"}} {
         assert_equal "moduleconfigs.mutable_bool yes" [r config get moduleconfigs.mutable_bool]
     }
 
-    test {Test RM_ServerConfigSet with standard Redis configs} {
+    test {Test server config set with standard Redis configs} {
         # Test setting a standard Redis config
         set old_timeout [r config get timeout]
         r serverconfig.set timeout 100
@@ -62,7 +62,7 @@ start_server {tags {"modules"}} {
         r config set appendfsync [lindex $old_appendfsync 1]
     }
 
-    test {Test RM_ServerConfigSet with module configs} {
+    test {Test server config set with module configs} {
         # Test setting module configs
         catch {r serverconfig.set serverconfig.bool 0} err
         assert_match "ERR*" $err
@@ -72,7 +72,7 @@ start_server {tags {"modules"}} {
         assert_match "ERR*" $err
     }
 
-    test {Test RM_ServerConfigSet with error cases} {
+    test {Test server config set with error cases} {
         # Test setting a non-existent config
         catch {r serverconfig.set nonexistent_config 123} err
         assert_match "*ERR*" $err
