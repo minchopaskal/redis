@@ -8,6 +8,7 @@
  */
 
 #include "server.h"
+#include "ctype.h"
 
 #ifdef HAVE_AVX2
 /* Define __MM_MALLOC_H to prevent importing the memory aligned
@@ -658,7 +659,8 @@ void getbitCommand(client *c) {
 ATTRIBUTE_TARGET_AVX2
 unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res, 
                               unsigned long op, unsigned long numkeys,
-                              unsigned long minlen) {
+                              unsigned long minlen)
+{
     const unsigned long step = sizeof(__m256i);
 
     unsigned long i;
@@ -848,7 +850,10 @@ void bitopCommand(client *c) {
     }
 
     if ((op == BITOP_DIFF || op == BITOP_DIFF1 || op == BITOP_ANDOR) && c->argc < 5) {
-        addReplyError(c,"BITOP <DIFF|DIFF1|ANDOR> must be called with at least two source keys.");
+        sds opname_upper = sdsnew(opname);
+        sdstoupper(opname_upper);
+        addReplyErrorFormat(c,"BITOP %s must be called with at least two source keys.", opname_upper);
+        sdsfree(opname_upper);
         return;
     }
 
