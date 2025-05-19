@@ -3439,6 +3439,7 @@ void addModuleNumericConfig(sds name, sds alias, int flags, void *privdata, long
     }
 }
 
+/* Functionality of CONFIG SET for a single non-glob parameter used by RM_ConfigSet */
 int moduleConfigSet(client *c, sds name, sds value) {
     standardConfig *config = lookupConfig(name);
 
@@ -3485,6 +3486,7 @@ end:
     return 1;
 }
 
+/* Functionality of CONFIG GET for a single non-glob parameter used by RM_ConfigGet */
 sds moduleConfigGet(sds name) {
     standardConfig *config = lookupConfig(name);
     if (!config) return NULL;
