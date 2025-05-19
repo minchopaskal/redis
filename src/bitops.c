@@ -930,8 +930,6 @@ void bitopCommand(client *c) {
             unsigned long **lp = (unsigned long**)src;
             unsigned long *lres = (unsigned long*) res;
 
-            size_t processed = 0;
-
             /* Index over the unsigned long version of the source keys */
             size_t k = 0;
 
@@ -994,6 +992,7 @@ void bitopCommand(client *c) {
                     minlen -= sizeof(unsigned long)*4;
                 }
             } else if (op == BITOP_DIFF || op == BITOP_DIFF1 || op == BITOP_ANDOR) {
+                size_t processed = 0;
                 while(minlen >= sizeof(unsigned long)*4) {
                     for (i = 1; i < numkeys; i++) {
                         lres[0] |= lp[i][k+0];
