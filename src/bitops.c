@@ -929,10 +929,7 @@ void bitopCommand(client *c) {
 
             unsigned long **lp = (unsigned long**)src;
             unsigned long *lres = (unsigned long*) res;
-            unsigned long *first_key = (unsigned long*)src[0];
-            unsigned long lcommon_bits[4];
 
-            const size_t step = sizeof(unsigned long)*4;
             size_t processed = 0;
 
             /* Index over the unsigned long version of the source keys */
@@ -1012,6 +1009,7 @@ void bitopCommand(client *c) {
                 }
 
                 lres = (unsigned long*) res;
+                unsigned long *first_key = (unsigned long*)src[0];
                 switch (op) {
                 case BITOP_DIFF:
                     for (i = 0; i < processed; i += sizeof(unsigned long)*4) {
@@ -1045,6 +1043,8 @@ void bitopCommand(client *c) {
                     break;
                 }
             } else if (op == BITOP_ONE) {
+                unsigned long lcommon_bits[4];
+
                 while(minlen >= sizeof(unsigned long)*4) {
                     memset(lcommon_bits, 0, sizeof(lcommon_bits));
 
