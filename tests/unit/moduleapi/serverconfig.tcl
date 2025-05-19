@@ -32,11 +32,11 @@ start_server {tags {"modules"}} {
     test {Test server config get with module configs} {
         # Test getting module configs registered by the module
         catch {r serverconfig.get serverconfig.bool} err
-        assert_match "ERR*" $err
+        assert_match "yes" $err
 
         # Test getting module configs registered by another module
         catch {r serverconfig.get moduleconfigs.mutable_bool} err
-        assert_match "ERR*" $err
+        assert_match "yes" $err
 
         # Sanity check
         assert_equal "moduleconfigs.mutable_bool yes" [r config get moduleconfigs.mutable_bool]
@@ -64,12 +64,10 @@ start_server {tags {"modules"}} {
 
     test {Test server config set with module configs} {
         # Test setting module configs
-        catch {r serverconfig.set serverconfig.bool 0} err
-        assert_match "ERR*" $err
+        assert_equal "OK" [r serverconfig.set serverconfig.bool no]
 
         # Test setting module configs
-        catch {r serverconfig.set moduleconfigs.mutable_bool 0} err
-        assert_match "ERR*" $err
+        assert_equal "OK" [r serverconfig.set moduleconfigs.mutable_bool no]
     }
 
     test {Test server config set with error cases} {

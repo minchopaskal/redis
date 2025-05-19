@@ -3,7 +3,7 @@
 
 /* See moduleconfigs.c for registering module configs. We need to register some
  * module configs with our module in order to test the interaction between
- * module configs and the RM_ServerConfigGet/Set APIs. */
+ * module configs and the RM_ConfigGet/Set APIs. */
 int serverconfig_bool;
 
 int getBoolConfigCommand(const char *name, void *privdata) {
@@ -18,8 +18,8 @@ int setBoolConfigCommand(const char *name, int new, void *privdata, RedisModuleS
     return REDISMODULE_OK;
 }
 
-/* Test command for RM_ServerConfigGet */
-int TestServerConfigGet_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+/* Test command for RM_ConfigGet */
+int TestConfigGet_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     if (argc != 2) {
         return RedisModule_WrongArity(ctx);
     }
@@ -27,7 +27,7 @@ int TestServerConfigGet_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **ar
     size_t len;
     const char *config_name = RedisModule_StringPtrLen(argv[1], &len);
     
-    RedisModuleString *value = RedisModule_ServerConfigGet(ctx, config_name);
+    RedisModuleString *value = RedisModule_ConfigGet(ctx, config_name);
     if (value == NULL) {
         RedisModule_ReplyWithError(ctx, "ERR Failed to get config");
     } else {
@@ -38,8 +38,8 @@ int TestServerConfigGet_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **ar
     return REDISMODULE_OK;
 }
 
-/* Test command for RM_ServerConfigSet */
-int TestServerConfigSet_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+/* Test command for RM_ConfigSet */
+int TestConfigSet_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     if (argc != 3) {
         return RedisModule_WrongArity(ctx);
     }
@@ -48,7 +48,7 @@ int TestServerConfigSet_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **ar
     const char *config_name = RedisModule_StringPtrLen(argv[1], &name_len);
     const char *config_value = RedisModule_StringPtrLen(argv[2], &value_len);
     
-    int result = RedisModule_ServerConfigSet(ctx, config_name, config_value);
+    int result = RedisModule_ConfigSet(ctx, config_name, config_value);
     if (result == REDISMODULE_OK) {
         RedisModule_ReplyWithSimpleString(ctx, "OK");
     } else {
@@ -67,12 +67,12 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
     }
 
     if (RedisModule_CreateCommand(ctx, "serverconfig.get", 
-                                 TestServerConfigGet_RedisCommand, "readonly", 0, 0, 0) == REDISMODULE_ERR) {
+                                 TestConfigGet_RedisCommand, "readonly", 0, 0, 0) == REDISMODULE_ERR) {
         return REDISMODULE_ERR;
     }
 
     if (RedisModule_CreateCommand(ctx, "serverconfig.set", 
-                                 TestServerConfigSet_RedisCommand, "write", 0, 0, 0) == REDISMODULE_ERR) {
+                                 TestConfigSet_RedisCommand, "write", 0, 0, 0) == REDISMODULE_ERR) {
         return REDISMODULE_ERR;
     }
 
@@ -82,9 +82,9 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
         return REDISMODULE_ERR;
     }
 
-    RedisModule_Log(ctx, "debug", "Loading serveconfig module configuration");
+    RedisModule_Log(ctx, "debug", "Loading serverconfig module configuration");
     if (RedisModule_LoadConfigs(ctx) == REDISMODULE_ERR) {
-        RedisModule_Log(ctx, "warning", "Failed to load serveconfig module configuration");
+        RedisModule_Log(ctx, "warning", "Failed to load serverconfig module configuration");
         return REDISMODULE_ERR;
     }
 
