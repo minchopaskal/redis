@@ -251,7 +251,7 @@ start_server {tags {"bitops"}} {
     test {BITOP DIFF|DIFF1|ANDOR with one source key} {
         r set s{t} ""
         assert_error "ERR BITOP DIFF*" { r bitop diff dest{t} s{t} }
-        assert_error "ERR BITOP DIFF1>*" { r bitop diff1 dest{t} s{t} }
+        assert_error "ERR BITOP DIFF1*" { r bitop diff1 dest{t} s{t} }
         assert_error "ERR BITOP ANDOR*" { r bitop andor dest{t} s{t} }
     }
 
