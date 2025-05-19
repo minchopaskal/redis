@@ -13012,26 +13012,42 @@ void addModuleConfigApply(list *module_configs, ModuleConfig *module_config) {
     listAddNodeTail(module_configs, module_config);
 }
 
+/* Call apply on a module config. Assumes module_config->apply_fn != NULL! */
+int moduleConfigApplyInternal(ModuleConfig *module_config, const char **err) {
+    RedisModuleCtx ctx;
+    RedisModuleString *error = NULL;
+
+    moduleCreateContext(&ctx, module_config->module, REDISMODULE_CTX_NONE);
+    if (module_config->apply_fn(&ctx, module_config->privdata, &error)) {
+        propagateErrorString(error, err);
+        moduleFreeContext(&ctx);
+        return 0;
+    }
+    moduleFreeContext(&ctx);
+    return 1;
+}
+
+/* Call apply on a module config. Assumes module_config->apply_fn != NULL! */
+int moduleConfigApply(ModuleConfig *module_config, const char **err) {
+    if (module_config->apply_fn == NULL) return 1;
+    return moduleConfigApplyInternal(module_config, err);
+}
+
 /* Call apply on all module configs specified in set, if an apply function was specified at registration time. */
 int moduleConfigApplyConfig(list *module_configs, const char **err, const char **err_arg_name) {
     if (!listLength(module_configs)) return 1;
     listIter li;
     listNode *ln;
     ModuleConfig *module_config;
-    RedisModuleString *error = NULL;
-    RedisModuleCtx ctx;
 
     listRewind(module_configs, &li);
     while ((ln = listNext(&li))) {
         module_config = listNodeValue(ln);
-        moduleCreateContext(&ctx, module_config->module, REDISMODULE_CTX_NONE);
-        if (module_config->apply_fn(&ctx, module_config->privdata, &error)) {
+        /* We know apply_fn is not NULL so skip the check */
+        if (!moduleConfigApplyInternal(module_config, err)) {
             if (err_arg_name) *err_arg_name = module_config->name;
-            propagateErrorString(error, err);
-            moduleFreeContext(&ctx);
             return 0;
         }
-        moduleFreeContext(&ctx);
     }
     return 1;
 }
@@ -13515,10 +13531,10 @@ const char* RM_GetInternalSecret(RedisModuleCtx *ctx, size_t *len) {
 /* CONFIG SET
  * Set the value of the config. If the config does not exist or is a module
  * config return REDISMODULE_ERR */
-int RM_ServerConfigSet(RedisModuleCtx *ctx, const char *name, const char *value) {
+int RM_ConfigSet(RedisModuleCtx *ctx, const char *name, const char *value) {
     sds config_name = sdsnew(name);
     sds config_value = sdsnew(value);
-    int res = moduleServerConfigSet(ctx->client, config_name, config_value);
+    int res = moduleConfigSet(ctx->client, config_name, config_value);
     sdsfree(config_name);
     sdsfree(config_value);
 
@@ -13529,9 +13545,9 @@ int RM_ServerConfigSet(RedisModuleCtx *ctx, const char *name, const char *value)
 /* CONFIG GET
  * Return the value of the config. If the config does not exist or is a module
  * config return NULL */
-RedisModuleString* RM_ServerConfigGet(RedisModuleCtx *ctx, const char *name) {
+RedisModuleString* RM_ConfigGet(RedisModuleCtx *ctx, const char *name) {
     sds config_name = sdsnew(name);
-    sds value = moduleServerConfigGet(config_name);
+    sds value = moduleConfigGet(config_name);
     sdsfree(config_name);
 
     if (!value) return NULL;
@@ -14577,6 +14593,6 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(RdbLoad);
     REGISTER_API(RdbSave);
     REGISTER_API(GetInternalSecret);
-    REGISTER_API(ServerConfigSet);
-    REGISTER_API(ServerConfigGet);
+    REGISTER_API(ConfigSet);
+    REGISTER_API(ConfigGet);
 }
