@@ -1071,7 +1071,7 @@ void bitopCommand(client *c) {
                 }
             }
         }
-#endif // !defined(USE_ALIGNED_ACCESS)
+#endif /* !defined(USE_ALIGNED_ACCESS) */
 
         /* j is set to the next byte to process by the previous loop. */
         for (; j < maxlen; j++) {
