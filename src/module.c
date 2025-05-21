@@ -13528,33 +13528,143 @@ const char* RM_GetInternalSecret(RedisModuleCtx *ctx, size_t *len) {
     return secret;
 }
 
-/* CONFIG SET
- * Set the value of the config. If the config does not exist or is a module
- * config return REDISMODULE_ERR */
-int RM_ConfigSet(RedisModuleCtx *ctx, const char *name, const char *value) {
-    sds config_name = sdsnew(name);
-    sds config_value = sdsnew(value);
-    int res = moduleConfigSet(ctx->client, config_name, config_value);
-    sdsfree(config_name);
-    sdsfree(config_value);
+/*===========================================================================
+ * CONFIG GET functions
+ * Store result in passed pointer or return REDISMODULE_ERR if config does not
+ * exist.
+ *===========================================================================*/
+int RM_GetStringConfig(RedisModuleCtx *ctx, const char *name, RedisModuleString **res) {
+    UNUSED(ctx);
+    if (!res) return REDISMODULE_OK;
 
-    if (res) return REDISMODULE_OK;
-    return REDISMODULE_ERR;
+    sds config_name = sdsnew(name);
+    sds res_sds = NULL;
+    int ret = moduleGetStringConfig(config_name, &res_sds);
+    sdsfree(config_name);
+    if (ret) {
+        *res = RM_CreateString(ctx, res_sds, sdslen(res_sds));
+    }
+    sdsfree(res_sds);
+    return ret ? REDISMODULE_OK : REDISMODULE_ERR;
 }
 
-/* CONFIG GET
- * Return the value of the config. If the config does not exist or is a module
- * config return NULL */
-RedisModuleString* RM_ConfigGet(RedisModuleCtx *ctx, const char *name) {
+int RM_GetBoolConfig(RedisModuleCtx *ctx, const char *name, int *res) {
+    UNUSED(ctx);
+    if (!res) return REDISMODULE_OK;
+
     sds config_name = sdsnew(name);
-    sds value = moduleConfigGet(config_name);
+    int ret = moduleGetBoolConfig(config_name, res);
     sdsfree(config_name);
+    return ret ? REDISMODULE_OK : REDISMODULE_ERR;
+}
 
-    if (!value) return NULL;
+int RM_GetEnumConfigValue(RedisModuleCtx *ctx, const char *name, int *res) {
+    UNUSED(ctx);
+    if (!res) return REDISMODULE_OK;
 
-    RedisModuleString *ret = RM_CreateString(ctx, (const char*)value, sdslen(value));
-    sdsfree(value);
-    return ret;
+    sds config_name = sdsnew(name);
+    int ret = moduleGetEnumConfigVal(config_name, res);
+    sdsfree(config_name);
+    return ret ? REDISMODULE_OK : REDISMODULE_ERR;
+}
+
+int RM_GetEnumConfigName(RedisModuleCtx *ctx, const char *name, RedisModuleString **res) {
+    UNUSED(ctx);
+    if (!res) return REDISMODULE_OK;
+
+    sds config_name = sdsnew(name);
+    sds res_sds = NULL;
+    int ret = moduleGetEnumConfigName(config_name, &res_sds);
+    sdsfree(config_name);
+    if (ret) {
+        *res = RM_CreateString(ctx, res_sds, sdslen(res_sds));
+    }
+    sdsfree(res_sds);
+    return ret ? REDISMODULE_OK : REDISMODULE_ERR;
+}
+
+int RM_GetNumericConfig(RedisModuleCtx *ctx, const char *name, long long *res) {
+    UNUSED(ctx);
+    if (!res) return REDISMODULE_OK;
+
+    sds config_name = sdsnew(name);
+    int ret = moduleGetNumericConfig(config_name, res);
+    sdsfree(config_name);
+    return ret ? REDISMODULE_OK : REDISMODULE_ERR;
+}
+
+/*===========================================================================
+ * CONFIG SET functions
+ * If config does not exist or any other error occurs return REDISMODULE_ERR and
+ * if `err` is not NULL, set `err` to the error string, else return
+ * REDISMODULE_OK even if no change was made.
+ *===========================================================================*/
+int RM_SetStringConfig(RedisModuleCtx *ctx, const char *name, const char *value, RedisModuleString **err) {
+    sds config_name = sdsnew(name);
+    const char *cerr = NULL;
+    int res = moduleSetStringConfig(ctx->client, config_name, value, &cerr);
+    sdsfree(config_name);
+    if (err && cerr) {
+        *err = RM_CreateString(ctx, cerr, strlen(cerr));
+    }
+    return (res == 0 ? REDISMODULE_ERR : REDISMODULE_OK);
+}
+
+int RM_SetBoolConfig(RedisModuleCtx *ctx, const char *name, int value, RedisModuleString **err) {
+    const char *cerr = NULL;
+    sds config_name = sdsnew(name);
+    int res = moduleSetBoolConfig(ctx->client, config_name, value, &cerr);
+    sdsfree(config_name);
+    if (err && cerr) {
+        *err = RM_CreateString(ctx, cerr, strlen(cerr));
+    }
+    return (res == 0 ? REDISMODULE_ERR : REDISMODULE_OK);
+}
+
+int RM_SetEnumConfigWithValue(RedisModuleCtx *ctx, const char *name, int value, RedisModuleString **err) {
+    sds config_name = sdsnew(name);
+    const char *cerr = NULL;
+    int res = moduleSetEnumConfigWithVal(ctx->client, config_name, value, &cerr);
+    sdsfree(config_name);
+    if (err && cerr) {
+        *err = RM_CreateString(ctx, cerr, strlen(cerr));
+    }
+    return (res == 0 ? REDISMODULE_ERR : REDISMODULE_OK);
+}
+
+int RM_SetEnumConfigWithName(RedisModuleCtx *ctx, const char *name, const char **values, int num_values, RedisModuleString **err) {
+    if (num_values == 0) {
+        serverLog(LL_WARNING, "Failed to set enum config: %s. No values provided.", name);
+        return REDISMODULE_ERR;
+    }
+
+    sds config_name = sdsnew(name);
+    const char *cerr = NULL;
+    sds *values_sds = zmalloc(num_values * sizeof(sds));
+    for (int i = 0; i < num_values; i++) {
+        values_sds[i] = sdsnew(values[i]);
+    }
+    int res = moduleSetEnumConfigWithName(ctx->client, config_name, values_sds, num_values, &cerr);
+    sdsfree(config_name);
+    for (int i = 0; i < num_values; i++) {
+        sdsfree(values_sds[i]);
+    }
+    zfree(values_sds);
+    if (err && cerr) {
+        *err = RM_CreateString(ctx, cerr, strlen(cerr));
+    }
+    return (res == 0 ? REDISMODULE_ERR : REDISMODULE_OK);
+}
+
+int RM_SetNumericConfig(RedisModuleCtx *ctx, const char *name, long long value, RedisModuleString **err) {
+    sds config_name = sdsnew(name);
+    const char *cerr = NULL;
+    int res = moduleSetNumericConfig(ctx->client, config_name, value, &cerr);
+    sdsfree(config_name);
+    if (err && cerr) {
+        *err = RM_CreateString(ctx, cerr, strlen(cerr));
+    }
+    return (res == 0 ? REDISMODULE_ERR : REDISMODULE_OK);
 }
 
 /* Redis MODULE command.
@@ -14593,6 +14703,14 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(RdbLoad);
     REGISTER_API(RdbSave);
     REGISTER_API(GetInternalSecret);
-    REGISTER_API(ConfigSet);
-    REGISTER_API(ConfigGet);
+    REGISTER_API(GetStringConfig);
+    REGISTER_API(GetBoolConfig);
+    REGISTER_API(GetEnumConfigValue);
+    REGISTER_API(GetEnumConfigName);
+    REGISTER_API(GetNumericConfig);
+    REGISTER_API(SetStringConfig);
+    REGISTER_API(SetBoolConfig);
+    REGISTER_API(SetEnumConfigWithValue);
+    REGISTER_API(SetEnumConfigWithName);
+    REGISTER_API(SetNumericConfig);
 }

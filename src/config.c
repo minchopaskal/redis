@@ -322,6 +322,27 @@ static sds configEnumGetName(configEnum *ce, int values, int bitflags) {
     return names;
 }
 
+/* Validate that the provided enum value is valid. If it is just return it, else
+ * return INT_MIN. */
+static int validateEnumValue(configEnum *ce, int values, int bitflags) {
+    int unmatched = values;
+    for( ; ce->name != NULL; ce++) {
+        if (values == ce->val) { /* Short path for perfect match */
+            return values;
+        }
+
+        /* Note: for bitflags, we want them sorted from high to low, so that if there are several / partially
+         * overlapping entries, we'll prefer the ones matching more bits. */
+        if (bitflags && ce->val && ce->val == (unmatched & ce->val)) {
+            unmatched &= ~ce->val;
+        }
+    }
+    if (unmatched) {
+        return INT_MIN;
+    }
+    return values;
+}
+
 /* Used for INFO generation. */
 const char *evictPolicyToString(void) {
     for (configEnum *ce = maxmemory_policy_enum; ce->name != NULL; ce++) {
@@ -1826,9 +1847,7 @@ static void boolConfigInit(standardConfig *config) {
     *config->data.yesno.config = config->data.yesno.default_value;
 }
 
-static int boolConfigSet(standardConfig *config, sds *argv, int argc, const char **err) {
-    UNUSED(argc);
-    int yn = yesnotoi(argv[0]);
+static int boolConfigSetInternal(standardConfig *config, int yn, const char **err) {
     if (yn == -1) {
         *err = "argument must be 'yes' or 'no'";
         return 0;
@@ -1844,6 +1863,13 @@ static int boolConfigSet(standardConfig *config, sds *argv, int argc, const char
         return 1;
     }
     return (config->flags & VOLATILE_CONFIG) ? 1 : 2;
+
+}
+
+static int boolConfigSet(standardConfig *config, sds *argv, int argc, const char **err) {
+    UNUSED(argc);
+    int yn = yesnotoi(argv[0]);
+    return boolConfigSetInternal(config, yn, err);
 }
 
 static sds boolConfigGet(standardConfig *config) {
@@ -1874,18 +1900,22 @@ static void stringConfigInit(standardConfig *config) {
     *config->data.string.config = (config->data.string.convert_empty_to_null && !config->data.string.default_value) ? NULL : zstrdup(config->data.string.default_value);
 }
 
-static int stringConfigSet(standardConfig *config, sds *argv, int argc, const char **err) {
-    UNUSED(argc);
-    if (config->data.string.is_valid_fn && !config->data.string.is_valid_fn(argv[0], err))
+static int stringConfigSetInternal(standardConfig *config, char *str, const char **err) {
+    if (config->data.string.is_valid_fn && !config->data.string.is_valid_fn(str, err))
         return 0;
     char *prev = *config->data.string.config;
-    char *new = (config->data.string.convert_empty_to_null && !argv[0][0]) ? NULL : argv[0];
+    char *new = (config->data.string.convert_empty_to_null && !str[0]) ? NULL : str;
     if (new != prev && (new == NULL || prev == NULL || strcmp(prev, new))) {
         *config->data.string.config = new != NULL ? zstrdup(new) : NULL;
         zfree(prev);
         return 1;
     }
     return (config->flags & VOLATILE_CONFIG) ? 1 : 2;
+}
+
+static int stringConfigSet(standardConfig *config, sds *argv, int argc, const char **err) {
+    UNUSED(argc);
+    return stringConfigSetInternal(config, argv[0], err);
 }
 
 static sds stringConfigGet(standardConfig *config) {
@@ -1974,11 +2004,7 @@ static void enumConfigInit(standardConfig *config) {
     *config->data.enumd.config = config->data.enumd.default_value;
 }
 
-static int enumConfigSet(standardConfig *config, sds *argv, int argc, const char **err) {
-    int enumval;
-    int bitflags = !!(config->flags & MULTI_ARG_CONFIG);
-    enumval = configEnumGetValue(config->data.enumd.enum_value, argv, argc, bitflags);
-
+static int enumConfigSetInternal(standardConfig *config, int enumval, const char **err) {
     if (enumval == INT_MIN) {
         sds enumerr = sdsnew("argument(s) must be one of the following: ");
         configEnum *enumNode = config->data.enumd.enum_value;
@@ -2006,6 +2032,14 @@ static int enumConfigSet(standardConfig *config, sds *argv, int argc, const char
         return 1;
     }
     return (config->flags & VOLATILE_CONFIG) ? 1 : 2;
+}
+
+static int enumConfigSet(standardConfig *config, sds *argv, int argc, const char **err) {
+    int enumval;
+    int bitflags = !!(config->flags & MULTI_ARG_CONFIG);
+    enumval = configEnumGetValue(config->data.enumd.enum_value, argv, argc, bitflags);
+
+    return enumConfigSetInternal(config, enumval, err);
 }
 
 static sds enumConfigGet(standardConfig *config) {
@@ -2183,25 +2217,30 @@ static int numericParseString(standardConfig *config, sds value, const char **er
     return 0;
 }
 
-static int numericConfigSet(standardConfig *config, sds *argv, int argc, const char **err) {
-    UNUSED(argc);
-    long long ll, prev = 0;
-
-    if (!numericParseString(config, argv[0], err, &ll))
-        return 0;
-
+static int numericConfigSetInternal(standardConfig *config, long long ll, const char **err) {
     if (!numericBoundaryCheck(config, ll, err))
         return 0;
 
     if (config->data.numeric.is_valid_fn && !config->data.numeric.is_valid_fn(ll, err))
         return 0;
 
+    long long prev = 0;
     GET_NUMERIC_TYPE(prev)
     if (prev != ll) {
         return setNumericType(config, ll, err);
     }
 
     return (config->flags & VOLATILE_CONFIG) ? 1 : 2;
+}
+
+static int numericConfigSet(standardConfig *config, sds *argv, int argc, const char **err) {
+    UNUSED(argc);
+    long long ll;
+
+    if (!numericParseString(config, argv[0], err, &ll))
+        return 0;
+
+    return numericConfigSetInternal(config, ll, err);
 }
 
 static sds numericConfigGet(standardConfig *config) {
@@ -3439,59 +3478,155 @@ void addModuleNumericConfig(sds name, sds alias, int flags, void *privdata, long
     }
 }
 
-/* Functionality of CONFIG SET for a single non-glob parameter used by RM_ConfigSet */
-int moduleConfigSet(client *c, sds name, sds value) {
+/*-----------------------------------------------------------------------------
+ * API for modules to access the config
+ *----------------------------------------------------------------------------*/
+
+static standardConfig *getConfigChecked(client *c, const sds name, const char **errstr) {
     standardConfig *config = lookupConfig(name);
 
-    if (!config) return 0;
+    if (!config) {
+        if (errstr) *errstr = "Config name not found";
+        return NULL;
+    }
 
     if (config->flags & IMMUTABLE_CONFIG ||
         (config->flags & PROTECTED_CONFIG &&
-         !allowProtectedAction(server.enable_protected_configs, c)))
-        return 0;
-
-    if (server.loading && config->flags & DENY_LOADING_CONFIG) return 0;
-
-    sds old_value = config->interface.get(config);
-    const char *errstr = NULL;
-    int res = performInterfaceSet(config, value, &errstr);
-    if (!res) {
-        serverLog(LL_WARNING, "Failed setting new configuration from module. Error setting %s: %s", config->name, errstr);
-        goto err;
-    }
-    if (res != 1) goto end; /* no change */
-
-    if (config->flags & MODULE_CONFIG) {
-        ModuleConfig *module_config = config->privdata;
-        if (!moduleConfigApply(module_config, &errstr)) {
-            serverLog(LL_WARNING, "Failed applying new configuration from module. Error applying %s: %s", config->name, errstr);
-            goto err;
-        }
-        goto end;
-    } else if (!config->interface.apply) goto end;
-
-    if (!config->interface.apply(&errstr)) {
-        serverLog(LL_WARNING, "Failed applying new configuration from module. Error applying %s: %s", config->name, errstr);
-        goto err;
+         !allowProtectedAction(server.enable_protected_configs, c))) {
+        if (errstr) *errstr = config->flags & IMMUTABLE_CONFIG ? "Config is immutable" : "Config is protected";
+        return NULL;
     }
 
-    goto end;
+    if (server.loading && config->flags & DENY_LOADING_CONFIG) {
+        if (errstr) *errstr = "Config is not allowed during loading";
+        return NULL;
+    }
 
-err:
-    restoreBackupConfig(&config, &old_value, 1, NULL, NULL);
-    sdsfree(old_value);
-    return 0;
-end:
-    sdsfree(old_value);
+    return config;
+}
+
+int moduleGetBoolConfig(sds name, int *res) {
+    standardConfig *config = lookupConfig(name);
+    if (!config) return 0;
+    if (config->type != BOOL_CONFIG) return 0;
+
+    if (res == NULL) return 1;
+
+    if (config->flags & MODULE_CONFIG) 
+        *res = getModuleBoolConfig(config->privdata);
+    else
+        *res = *config->data.yesno.config;
+
     return 1;
 }
 
-/* Functionality of CONFIG GET for a single non-glob parameter used by RM_ConfigGet */
-sds moduleConfigGet(sds name) {
+int moduleGetStringConfig(sds name, sds *res) {
     standardConfig *config = lookupConfig(name);
-    if (!config) return NULL;
+    if (!config) return 0;
+    if (config->type != STRING_CONFIG && config->type != SDS_CONFIG && config->type != SPECIAL_CONFIG)
+        return 0;
 
-    return config->interface.get(config);
+    if (res == NULL) return 1;
+
+    if (config->flags & MODULE_CONFIG) 
+        *res = getModuleStringConfig(config->privdata);
+    else
+        *res = config->interface.get(config);
+
+    return 1;
+}
+
+int moduleGetEnumConfigVal(sds name, int *res) {
+    standardConfig *config = lookupConfig(name);
+    if (!config) return 0;
+    if (config->type != ENUM_CONFIG) return 0;
+
+    if (res == NULL) return 1;
+
+    if (config->flags & MODULE_CONFIG) 
+        *res = getModuleEnumConfig(config->privdata);
+    else
+        *res = *config->data.enumd.config;
+
+    return 1;
+}
+
+int moduleGetEnumConfigName(sds name, sds *res) {
+    standardConfig *config = lookupConfig(name);
+    if (!config) return 0;
+    if (config->type != ENUM_CONFIG) return 0;
+
+    if (res != NULL) *res = enumConfigGet(config);
+
+    return 1;
+}
+
+int moduleGetNumericConfig(sds name, long long *res) {
+    standardConfig *config = lookupConfig(name);
+    if (!config) return 0;
+    if (config->type != NUMERIC_CONFIG) return 0;
+
+    if (res == NULL) return 1;
+
+    if (config->flags & MODULE_CONFIG) 
+        *res = getModuleNumericConfig(config->privdata);
+    else
+        GET_NUMERIC_TYPE(*res);
+
+    return 1;
+}
+
+int moduleSetBoolConfig(client *c, sds name, int val, const char **err) {
+    standardConfig *config = getConfigChecked(c, name, err);
+    if (!config) return 0;
+    if (config->type != BOOL_CONFIG) return 0;
+
+    /* Sanitize input */
+    if (val != 0 && val != 1) val = -1;
+
+    return boolConfigSetInternal(config, val, err);
+}
+int moduleSetStringConfig(client *c, sds name, const char *val, const char **err) {
+    standardConfig *config = getConfigChecked(c, name, err);
+    if (!config) return 0;
+
+    if (config->type == STRING_CONFIG)
+        return stringConfigSetInternal(config, (char *)val, err);
+
+    if (config->type == SDS_CONFIG || config->type == SPECIAL_CONFIG) {
+        sds val = sdsnew(val);
+        int res = config->interface.set(config, &val, 1, err);
+        sdsfree(val);
+        return res;
+    }
+
+    return 0;
+}
+
+int moduleSetEnumConfigWithVal(client *c, sds name, int val, const char **err) {
+    standardConfig *config = getConfigChecked(c, name, err);
+    if (!config) return 0;
+    if (config->type != ENUM_CONFIG) return 0;
+
+    int bitflags = !!(config->flags & MULTI_ARG_CONFIG);
+    val = validateEnumValue(config->data.enumd.enum_value, val, bitflags);
+
+    return enumConfigSetInternal(config, val, err);
+}
+
+int moduleSetEnumConfigWithName(client *c, sds name, sds *vals, int vals_cnt, const char **err) {
+    standardConfig *config = getConfigChecked(c, name, err);
+    if (!config) return 0;
+    if (config->type != ENUM_CONFIG) return 0;
+
+    return enumConfigSet(config, vals, vals_cnt, err);
+}
+
+int moduleSetNumericConfig(client *c, sds name, long long val, const char **err) {
+    standardConfig *config = getConfigChecked(c, name, err);
+    if (config->type != NUMERIC_CONFIG) return 0;
+
+    return numericConfigSetInternal(config, val, err);
 }
 
 /*-----------------------------------------------------------------------------

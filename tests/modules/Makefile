@@ -83,7 +83,7 @@ TEST_MODULES = \
     rdbloadsave.so \
     crash.so \
     internalsecret.so \
-    serverconfig.so
+    configaccess.so
 
 .PHONY: all
 

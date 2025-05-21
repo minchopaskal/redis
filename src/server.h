@@ -3589,9 +3589,17 @@ int setModuleEnumConfig(ModuleConfig *config, int val, const char **err);
 long long getModuleNumericConfig(ModuleConfig *module_config);
 int setModuleNumericConfig(ModuleConfig *config, long long val, const char **err);
 
-/* API for modules to access server config values. */
-int moduleConfigSet(client *c, sds name, sds value);
-sds moduleConfigGet(sds name);
+/* API for modules to access config values. */
+int moduleGetBoolConfig(sds name, int *res);
+int moduleGetStringConfig(sds name, sds *res);
+int moduleGetEnumConfigVal(sds name, int *res);
+int moduleGetEnumConfigName(sds name, sds *res);
+int moduleGetNumericConfig(sds name, long long *res);
+int moduleSetBoolConfig(client *c, sds name, int val, const char **err);
+int moduleSetStringConfig(client *c, sds name, const char *val, const char **err);
+int moduleSetEnumConfigWithVal(client *c, sds name, int val, const char **err);
+int moduleSetEnumConfigWithName(client *c, sds name, sds *vals, int val_cnt, const char **err);
+int moduleSetNumericConfig(client *c, sds name, long long val, const char **err);
 
 /* db.c -- Keyspace access API */
 void updateKeysizesHist(redisDb *db, int didx, uint32_t type, int64_t oldLen, int64_t newLen);
