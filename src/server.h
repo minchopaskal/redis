@@ -3580,6 +3580,7 @@ void addModuleNumericConfig(sds name, sds alias, int flags, void *privdata, long
 void addModuleConfigApply(list *module_configs, ModuleConfig *module_config);
 int moduleConfigApply(ModuleConfig *module_config, const char **err);
 int moduleConfigApplyConfig(list *module_configs, const char **err, const char **err_arg_name);
+int moduleConfigNeedsApply(ModuleConfig *config);
 int getModuleBoolConfig(ModuleConfig *module_config);
 int setModuleBoolConfig(ModuleConfig *config, int val, const char **err);
 sds getModuleStringConfig(ModuleConfig *module_config);
@@ -3590,15 +3591,17 @@ long long getModuleNumericConfig(ModuleConfig *module_config);
 int setModuleNumericConfig(ModuleConfig *config, long long val, const char **err);
 
 /* API for modules to access config values. */
+dictIterator *moduleGetConfigIterator(void);
+const char *moduleConfigIteratorNext(dictIterator *iter, sds pattern, configType *typehint);
+void moduleReleaseConfigIterator(dictIterator *iter);
+int moduleGetConfigType(sds name, configType *res);
 int moduleGetBoolConfig(sds name, int *res);
 int moduleGetStringConfig(sds name, sds *res);
-int moduleGetEnumConfigVal(sds name, int *res);
-int moduleGetEnumConfigName(sds name, sds *res);
+int moduleGetEnumConfig(sds name, sds *res);
 int moduleGetNumericConfig(sds name, long long *res);
 int moduleSetBoolConfig(client *c, sds name, int val, const char **err);
 int moduleSetStringConfig(client *c, sds name, const char *val, const char **err);
-int moduleSetEnumConfigWithVal(client *c, sds name, int val, const char **err);
-int moduleSetEnumConfigWithName(client *c, sds name, sds *vals, int val_cnt, const char **err);
+int moduleSetEnumConfig(client *c, sds name, sds *vals, int val_cnt, const char **err);
 int moduleSetNumericConfig(client *c, sds name, long long val, const char **err);
 
 /* db.c -- Keyspace access API */

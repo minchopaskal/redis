@@ -830,6 +830,14 @@ typedef enum {
     REDISMODULE_ACL_LOG_CHANNEL /* Channel authorization failure */
 } RedisModuleACLLogEntryReason;
 
+typedef enum {
+    REDISMODULE_CONFIG_TYPE_STRING = 0,
+    REDISMODULE_CONFIG_TYPE_ENUM,
+    REDISMODULE_CONFIG_TYPE_NUMERIC,
+    REDISMODULE_CONFIG_TYPE_BOOL,
+    REDISMODULE_CONFIG_TYPE_UNKNOWN
+} RedisModuleConfigType;
+
 /* Incomplete structures needed by both the core and modules. */
 typedef struct RedisModuleIO RedisModuleIO;
 typedef struct RedisModuleDigest RedisModuleDigest;
@@ -891,6 +899,7 @@ typedef struct RedisModuleScanCursor RedisModuleScanCursor;
 typedef struct RedisModuleUser RedisModuleUser;
 typedef struct RedisModuleKeyOptCtx RedisModuleKeyOptCtx;
 typedef struct RedisModuleRdbStream RedisModuleRdbStream;
+typedef struct RedisModuleConfigIterator RedisModuleConfigIterator;
 
 typedef int (*RedisModuleCmdFunc)(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 typedef void (*RedisModuleDisconnectFunc)(RedisModuleCtx *ctx, RedisModuleBlockedClient *bc);
@@ -1333,15 +1342,17 @@ REDISMODULE_API void (*RedisModule_RdbStreamFree)(RedisModuleRdbStream *stream) 
 REDISMODULE_API int (*RedisModule_RdbLoad)(RedisModuleCtx *ctx, RedisModuleRdbStream *stream, int flags) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_RdbSave)(RedisModuleCtx *ctx, RedisModuleRdbStream *stream, int flags) REDISMODULE_ATTR;
 REDISMODULE_API const char * (*RedisModule_GetInternalSecret)(RedisModuleCtx *ctx, size_t *len) REDISMODULE_ATTR;
+REDISMODULE_API RedisModuleConfigIterator* (*RedisModule_GetConfigIterator)(RedisModuleCtx *ctx, const char *pattern) REDISMODULE_ATTR;
+REDISMODULE_API void (*RedisModule_ReleaseConfigIterator)(RedisModuleCtx *ctx, RedisModuleConfigIterator *iter) REDISMODULE_ATTR;
+REDISMODULE_API const char * (*RedisModule_ConfigIteratorNext)(RedisModuleConfigIterator *iter, RedisModuleConfigType *typehint) REDISMODULE_ATTR;
+REDISMODULE_API RedisModuleConfigType (*RedisModule_GetConfigType)(const char *name) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_GetBoolConfig)(RedisModuleCtx *ctx, const char *name, int *res) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_GetStringConfig)(RedisModuleCtx *ctx, const char *name, RedisModuleString **res) REDISMODULE_ATTR;
-REDISMODULE_API int (*RedisModule_GetEnumConfigValue)(RedisModuleCtx *ctx, const char *name, int *res) REDISMODULE_ATTR;
-REDISMODULE_API int (*RedisModule_GetEnumConfigName)(RedisModuleCtx *ctx, const char *name, RedisModuleString **res) REDISMODULE_ATTR;
+REDISMODULE_API int (*RedisModule_GetEnumConfig)(RedisModuleCtx *ctx, const char *name, RedisModuleString **res) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_GetNumericConfig)(RedisModuleCtx *ctx, const char *name, long long *res) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_SetBoolConfig)(RedisModuleCtx *ctx, const char *name, int value, RedisModuleString **err) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_SetStringConfig)(RedisModuleCtx *ctx, const char *name, const char *value, RedisModuleString **err) REDISMODULE_ATTR;
-REDISMODULE_API int (*RedisModule_SetEnumConfigWithValue)(RedisModuleCtx *ctx, const char *name, int value, RedisModuleString **err) REDISMODULE_ATTR;
-REDISMODULE_API int (*RedisModule_SetEnumConfigWithName)(RedisModuleCtx *ctx, const char *name, const char **values, int num_values, RedisModuleString **err) REDISMODULE_ATTR;
+REDISMODULE_API int (*RedisModule_SetEnumConfig)(RedisModuleCtx *ctx, const char *name, const char **values, int num_values, RedisModuleString **err) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_SetNumericConfig)(RedisModuleCtx *ctx, const char *name, long long value, RedisModuleString **err) REDISMODULE_ATTR;
 
 #define RedisModule_IsAOFClient(id) ((id) == UINT64_MAX)
@@ -1718,15 +1729,17 @@ static int RedisModule_Init(RedisModuleCtx *ctx, const char *name, int ver, int 
     REDISMODULE_GET_API(RdbLoad);
     REDISMODULE_GET_API(RdbSave);
     REDISMODULE_GET_API(GetInternalSecret);
+    REDISMODULE_GET_API(GetConfigIterator);
+    REDISMODULE_GET_API(ReleaseConfigIterator);
+    REDISMODULE_GET_API(ConfigIteratorNext);
+    REDISMODULE_GET_API(GetConfigType);
     REDISMODULE_GET_API(GetStringConfig);
     REDISMODULE_GET_API(GetBoolConfig);
-    REDISMODULE_GET_API(GetEnumConfigValue);
-    REDISMODULE_GET_API(GetEnumConfigName);
+    REDISMODULE_GET_API(GetEnumConfig);
     REDISMODULE_GET_API(GetNumericConfig);
     REDISMODULE_GET_API(SetStringConfig);
     REDISMODULE_GET_API(SetBoolConfig);
-    REDISMODULE_GET_API(SetEnumConfigWithValue);
-    REDISMODULE_GET_API(SetEnumConfigWithName);
+    REDISMODULE_GET_API(SetEnumConfig);
     REDISMODULE_GET_API(SetNumericConfig);
 
     if (RedisModule_IsModuleNameBusy && RedisModule_IsModuleNameBusy(name)) return REDISMODULE_ERR;

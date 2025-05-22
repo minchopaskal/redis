@@ -322,27 +322,6 @@ static sds configEnumGetName(configEnum *ce, int values, int bitflags) {
     return names;
 }
 
-/* Validate that the provided enum value is valid. If it is just return it, else
- * return INT_MIN. */
-static int validateEnumValue(configEnum *ce, int values, int bitflags) {
-    int unmatched = values;
-    for( ; ce->name != NULL; ce++) {
-        if (values == ce->val) { /* Short path for perfect match */
-            return values;
-        }
-
-        /* Note: for bitflags, we want them sorted from high to low, so that if there are several / partially
-         * overlapping entries, we'll prefer the ones matching more bits. */
-        if (bitflags && ce->val && ce->val == (unmatched & ce->val)) {
-            unmatched &= ~ce->val;
-        }
-    }
-    if (unmatched) {
-        return INT_MIN;
-    }
-    return values;
-}
-
 /* Used for INFO generation. */
 const char *evictPolicyToString(void) {
     for (configEnum *ce = maxmemory_policy_enum; ce->name != NULL; ce++) {
@@ -3505,6 +3484,38 @@ static standardConfig *getConfigChecked(client *c, const sds name, const char **
     return config;
 }
 
+dictIterator *moduleGetConfigIterator(void) {
+    return dictGetIterator(configs);
+}
+
+const char *moduleConfigIteratorNext(dictIterator *iter, sds pattern, configType *typehint) {
+    dictEntry *de = NULL;
+    standardConfig *config = NULL;
+    while ((de = dictNext(iter)) != NULL) {
+        config = dictGetVal(de);
+        
+        if (config->flags & HIDDEN_CONFIG) continue;
+        if (pattern && !stringmatch(pattern, config->name, 1))
+            continue;
+
+        break;
+    }
+    if (!de) return NULL;
+    if (typehint) *typehint = config->type;
+    return config->name;
+}
+
+void moduleReleaseConfigIterator(dictIterator *iter) {
+    dictReleaseIterator(iter);
+}
+
+int moduleGetConfigType(sds name, configType *res) {
+    standardConfig *config = lookupConfig(name);
+    if (!config) return 0;
+    if (res) *res = config->type;
+    return 1;
+}
+
 int moduleGetBoolConfig(sds name, int *res) {
     standardConfig *config = lookupConfig(name);
     if (!config) return 0;
@@ -3523,35 +3534,15 @@ int moduleGetBoolConfig(sds name, int *res) {
 int moduleGetStringConfig(sds name, sds *res) {
     standardConfig *config = lookupConfig(name);
     if (!config) return 0;
-    if (config->type != STRING_CONFIG && config->type != SDS_CONFIG && config->type != SPECIAL_CONFIG)
-        return 0;
 
     if (res == NULL) return 1;
 
-    if (config->flags & MODULE_CONFIG) 
-        *res = getModuleStringConfig(config->privdata);
-    else
-        *res = config->interface.get(config);
+    *res = config->interface.get(config);
 
     return 1;
 }
 
-int moduleGetEnumConfigVal(sds name, int *res) {
-    standardConfig *config = lookupConfig(name);
-    if (!config) return 0;
-    if (config->type != ENUM_CONFIG) return 0;
-
-    if (res == NULL) return 1;
-
-    if (config->flags & MODULE_CONFIG) 
-        *res = getModuleEnumConfig(config->privdata);
-    else
-        *res = *config->data.enumd.config;
-
-    return 1;
-}
-
-int moduleGetEnumConfigName(sds name, sds *res) {
+int moduleGetEnumConfig(sds name, sds *res) {
     standardConfig *config = lookupConfig(name);
     if (!config) return 0;
     if (config->type != ENUM_CONFIG) return 0;
@@ -3576,6 +3567,45 @@ int moduleGetNumericConfig(sds name, long long *res) {
     return 1;
 }
 
+static int configNeedsApply(standardConfig *config) {
+    return ((config->flags & MODULE_CONFIG) && moduleConfigNeedsApply(config->privdata)) ||
+           config->interface.apply;
+}
+
+static int configApply(standardConfig *config, sds old_value, const char **err) {
+    if (!configNeedsApply(config)) return 1;
+
+    int res = 0;
+    if (config->flags & MODULE_CONFIG) 
+        res = moduleConfigApply(config->privdata, err);
+    else
+        res = config->interface.apply(err);
+
+    if (res) return res;
+
+    /* Apply failed - restore old value and apply it again since we don't know
+     * the side effects of the failed apply. */
+    if (!performInterfaceSet(config, old_value, err)) {
+        snprintf(loadbuf, LOADBUF_SIZE,
+                "Failed restoring failed config set of %s with error: %s", config->name, *err);
+        *err = loadbuf;
+        return 0;
+    }
+    if (config->flags & MODULE_CONFIG) 
+        res = moduleConfigApply(config->privdata, err);
+    else
+        res = config->interface.apply(err);
+
+    if (!res) {
+        snprintf(loadbuf, LOADBUF_SIZE,
+                "Failed restoring failed config set of %s with error: %s", config->name, *err);
+        *err = loadbuf;
+        return 0;
+    }
+
+    return res;
+}
+
 int moduleSetBoolConfig(client *c, sds name, int val, const char **err) {
     standardConfig *config = getConfigChecked(c, name, err);
     if (!config) return 0;
@@ -3584,49 +3614,71 @@ int moduleSetBoolConfig(client *c, sds name, int val, const char **err) {
     /* Sanitize input */
     if (val != 0 && val != 1) val = -1;
 
-    return boolConfigSetInternal(config, val, err);
+    /* Only get the old value if we need to apply the config. It will be used
+     * for restoring it if apply fails. */
+    sds old_value = configNeedsApply(config) ? config->interface.get(config) : NULL;
+    int res = boolConfigSetInternal(config, val, err);
+
+    if (res) {
+        res = configApply(config, old_value, err);
+    }
+    if (old_value) sdsfree(old_value);
+
+    return res;
 }
+
 int moduleSetStringConfig(client *c, sds name, const char *val, const char **err) {
     standardConfig *config = getConfigChecked(c, name, err);
     if (!config) return 0;
 
-    if (config->type == STRING_CONFIG)
-        return stringConfigSetInternal(config, (char *)val, err);
+    sds old_value = configNeedsApply(config) ? config->interface.get(config) : NULL;
 
-    if (config->type == SDS_CONFIG || config->type == SPECIAL_CONFIG) {
-        sds val = sdsnew(val);
-        int res = config->interface.set(config, &val, 1, err);
-        sdsfree(val);
-        return res;
+    int res = 0;
+    if (config->type == STRING_CONFIG)
+        res = stringConfigSetInternal(config, (char *)val, err);
+    else {
+        sds sdsval = sdsnew(val);
+        res = performInterfaceSet(config, sdsval, err);
+        sdsfree(sdsval);
     }
 
-    return 0;
+    if (res) {
+        res = configApply(config, old_value, err);
+    }
+    if (old_value) sdsfree(old_value);
+
+    return res;
 }
 
-int moduleSetEnumConfigWithVal(client *c, sds name, int val, const char **err) {
+int moduleSetEnumConfig(client *c, sds name, sds *vals, int vals_cnt, const char **err) {
     standardConfig *config = getConfigChecked(c, name, err);
     if (!config) return 0;
     if (config->type != ENUM_CONFIG) return 0;
 
-    int bitflags = !!(config->flags & MULTI_ARG_CONFIG);
-    val = validateEnumValue(config->data.enumd.enum_value, val, bitflags);
+    sds old_value = configNeedsApply(config) ? config->interface.get(config) : NULL;
+    int res = enumConfigSet(config, vals, vals_cnt, err);
 
-    return enumConfigSetInternal(config, val, err);
-}
+    if (res) {
+        res = configApply(config, old_value, err);
+    }
+    if (old_value) sdsfree(old_value);
 
-int moduleSetEnumConfigWithName(client *c, sds name, sds *vals, int vals_cnt, const char **err) {
-    standardConfig *config = getConfigChecked(c, name, err);
-    if (!config) return 0;
-    if (config->type != ENUM_CONFIG) return 0;
-
-    return enumConfigSet(config, vals, vals_cnt, err);
+    return res;
 }
 
 int moduleSetNumericConfig(client *c, sds name, long long val, const char **err) {
     standardConfig *config = getConfigChecked(c, name, err);
     if (config->type != NUMERIC_CONFIG) return 0;
 
-    return numericConfigSetInternal(config, val, err);
+    sds old_value = configNeedsApply(config) ? config->interface.get(config) : NULL;
+    int res = numericConfigSetInternal(config, val, err);
+
+    if (res) {
+        res = configApply(config, old_value, err);
+    }
+    if (old_value) sdsfree(old_value);
+
+    return res;
 }
 
 /*-----------------------------------------------------------------------------
