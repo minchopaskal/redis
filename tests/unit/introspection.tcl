@@ -786,7 +786,7 @@ start_server {tags {"introspection"}} {
             eval "r config set $some_configs"
         }
 
-        # Make sure we reverted back to previous configs
+        ## Make sure we reverted back to previous configs
         dict for {conf val} $backups {
             assert_equal [lindex [r config get $conf] 1] $val
         }
