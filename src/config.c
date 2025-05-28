@@ -2099,6 +2099,10 @@ static int numericBoundaryCheck(standardConfig *config, long long ll, const char
         config->data.numeric.numeric_type == NUMERIC_TYPE_UINT ||
         config->data.numeric.numeric_type == NUMERIC_TYPE_SIZE_T) {
         /* Boundary check for unsigned types */
+        if (ll < 0) {
+            *err = "argument must be greater or equal to 0";
+            return 0;
+        }
         unsigned long long ull = ll;
         unsigned long long upper_bound = config->data.numeric.upper_bound;
         unsigned long long lower_bound = config->data.numeric.lower_bound;

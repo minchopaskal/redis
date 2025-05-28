@@ -262,23 +262,23 @@ int TestSetBoolConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv
     const char *config_value = RedisModule_StringPtrLen(argv[2], &value_len);
 
     int bool_value;
-    if (!strcasecmp(config_value, "yes") || !strcasecmp(config_value, "1") || 
-        !strcasecmp(config_value, "true") || !strcasecmp(config_value, "on")) {
+    if (!strcasecmp(config_value, "yes")) {
         bool_value = 1;
-    } else {
+    } else if (!strcasecmp(config_value, "no")) {
         bool_value = 0;
+    } else {
+        bool_value = -1;
     }
 
     RedisModuleString *error = NULL;
     int result = RedisModule_SetBoolConfig(ctx, config_name, bool_value, &error);
-    if (result == REDISMODULE_OK) {
-        RedisModule_ReplyWithSimpleString(ctx, "OK");
-    } else {
+    if (result == REDISMODULE_ERR) {
         RedisModule_ReplyWithErrorFormat(ctx, "ERR Failed to set bool config %s: %s", config_name, RedisModule_StringPtrLen(error, NULL));
         RedisModule_FreeString(ctx, error);
         return REDISMODULE_ERR;
     }
 
+    RedisModule_ReplyWithSimpleString(ctx, "OK");
     return REDISMODULE_OK;
 }
 

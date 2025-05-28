@@ -30,6 +30,11 @@ start_server {tags {"modules"}} {
 
         set maxmemory_policy_name [r configaccess.getenum maxmemory-policy]
         assert_equal [lindex [r config get maxmemory-policy] 1] $maxmemory_policy_name
+
+        # Test percent config
+        r config set maxmemory 100000
+        r configaccess.setnumeric maxmemory-clients -50
+        assert_equal [lindex [r config get maxmemory-clients] 1] 50%
     }
 
     test {Test module config get with non-existent configs} {
@@ -56,7 +61,7 @@ start_server {tags {"modules"}} {
 
         # Test setting bool config
         set old_protected_mode [r config get protected-mode]
-        r configaccess.setbool protected-mode 0
+        r configaccess.setbool protected-mode no
         assert_equal "protected-mode no" [r config get protected-mode]
         r config set protected-mode [lindex $old_protected_mode 1]
 
@@ -94,11 +99,11 @@ start_server {tags {"modules"}} {
 
     test {Test module config set with error cases} {
         # Test setting a non-existent config
-        catch {r configaccess.setbool nonexistent_config 1} err
+        catch {r configaccess.setbool nonexistent_config yes} err
         assert_match "*ERR*" $err
 
         # Test setting a read-only config
-        catch {r configaccess.setbool moduleconfigs.immutable_bool 1} err
+        catch {r configaccess.setbool moduleconfigs.immutable_bool yes} err
         assert_match "*ERR*" $err
 
         # Test setting an enum config with invalid value
@@ -222,5 +227,25 @@ start_server {tags {"modules"}} {
             # Verify type is correct
             assert_equal $type [r configaccess.getconfigtype $name]
         }
+    }
+
+    test {Test config rollback on apply} {
+        set og_port [lindex [r config get port] 1]
+
+        set used_port [find_available_port $::baseport $::portcount]
+
+        # Run a dummy server on used_port so we know we can't configure redis to 
+        # use it. It's ok for this to fail because that means used_port is invalid 
+        # anyway
+        catch {set sockfd [socket -server dummy_accept -myaddr 127.0.0.1 $used_port]} e
+        if {$::verbose} { puts "dummy_accept: $e" }
+
+        # Try to listen on the used port, pass some more configs to make sure the
+        # returned failure message is for the first bad config and everything is rolled back.
+        assert_error "ERR Failed to set numeric config port: Unable to listen on this port*" {
+            eval "r configaccess.setnumeric port $used_port"
+        }
+
+        assert_equal [lindex [r config get port] 1] $og_port
     }
 }
