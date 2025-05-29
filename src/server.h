@@ -3592,8 +3592,7 @@ int setModuleNumericConfig(ModuleConfig *config, long long val, const char **err
 
 /* API for modules to access config values. */
 dictIterator *moduleGetConfigIterator(void);
-const char *moduleConfigIteratorNext(dictIterator *iter, sds pattern, configType *typehint);
-void moduleReleaseConfigIterator(dictIterator *iter);
+const char *moduleConfigIteratorNext(dictIterator **iter, sds pattern, int is_glob, configType *typehint);
 int moduleGetConfigType(sds name, configType *res);
 int moduleGetBoolConfig(sds name, int *res);
 int moduleGetStringConfig(sds name, sds *res);

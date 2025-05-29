@@ -3455,7 +3455,9 @@ void addModuleNumericConfig(sds name, sds alias, int flags, void *privdata, long
  * API for modules to access the config
  *----------------------------------------------------------------------------*/
 
-static standardConfig *getConfigChecked(client *c, const sds name, const char **errstr) {
+/* If a config with the given `name` does not exist or is not mutable, return
+ * NULL, else return the config. */
+static standardConfig *getMutableConfig(client *c, const sds name, const char **errstr) {
     standardConfig *config = lookupConfig(name);
 
     if (!config) {
@@ -3482,25 +3484,38 @@ dictIterator *moduleGetConfigIterator(void) {
     return dictGetIterator(configs);
 }
 
-const char *moduleConfigIteratorNext(dictIterator *iter, sds pattern, configType *typehint) {
-    dictEntry *de = NULL;
-    standardConfig *config = NULL;
-    while ((de = dictNext(iter)) != NULL) {
-        config = dictGetVal(de);
-        
-        if (config->flags & HIDDEN_CONFIG) continue;
-        if (pattern && !stringmatch(pattern, config->name, 1))
-            continue;
+const char *moduleConfigIteratorNext(dictIterator **iter, sds pattern, int is_glob, configType *typehint) {
+    if (*iter == NULL) return NULL;
 
-        break;
+    standardConfig *config = NULL;
+
+    /* Special case for non-glob patterns - we only need to check if the config
+     * exists and return it. That save us iteration cycles. */
+    if (pattern && !is_glob) {
+        /* Release the iterator so we stop the iteration at this point */
+        dictReleaseIterator(*iter);
+        *iter = NULL;
+
+        dictEntry *de = dictFind(configs, pattern);
+        if (!de) return NULL;
+        config = dictGetVal(de);
+        if (typehint) *typehint = config->type;
+        return config->name;
+    }
+
+    dictEntry *de = NULL;
+    while ((de = dictNext(*iter)) != NULL) {
+        config = dictGetVal(de);
+
+        /* Note that hidden configs require an exact match (not a pattern) */
+        if (config->flags & HIDDEN_CONFIG) continue;
+
+        if (!pattern || stringmatch(pattern, config->name, 1))
+            break;
     }
     if (!de) return NULL;
     if (typehint) *typehint = config->type;
     return config->name;
-}
-
-void moduleReleaseConfigIterator(dictIterator *iter) {
-    dictReleaseIterator(iter);
 }
 
 int moduleGetConfigType(sds name, configType *res) {
@@ -3580,7 +3595,7 @@ static int configApply(standardConfig *config, sds old_value, const char **err) 
 }
 
 int moduleSetBoolConfig(client *c, sds name, int val, const char **err) {
-    standardConfig *config = getConfigChecked(c, name, err);
+    standardConfig *config = getMutableConfig(c, name, err);
     if (!config) return 0;
     if (config->type != BOOL_CONFIG) return 0;
 
@@ -3603,7 +3618,7 @@ int moduleSetBoolConfig(client *c, sds name, int val, const char **err) {
 }
 
 int moduleSetStringConfig(client *c, sds name, const char *val, const char **err) {
-    standardConfig *config = getConfigChecked(c, name, err);
+    standardConfig *config = getMutableConfig(c, name, err);
     if (!config) return 0;
 
     sds old_value = config->interface.get(config);
@@ -3630,7 +3645,7 @@ int moduleSetStringConfig(client *c, sds name, const char *val, const char **err
 }
 
 int moduleSetEnumConfig(client *c, sds name, sds *vals, int vals_cnt, const char **err) {
-    standardConfig *config = getConfigChecked(c, name, err);
+    standardConfig *config = getMutableConfig(c, name, err);
     if (!config) return 0;
     if (config->type != ENUM_CONFIG) return 0;
 
@@ -3650,7 +3665,7 @@ int moduleSetEnumConfig(client *c, sds name, sds *vals, int vals_cnt, const char
 }
 
 int moduleSetNumericConfig(client *c, sds name, long long val, const char **err) {
-    standardConfig *config = getConfigChecked(c, name, err);
+    standardConfig *config = getMutableConfig(c, name, err);
     if (config->type != NUMERIC_CONFIG) return 0;
 
     sds old_value = config->interface.get(config);

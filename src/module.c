@@ -377,6 +377,7 @@ typedef struct RedisModuleServerInfoData {
 typedef struct RedisModuleConfigIterator {
     dictIterator *di; /* Iterator for the configs dict. */
     sds pattern; /* Pattern to filter configs by name. */
+    int is_glob; /* Is the pattern a glob-pattern or a fixed string? */
 } RedisModuleConfigIterator;
 
 /* Flags for moduleCreateArgvFromUserFormat(). */
@@ -13586,11 +13587,12 @@ RedisModuleConfigIterator *RM_GetConfigIterator(RedisModuleCtx *ctx, const char 
     if (iter == NULL) return NULL;
 
     iter->di = moduleGetConfigIterator();
-    if (pattern != NULL && strpbrk(pattern, "[*?"))
+    if (pattern != NULL) {
         iter->pattern = sdsnew(pattern);
-    else
-         iter->pattern = NULL;
-
+        iter->is_glob = (strpbrk(pattern, "*?[") != NULL);
+    } else
+        iter->pattern = NULL;
+ 
     if (ctx != NULL) autoMemoryAdd(ctx,REDISMODULE_AM_CONFIG, iter);
     return iter;
 }
@@ -13600,7 +13602,7 @@ RedisModuleConfigIterator *RM_GetConfigIterator(RedisModuleCtx *ctx, const char 
  * that was used to create the iterator. */
 void RM_ReleaseConfigIterator(RedisModuleCtx *ctx, RedisModuleConfigIterator *iter) {
     if (ctx != NULL) autoMemoryFreed(ctx,REDISMODULE_AM_CONFIG,iter);
-    moduleReleaseConfigIterator(iter->di);
+    if (iter->di) dictReleaseIterator(iter->di);
     sdsfree(iter->pattern);
     RM_Free(iter);
 }
@@ -13622,25 +13624,6 @@ static RedisModuleConfigType convertToRedisModuleConfigType(configType type) {
     }
 }
 
-/* Use to iterate over all configs.
- *
- * Returns the name of the next config, or NULL if there are no more configs.
- * Returned string is non-owning and thus should not be freed.
- * If a pattern was provided when creating the iterator, only configs matching
- * the pattern will be returned.
- * Optionally, the type of the config can be returned in `typehint`.
- * See RedisModule_GetConfigType for more details on config types.
- *
- * See RedisModule_GetConfigIterator() for example usage. */
-const char *RM_ConfigIteratorNext(RedisModuleConfigIterator *iter, RedisModuleConfigType *typehint) {
-    if (iter == NULL) return NULL;
-    configType type;
-    const char *res = moduleConfigIteratorNext(iter->di, iter->pattern, typehint != NULL ? &type : NULL);
-    if (res != NULL && typehint != NULL)
-        *typehint = convertToRedisModuleConfigType(type);
-    return res;
-}
-
 /* Get the type of a config as RedisModuleConfigType.
  *
  * Explanation of config types:
@@ -13659,6 +13642,26 @@ RedisModuleConfigType RM_GetConfigType(const char *name) {
         return REDISMODULE_CONFIG_TYPE_UNKNOWN;
     }
     return convertToRedisModuleConfigType(type);
+}
+
+/* Use to iterate over all configs.
+ *
+ * Returns the name of the next config, or NULL if there are no more configs.
+ * Returned string is non-owning and thus should not be freed.
+ * If a pattern was provided when creating the iterator, only configs matching
+ * the pattern will be returned.
+ * Optionally, the type of the config can be returned in `typehint`.
+ * See RedisModule_GetConfigType for more details on config types.
+ *
+ * See RedisModule_GetConfigIterator() for example usage. */
+const char *RM_ConfigIteratorNext(RedisModuleConfigIterator *iter, RedisModuleConfigType *typehint) {
+    if (iter == NULL) return NULL;
+
+    configType type;
+    const char *res = moduleConfigIteratorNext(&iter->di, iter->pattern, iter->is_glob, typehint != NULL ? &type : NULL);
+    if (res != NULL && typehint != NULL)
+        *typehint = convertToRedisModuleConfigType(type);
+    return res;
 }
 
 /* Get the value of a config as a string. This function can be used to get the
