@@ -172,7 +172,8 @@ start_server {tags {"modules"}} {
         assert_equal "bool" [r configaccess.getconfigtype configaccess.bool]
 
         # Test with non-existent config
-        assert_equal "unknown" [r configaccess.getconfigtype nonexistent_config]
+        catch {r configaccess.getconfigtype nonexistent_config} err
+        assert_match "ERR Config does not exist" $err
     }
 
     test {Test config iterator with typehint} {

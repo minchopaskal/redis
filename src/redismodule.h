@@ -835,7 +835,6 @@ typedef enum {
     REDISMODULE_CONFIG_TYPE_ENUM,
     REDISMODULE_CONFIG_TYPE_NUMERIC,
     REDISMODULE_CONFIG_TYPE_BOOL,
-    REDISMODULE_CONFIG_TYPE_UNKNOWN
 } RedisModuleConfigType;
 
 /* Incomplete structures needed by both the core and modules. */
@@ -1345,7 +1344,7 @@ REDISMODULE_API const char * (*RedisModule_GetInternalSecret)(RedisModuleCtx *ct
 REDISMODULE_API RedisModuleConfigIterator* (*RedisModule_GetConfigIterator)(RedisModuleCtx *ctx, const char *pattern) REDISMODULE_ATTR;
 REDISMODULE_API void (*RedisModule_ReleaseConfigIterator)(RedisModuleCtx *ctx, RedisModuleConfigIterator *iter) REDISMODULE_ATTR;
 REDISMODULE_API const char * (*RedisModule_ConfigIteratorNext)(RedisModuleConfigIterator *iter, RedisModuleConfigType *typehint) REDISMODULE_ATTR;
-REDISMODULE_API RedisModuleConfigType (*RedisModule_GetConfigType)(const char *name) REDISMODULE_ATTR;
+REDISMODULE_API int (*RedisModule_GetConfigType)(const char *name, RedisModuleConfigType *res) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_GetBoolConfig)(RedisModuleCtx *ctx, const char *name, int *res) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_GetStringConfig)(RedisModuleCtx *ctx, const char *name, RedisModuleString **res) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_GetEnumConfig)(RedisModuleCtx *ctx, const char *name, RedisModuleString **res) REDISMODULE_ATTR;

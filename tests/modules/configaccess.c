@@ -27,7 +27,12 @@ int TestGetConfigType_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv
     size_t len;
     const char *config_name = RedisModule_StringPtrLen(argv[1], &len);
 
-    RedisModuleConfigType type = RedisModule_GetConfigType(config_name);
+    RedisModuleConfigType type;
+    int res = RedisModule_GetConfigType(config_name, &type);
+    if (res == REDISMODULE_ERR) {
+        RedisModule_ReplyWithError(ctx, "ERR Config does not exist");
+        return REDISMODULE_ERR;
+    }
 
     const char *type_str;
     switch (type) {
@@ -42,9 +47,6 @@ int TestGetConfigType_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv
         break;
     case REDISMODULE_CONFIG_TYPE_ENUM:
         type_str = "enum";
-        break;
-    case REDISMODULE_CONFIG_TYPE_UNKNOWN:
-        type_str = "unknown";
         break;
     default:
         type_str = "unknown";
@@ -101,9 +103,6 @@ int TestConfigIteratorWithTypehint_RedisCommand(RedisModuleCtx *ctx, RedisModule
             break;
         case REDISMODULE_CONFIG_TYPE_ENUM:
             type_str = "enum";
-            break;
-        case REDISMODULE_CONFIG_TYPE_UNKNOWN:
-            type_str = "unknown";
             break;
         default:
             type_str = "unknown";
