@@ -1343,7 +1343,7 @@ REDISMODULE_API int (*RedisModule_RdbSave)(RedisModuleCtx *ctx, RedisModuleRdbSt
 REDISMODULE_API const char * (*RedisModule_GetInternalSecret)(RedisModuleCtx *ctx, size_t *len) REDISMODULE_ATTR;
 REDISMODULE_API RedisModuleConfigIterator* (*RedisModule_GetConfigIterator)(RedisModuleCtx *ctx, const char *pattern) REDISMODULE_ATTR;
 REDISMODULE_API void (*RedisModule_ReleaseConfigIterator)(RedisModuleCtx *ctx, RedisModuleConfigIterator *iter) REDISMODULE_ATTR;
-REDISMODULE_API const char * (*RedisModule_ConfigIteratorNext)(RedisModuleConfigIterator *iter, RedisModuleConfigType *typehint) REDISMODULE_ATTR;
+REDISMODULE_API const char * (*RedisModule_ConfigIteratorNext)(RedisModuleConfigIterator *iter) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_GetConfigType)(const char *name, RedisModuleConfigType *res) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_GetBoolConfig)(RedisModuleCtx *ctx, const char *name, int *res) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_GetStringConfig)(RedisModuleCtx *ctx, const char *name, RedisModuleString **res) REDISMODULE_ATTR;

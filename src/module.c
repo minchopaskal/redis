@@ -13566,15 +13566,20 @@ const char* RM_GetInternalSecret(RedisModuleCtx *ctx, size_t *len) {
  * }
  * RedisModule_ReleaseConfigIterator(ctx, iter);
  *
- * // Or optionally one can use type hints to get the config value directly
+ * // Or optionally one can check the type to get the config value directly
  * iter = RedisModule_GetConfigIterator(ctx, "*");
- * RedisModuleConfigType type;
- * while ((config_name = RedisModule_ConfigIteratorNext(iter, &type)) != NULL) {
+ * while ((config_name = RedisModule_ConfigIteratorNext(iter)) != NULL) {
+ *     RedisModuleConfigType type = RedisModule_GetConfigType(config_name);
  *     if (type == REDISMODULE_CONFIG_TYPE_NUMERIC) {
  *         long long value;
  *         RedisModule_GetNumericConfig(ctx, config_name, &value);
  *         // Do something with `value`...
+ *     } else if (type == REDISMODULE_CONFIG_TYPE_BOOL) {
+ *         int value;
+ *         RedisModule_GetBoolConfig(ctx, config_name, &value);
+ *         // Do something with `value`...
  *     }
+ *     // ...
  * }
  * RedisModule_ReleaseConfigIterator(ctx, iter);
  * ```
@@ -13647,22 +13652,16 @@ int RM_GetConfigType(const char *name, RedisModuleConfigType *res) {
     return REDISMODULE_OK;
 }
 
-/* Use to iterate over all configs.
+/* Go to the next element of the config iterator.
  *
  * Returns the name of the next config, or NULL if there are no more configs.
  * Returned string is non-owning and thus should not be freed.
  * If a pattern was provided when creating the iterator, only configs matching
  * the pattern will be returned.
- * Optionally, the type of the config can be returned in `typehint`.
- * See RedisModule_GetConfigType for more details on config types.
  *
  * See RedisModule_GetConfigIterator() for example usage. */
-const char *RM_ConfigIteratorNext(RedisModuleConfigIterator *iter, RedisModuleConfigType *typehint) {
-    configType type;
-    const char *res = moduleConfigIteratorNext(&iter->di, iter->pattern, iter->is_glob, typehint != NULL ? &type : NULL);
-    if (res != NULL && typehint != NULL)
-        *typehint = convertToRedisModuleConfigType(type);
-    return res;
+const char *RM_ConfigIteratorNext(RedisModuleConfigIterator *iter) {
+    return moduleConfigIteratorNext(&iter->di, iter->pattern, iter->is_glob, NULL);
 }
 
 /* Get the value of a config as a string. This function can be used to get the
@@ -13760,8 +13759,8 @@ int RM_SetBoolConfig(RedisModuleCtx *ctx, const char *name, int value, RedisModu
 
 /* Set the value of an enum config.
  *
- * If the config is multi-argument one the value parameter must be a
- * space-separated string.
+ * If the config is multi-argument the value parameter must be a space-separated
+ * string.
  *
  * See RedisModule_SetStringConfig for return value. */
 int RM_SetEnumConfig(RedisModuleCtx *ctx, const char *name, const char **values, int num_values, RedisModuleString **err) {

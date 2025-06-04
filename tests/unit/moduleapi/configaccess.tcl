@@ -117,7 +117,7 @@ start_server {tags {"modules"}} {
 
     test {Test module get all configs} {
         # Get all configs using the module command
-        set all_configs [r configaccess.getallconfigs]
+        set all_configs [r configaccess.getconfigs]
 
         # Verify the number of configs matches the number of configs returned
         # by Redis's native CONFIG GET command.
@@ -154,10 +154,10 @@ start_server {tags {"modules"}} {
         assert {$found_module_config == 1}
 
         # Test pattern matching
-        set moduleconfigs_count [r configaccess.getallconfigs "moduleconfigs.*"]
+        set moduleconfigs_count [r configaccess.getconfigs "moduleconfigs.*"]
         assert_equal 7 [llength $moduleconfigs_count]
 
-        set memoryconfigs_count [r configaccess.getallconfigs "*memory"]
+        set memoryconfigs_count [r configaccess.getconfigs "*memory"]
         assert_equal 3 [llength $memoryconfigs_count]
     }
 
@@ -174,60 +174,6 @@ start_server {tags {"modules"}} {
         # Test with non-existent config
         catch {r configaccess.getconfigtype nonexistent_config} err
         assert_match "ERR Config does not exist" $err
-    }
-
-    test {Test config iterator with typehint} {
-        # Get configs with typehint
-        set configs [r configaccess.iteratorwithtypehint]
-
-        # Verify we have configs of different types
-        set has_bool 0
-        set has_numeric 0
-        set has_string 0
-        set has_enum 0
-
-        foreach config $configs {
-            set name [lindex $config 0]
-            set type [lindex $config 1]
-            set value [lindex $config 2]
-
-            # Verify the type matches what we get from getconfigtype
-            assert_equal $type [r configaccess.getconfigtype $name]
-
-            # Track which types we've seen
-            if {$type eq "bool"} {
-                set has_bool 1
-            } elseif {$type eq "numeric"} {
-                set has_numeric 1
-            } elseif {$type eq "string"} {
-                set has_string 1
-            } elseif {$type eq "enum"} {
-                set has_enum 1
-            }
-        }
-
-        # Verify we found at least one of each type
-        assert_equal 1 $has_bool
-        assert_equal 1 $has_numeric
-        assert_equal 1 $has_string
-        assert_equal 1 $has_enum
-    }
-
-    test {Test config iterator with pattern and typehint} {
-        # Get only bool configs
-        set configs [r configaccess.iteratorwithtypehint "a*"]
-
-        # Verify all returned configs match the pattern and have correct type
-        foreach config $configs {
-            set name [lindex $config 0]
-            set type [lindex $config 1]
-
-            # Verify name contains "appendonly"
-            assert_match "a*" $name
-
-            # Verify type is correct
-            assert_equal $type [r configaccess.getconfigtype $name]
-        }
     }
 
     test {Test config rollback on apply} {
