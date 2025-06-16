@@ -18,15 +18,15 @@ start_server {tags {"modules"}} {
 
         # Test string config
         set logfile [r config get logfile]
-        assert_equal [lindex $logfile 1] [r configaccess.getstring logfile]
+        assert_equal [lindex $logfile 1] [r configaccess.get logfile]
 
         # Test SDS config
         set requirepass [r config get requirepass]
-        assert_equal [lindex $requirepass 1] [r configaccess.getstring requirepass]
+        assert_equal [lindex $requirepass 1] [r configaccess.get requirepass]
 
         # Test special config
         set oom_score_adj_values [r config get oom-score-adj-values]
-        assert_equal [lindex $oom_score_adj_values 1] [r configaccess.getstring oom-score-adj-values]
+        assert_equal [lindex $oom_score_adj_values 1] [r configaccess.get oom-score-adj-values]
 
         set maxmemory_policy_name [r configaccess.getenum maxmemory-policy]
         assert_equal [lindex [r config get maxmemory-policy] 1] $maxmemory_policy_name
@@ -35,6 +35,14 @@ start_server {tags {"modules"}} {
         r config set maxmemory 100000
         r configaccess.setnumeric maxmemory-clients -50
         assert_equal [lindex [r config get maxmemory-clients] 1] 50%
+
+        # Test multi-argument enum config
+        r config set moduleconfigs.flags "one two four"
+        assert_equal "five two" [r configaccess.getenum moduleconfigs.flags]
+
+        # Test getting multi-argument enum config via generic get
+        r config set moduleconfigs.flags "two four"
+        assert_equal "two four" [r configaccess.get moduleconfigs.flags]
     }
 
     test {Test module config get with non-existent configs} {
@@ -45,7 +53,7 @@ start_server {tags {"modules"}} {
         catch {r configaccess.getbool nonexistent_config} err
         assert_match "ERR*" $err
 
-        catch {r configaccess.getstring nonexistent_config} err
+        catch {r configaccess.get nonexistent_config} err
         assert_match "ERR*" $err
 
         catch {r configaccess.getenum nonexistent_config} err
@@ -67,7 +75,7 @@ start_server {tags {"modules"}} {
 
         # Test setting string config
         set old_masteruser [r config get masteruser]
-        r configaccess.setstring masteruser "__newmasteruser__"
+        r configaccess.set masteruser "__newmasteruser__"
         assert_equal "__newmasteruser__" [lindex [r config get masteruser] 1]
         r config set masteruser [lindex $old_masteruser 1]
 
@@ -77,6 +85,18 @@ start_server {tags {"modules"}} {
         r configaccess.setenum loglevel warning
         assert_equal "loglevel warning" [r config get loglevel]
         r config set loglevel [lindex $old_loglevel 1]
+
+        # Test setting multi-argument enum config
+        r config set moduleconfigs.flags "one two four"
+        assert_equal "moduleconfigs.flags {five two}" [r config get moduleconfigs.flags]
+        r configaccess.setenum moduleconfigs.flags "two four"
+        assert_equal "moduleconfigs.flags {two four}" [r config get moduleconfigs.flags]
+
+        # Test setting multi-argument enum config via generic set
+        r config set moduleconfigs.flags "one two four"
+        assert_equal "moduleconfigs.flags {five two}" [r config get moduleconfigs.flags]
+        r configaccess.set moduleconfigs.flags "two four"
+        assert_equal "moduleconfigs.flags {two four}" [r config get moduleconfigs.flags]
     }
 
     test {Test module config set with module configs} {

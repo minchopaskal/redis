@@ -1345,13 +1345,13 @@ REDISMODULE_API RedisModuleConfigIterator* (*RedisModule_GetConfigIterator)(Redi
 REDISMODULE_API void (*RedisModule_ReleaseConfigIterator)(RedisModuleCtx *ctx, RedisModuleConfigIterator *iter) REDISMODULE_ATTR;
 REDISMODULE_API const char * (*RedisModule_ConfigIteratorNext)(RedisModuleConfigIterator *iter) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_GetConfigType)(const char *name, RedisModuleConfigType *res) REDISMODULE_ATTR;
+REDISMODULE_API int (*RedisModule_GetConfig)(RedisModuleCtx *ctx, const char *name, RedisModuleString **res) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_GetBoolConfig)(RedisModuleCtx *ctx, const char *name, int *res) REDISMODULE_ATTR;
-REDISMODULE_API int (*RedisModule_GetStringConfig)(RedisModuleCtx *ctx, const char *name, RedisModuleString **res) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_GetEnumConfig)(RedisModuleCtx *ctx, const char *name, RedisModuleString **res) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_GetNumericConfig)(RedisModuleCtx *ctx, const char *name, long long *res) REDISMODULE_ATTR;
+REDISMODULE_API int (*RedisModule_SetConfig)(RedisModuleCtx *ctx, const char *name, RedisModuleString *value, RedisModuleString **err) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_SetBoolConfig)(RedisModuleCtx *ctx, const char *name, int value, RedisModuleString **err) REDISMODULE_ATTR;
-REDISMODULE_API int (*RedisModule_SetStringConfig)(RedisModuleCtx *ctx, const char *name, const char *value, RedisModuleString **err) REDISMODULE_ATTR;
-REDISMODULE_API int (*RedisModule_SetEnumConfig)(RedisModuleCtx *ctx, const char *name, const char **values, int num_values, RedisModuleString **err) REDISMODULE_ATTR;
+REDISMODULE_API int (*RedisModule_SetEnumConfig)(RedisModuleCtx *ctx, const char *name, RedisModuleString *value, RedisModuleString **err) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_SetNumericConfig)(RedisModuleCtx *ctx, const char *name, long long value, RedisModuleString **err) REDISMODULE_ATTR;
 
 #define RedisModule_IsAOFClient(id) ((id) == UINT64_MAX)
@@ -1732,11 +1732,11 @@ static int RedisModule_Init(RedisModuleCtx *ctx, const char *name, int ver, int 
     REDISMODULE_GET_API(ReleaseConfigIterator);
     REDISMODULE_GET_API(ConfigIteratorNext);
     REDISMODULE_GET_API(GetConfigType);
-    REDISMODULE_GET_API(GetStringConfig);
+    REDISMODULE_GET_API(GetConfig);
     REDISMODULE_GET_API(GetBoolConfig);
     REDISMODULE_GET_API(GetEnumConfig);
     REDISMODULE_GET_API(GetNumericConfig);
-    REDISMODULE_GET_API(SetStringConfig);
+    REDISMODULE_GET_API(SetConfig);
     REDISMODULE_GET_API(SetBoolConfig);
     REDISMODULE_GET_API(SetEnumConfig);
     REDISMODULE_GET_API(SetNumericConfig);

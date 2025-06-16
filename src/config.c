@@ -1973,7 +1973,11 @@ static void enumConfigInit(standardConfig *config) {
     *config->data.enumd.config = config->data.enumd.default_value;
 }
 
-static int enumConfigSetInternal(standardConfig *config, int enumval, const char **err) {
+static int enumConfigSet(standardConfig *config, sds *argv, int argc, const char **err) {
+    int enumval;
+    int bitflags = !!(config->flags & MULTI_ARG_CONFIG);
+    enumval = configEnumGetValue(config->data.enumd.enum_value, argv, argc, bitflags);
+
     if (enumval == INT_MIN) {
         sds enumerr = sdsnew("argument(s) must be one of the following: ");
         configEnum *enumNode = config->data.enumd.enum_value;
@@ -2001,14 +2005,6 @@ static int enumConfigSetInternal(standardConfig *config, int enumval, const char
         return 1;
     }
     return (config->flags & VOLATILE_CONFIG) ? 1 : 2;
-}
-
-static int enumConfigSet(standardConfig *config, sds *argv, int argc, const char **err) {
-    int enumval;
-    int bitflags = !!(config->flags & MULTI_ARG_CONFIG);
-    enumval = configEnumGetValue(config->data.enumd.enum_value, argv, argc, bitflags);
-
-    return enumConfigSetInternal(config, enumval, err);
 }
 
 static sds enumConfigGet(standardConfig *config) {

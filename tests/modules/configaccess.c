@@ -85,7 +85,7 @@ int TestConfigIteration_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **ar
     long count = 0;
     while ((config_name = RedisModule_ConfigIteratorNext(iter)) != NULL) {
         RedisModuleString *value = NULL;
-        RedisModule_GetStringConfig(ctx, config_name, &value);
+        RedisModule_GetConfig(ctx, config_name, &value);
 
         RedisModule_ReplyWithArray(ctx, 2);
         RedisModule_ReplyWithStringBuffer(ctx, config_name, strlen(config_name));
@@ -140,8 +140,8 @@ int TestGetNumericConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **a
     return REDISMODULE_OK;
 }
 
-/* Test command for RM_GetStringConfig */
-int TestGetStringConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+/* Test command for RM_GetConfig */
+int TestGetConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     if (argc != 2) {
         return RedisModule_WrongArity(ctx);
     }
@@ -150,7 +150,7 @@ int TestGetStringConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **ar
     const char *config_name = RedisModule_StringPtrLen(argv[1], &len);
 
     RedisModuleString *value;
-    if (RedisModule_GetStringConfig(ctx, config_name, &value) == REDISMODULE_ERR) {
+    if (RedisModule_GetConfig(ctx, config_name, &value) == REDISMODULE_ERR) {
         RedisModule_ReplyWithError(ctx, "ERR Failed to get string config");
         return REDISMODULE_ERR;
     }
@@ -239,18 +239,17 @@ int TestSetNumericConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **a
     return REDISMODULE_OK;
 }
 
-/* Test command for RM_SetStringConfig */
-int TestSetStringConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+/* Test command for RM_SetConfig */
+int TestSetConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     if (argc != 3) {
         return RedisModule_WrongArity(ctx);
     }
 
-    size_t name_len, value_len;
+    size_t name_len;
     const char *config_name = RedisModule_StringPtrLen(argv[1], &name_len);
-    const char *config_value = RedisModule_StringPtrLen(argv[2], &value_len);
 
     RedisModuleString *error = NULL;
-    int result = RedisModule_SetStringConfig(ctx, config_name, config_value, &error);
+    int result = RedisModule_SetConfig(ctx, config_name, argv[2], &error);
     if (result == REDISMODULE_OK) {
         RedisModule_ReplyWithSimpleString(ctx, "OK");
     } else {
@@ -270,16 +269,8 @@ int TestSetEnumConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv
 
     const char *config_name = RedisModule_StringPtrLen(argv[1], NULL);
 
-    int num_values = argc - 2;
-    const char **values = RedisModule_Alloc(sizeof(char*) * num_values);
-    for (int i = 0; i < num_values; i++) {
-        values[i] = RedisModule_StringPtrLen(argv[i + 2], NULL);
-    }
-
     RedisModuleString *error = NULL;
-    int result = RedisModule_SetEnumConfig(ctx, config_name, values, argc - 2, &error);
-
-    RedisModule_Free(values);
+    int result = RedisModule_SetEnumConfig(ctx, config_name, argv[2], &error);
 
     if (result == REDISMODULE_OK) {
         RedisModule_ReplyWithSimpleString(ctx, "OK");
@@ -313,8 +304,8 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
         return REDISMODULE_ERR;
 
 
-    if (RedisModule_CreateCommand(ctx, "configaccess.getstring",
-                                 TestGetStringConfig_RedisCommand, "readonly", 0, 0, 0) == REDISMODULE_ERR)
+    if (RedisModule_CreateCommand(ctx, "configaccess.get",
+                                 TestGetConfig_RedisCommand, "readonly", 0, 0, 0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
 
     if (RedisModule_CreateCommand(ctx, "configaccess.getenum",
@@ -329,8 +320,8 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
                                  TestSetNumericConfig_RedisCommand, "write", 0, 0, 0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
 
-    if (RedisModule_CreateCommand(ctx, "configaccess.setstring",
-                                 TestSetStringConfig_RedisCommand, "write", 0, 0, 0) == REDISMODULE_ERR)
+    if (RedisModule_CreateCommand(ctx, "configaccess.set",
+                                 TestSetConfig_RedisCommand, "write", 0, 0, 0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
 
     if (RedisModule_CreateCommand(ctx, "configaccess.setenum",
