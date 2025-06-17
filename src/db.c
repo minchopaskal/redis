@@ -588,21 +588,32 @@ void setKey(client *c, redisDb *db, robj *key, robj **valref, int flags) {
 void setKeyByLink(client *c, redisDb *db, robj *key, robj **valref, int flags, dictEntryLink *plink) {
     dictEntryLink dummy = NULL, *link = plink ? plink : &dummy;
     int exists;
+    kvobj *oldval = NULL;
 
     if (flags & SETKEY_ALREADY_EXIST) {
-        exists = 1;
         debugServerAssert((*link) != NULL);
+        oldval = dictGetKV(**link);
+        exists = 1;
     } else if (flags & SETKEY_DOESNT_EXIST) {
         /* link is optional */
         exists = 0;
     } else {
         /* Add or update key */
-        exists = (lookupKeyWriteWithLink(db, key, link)) != NULL;
+        oldval = lookupKeyWriteWithLink(db, key, link);
+        exists = oldval != NULL;
     }
 
     if (exists) {
+        int oldtype = oldval->type;
+        int newtype = (*valref)->type;
+
         /* Update the value of an existing key */
         dbSetValue(db, key, valref, *link, 1, 1, flags & SETKEY_KEEPTTL);
+
+        /* Notify keyspace events for override and type change */
+        notifyKeyspaceEvent(NOTIFY_OVERWRITE, "overwrite", key, db->id);
+        if (oldtype != newtype)
+            notifyKeyspaceEvent(NOTIFY_TYPE_CHANGED, "type_changed", key, db->id);
     } else {
         /* Add the new key to the database */
         dbAddByLink(db, key, valref, link);

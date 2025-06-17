@@ -269,6 +269,7 @@ start_server {tags {"pubsub network"}} {
 
     test "Keyspace notifications: we receive keyevent notifications" {
         r config set notify-keyspace-events EA
+        r del foo
         set rd1 [redis_deferring_client]
         $rd1 CLIENT REPLY SKIP ;# Make sure it works even if replies are silenced
         assert_equal {1} [psubscribe $rd1 *]
@@ -279,6 +280,7 @@ start_server {tags {"pubsub network"}} {
 
     test "Keyspace notifications: we can receive both kind of events" {
         r config set notify-keyspace-events KEA
+        r del foo
         set rd1 [redis_deferring_client]
         $rd1 CLIENT REPLY ON ;# Just coverage
         assert_equal {OK} [$rd1 read]
@@ -615,6 +617,99 @@ start_server {tags {"pubsub network"}} {
         assert_equal "pmessage * __keyevent@${db}__:new foo" [$rd1 read]
         assert_equal "pmessage * __keyevent@${db}__:new bar" [$rd1 read]
         $rd1 close
+    }
+
+    ### New KSN types: override and type_changed events
+
+    test "Keyspace notifications: override events - string to string" {
+        r config set notify-keyspace-events Eo
+        r del foo
+        set rd1 [redis_deferring_client]
+        assert_equal {1} [psubscribe $rd1 *]
+
+        # First set - should not trigger override (new key)
+        r set foo bar
+
+        # Second set - should trigger override (same type)
+        r set foo baz
+
+        assert_equal "pmessage * __keyevent@${db}__:override foo" [$rd1 read]
+        $rd1 close
+    }
+
+    test "Keyspace notifications: type_changed events - hash to string" {
+        r config set notify-keyspace-events Ec
+        r del testkey
+        set rd1 [redis_deferring_client]
+        assert_equal {1} [psubscribe $rd1 *]
+
+        # Set as hash first
+        r hset testkey field "hash_value"
+
+        # Change to string - should trigger type_changed
+        r set testkey "string_value"
+
+        assert_equal "pmessage * __keyevent@${db}__:type_changed testkey" [$rd1 read]
+        $rd1 close
+    }
+
+    test "Keyspace notifications: both override and type_changed events" {
+        r config set notify-keyspace-events Eoc
+        r del testkey3
+        set rd1 [redis_deferring_client]
+        assert_equal {1} [psubscribe $rd1 *]
+
+        # Set as hash first
+        r hset testkey3 field "hash_value"
+
+        # Change to string - should trigger both override and type_changed
+        r set testkey3 "string_value"
+
+        # We should receive both events (order may vary)
+        set event1 [$rd1 read]
+        set event2 [$rd1 read]
+
+        # Check that we got both events
+        set events [list $event1 $event2]
+        assert {[lsearch $events "pmessage * __keyevent@${db}__:override testkey3"] >= 0}
+        assert {[lsearch $events "pmessage * __keyevent@${db}__:type_changed testkey3"] >= 0}
+
+        $rd1 close
+    }
+
+    test "Keyspace notifications: RedisSearch use case simulation" {
+        # This simulates the RedisSearch use case where they want to know
+        # when a hash gets overwritten by a string (type change)
+        r config set notify-keyspace-events Ec
+        r del search_key
+        set rd1 [redis_deferring_client]
+        assert_equal {1} [psubscribe $rd1 *]
+
+        # RedisSearch tracks this hash
+        r hset search_key name "John" age 30
+
+        # Someone overwrites it with a string - RedisSearch needs to know!
+        r set search_key "some string value"
+
+        assert_equal "pmessage * __keyevent@${db}__:type_changed search_key" [$rd1 read]
+        $rd1 close
+    }
+
+    test "Keyspace notifications: configuration flags work correctly" {
+        # Test that 'o' flag enables override notifications
+        r config set notify-keyspace-events o
+        set config [r config get notify-keyspace-events]
+        assert {[lindex $config 1] eq "o"}
+
+        # Test that 'c' flag enables type_changed notifications
+        r config set notify-keyspace-events c
+        set config [r config get notify-keyspace-events]
+        assert {[lindex $config 1] eq "c"}
+
+        # Test that both flags can be combined
+        r config set notify-keyspace-events oc
+        set config [r config get notify-keyspace-events]
+        assert {[lindex $config 1] eq "oc"}
     }
 
     test "publish to self inside multi" {
