@@ -496,7 +496,7 @@ static void zsetKeyReset(RedisModuleKey *key);
 static void moduleInitKeyTypeSpecific(RedisModuleKey *key);
 void RM_FreeDict(RedisModuleCtx *ctx, RedisModuleDict *d);
 void RM_FreeServerInfo(RedisModuleCtx *ctx, RedisModuleServerInfoData *data);
-void RM_ReleaseConfigIterator(RedisModuleCtx *ctx, RedisModuleConfigIterator *iter);
+void RM_ConfigReleaseIterator(RedisModuleCtx *ctx, RedisModuleConfigIterator *iter);
 
 /* Helpers for RM_SetCommandInfo. */
 static int moduleValidateCommandInfo(const RedisModuleCommandInfo *info);
@@ -2617,7 +2617,7 @@ void autoMemoryCollect(RedisModuleCtx *ctx) {
         case REDISMODULE_AM_KEY: RM_CloseKey(ptr); break;
         case REDISMODULE_AM_DICT: RM_FreeDict(NULL,ptr); break;
         case REDISMODULE_AM_INFO: RM_FreeServerInfo(NULL,ptr); break;
-        case REDISMODULE_AM_CONFIG: RM_ReleaseConfigIterator(NULL, ptr); break;
+        case REDISMODULE_AM_CONFIG: RM_ConfigReleaseIterator(NULL, ptr); break;
         }
     }
     ctx->flags |= REDISMODULE_CTX_AUTO_MEMORY;
@@ -13557,50 +13557,50 @@ const char* RM_GetInternalSecret(RedisModuleCtx *ctx, size_t *len) {
  *
  * Example usage:
  * ```
- * // Below is same as RedisModule_GetConfigIterator(ctx, NULL)
- * RedisModuleConfigIterator *iter = RedisModule_GetConfigIterator(ctx, "*");
+ * // Below is same as RedisModule_ConfigGetIterator(ctx, NULL)
+ * RedisModuleConfigIterator *iter = RedisModule_ConfigGetIterator(ctx, "*");
  * const char *config_name = NULL;
  * while ((config_name = RedisModule_ConfigIteratorNext(iter)) != NULL) {
  *     RedisModuleString *value = NULL;
- *     if (RedisModule_GetConfig(ctx, config_name, &value) == REDISMODULE_OK) {
+ *     if (RedisModule_ConfigGet(ctx, config_name, &value) == REDISMODULE_OK) {
  *         // Do something with `value`...
  *         RedisModule_FreeString(ctx, value);
  *     }
  * }
- * RedisModule_ReleaseConfigIterator(ctx, iter);
+ * RedisModule_ConfigReleaseIterator(ctx, iter);
  *
  * // Or optionally one can check the type to get the config value directly
  * // via the appropriate API in case performance is of consideration
- * iter = RedisModule_GetConfigIterator(ctx, "*");
+ * iter = RedisModule_ConfigGetIterator(ctx, "*");
  * while ((config_name = RedisModule_ConfigIteratorNext(iter)) != NULL) {
- *     RedisModuleConfigType type = RedisModule_GetConfigType(config_name);
+ *     RedisModuleConfigType type = RedisModule_ConfigGetType(config_name);
  *     if (type == REDISMODULE_CONFIG_TYPE_STRING) {
  *         RedisModuleString *value;
- *         RedisModule_GetConfig(ctx, config_name, &value);
+ *         RedisModule_ConfigGet(ctx, config_name, &value);
  *         // Do something with `value`...
  *         RedisModule_FreeString(ctx, value);
  *     } if (type == REDISMODULE_CONFIG_TYPE_NUMERIC) {
  *         long long value;
- *         RedisModule_GetNumericConfig(ctx, config_name, &value);
+ *         RedisModule_ConfigGetNumeric(ctx, config_name, &value);
  *         // Do something with `value`...
  *     } else if (type == REDISMODULE_CONFIG_TYPE_BOOL) {
  *         int value;
- *         RedisModule_GetBoolConfig(ctx, config_name, &value);
+ *         RedisModule_ConfigGetBool(ctx, config_name, &value);
  *         // Do something with `value`...
  *     } else if (type == REDISMODULE_CONFIG_TYPE_ENUM) {
  *         RedisModuleString *value;
- *         RedisModule_GetEnumConfig(ctx, config_name, &value);
+ *         RedisModule_ConfigGetEnum(ctx, config_name, &value);
  *         // Do something with `value`...
  *         RedisModule_Free(value);
  *     }
  * }
- * RedisModule_ReleaseConfigIterator(ctx, iter);
+ * RedisModule_ConfigReleaseIterator(ctx, iter);
  * ```
  *
  * Returns a pointer to RedisModuleConfigIterator. Unless auto-memory is enabled
  * the caller is responsible for freeing the iterator using
- * RedisModule_ConfigIteratorFree(). */
-RedisModuleConfigIterator *RM_GetConfigIterator(RedisModuleCtx *ctx, const char *pattern) {
+ * RedisModule_ConfigReleaseIterator(). */
+RedisModuleConfigIterator *RM_ConfigGetIterator(RedisModuleCtx *ctx, const char *pattern) {
     RedisModuleConfigIterator *iter = RM_Alloc(sizeof(*iter));
 
     iter->di = moduleGetConfigIterator();
@@ -13614,10 +13614,10 @@ RedisModuleConfigIterator *RM_GetConfigIterator(RedisModuleCtx *ctx, const char 
     return iter;
 }
 
-/* Release the iterator returned by RedisModule_GetConfigIterator(). If auto-memory
+/* Release the iterator returned by RedisModule_ConfigGetIterator(). If auto-memory
  * is enabled and manual release is needed one must pass the same RedisModuleCtx
  * that was used to create the iterator. */
-void RM_ReleaseConfigIterator(RedisModuleCtx *ctx, RedisModuleConfigIterator *iter) {
+void RM_ConfigReleaseIterator(RedisModuleCtx *ctx, RedisModuleConfigIterator *iter) {
     if (ctx != NULL) autoMemoryFreed(ctx,REDISMODULE_AM_CONFIG,iter);
     if (iter->di) dictReleaseIterator(iter->di);
     sdsfree(iter->pattern);
@@ -13644,7 +13644,7 @@ static RedisModuleConfigType convertToRedisModuleConfigType(configType type) {
 
 /* Get the type of a config as RedisModuleConfigType. One may use this  in order
  * to get or set the values of the config with the appropriate function if the
- * generic RedisModule_GetConfig and RedisModule_SetConfig APIs are performing
+ * generic RedisModule_ConfigGet and RedisModule_ConfigSet APIs are performing
  * poorly.
  *
  * Intended usage of this function is when iteration over the configs is
@@ -13654,14 +13654,14 @@ static RedisModuleConfigType convertToRedisModuleConfigType(configType type) {
  * appropriate function without the need to call this function.
  *
  * Explanation of config types:
- *  - REDISMODULE_CONFIG_TYPE_BOOL: Config is a boolean. One can use RedisModule_(Get/Set)BoolConfig
- *  - REDISMODULE_CONFIG_TYPE_NUMERIC: Config is a numeric value. One can use RedisModule_(Get/Set)NumericConfig
- *  - REDISMODULE_CONFIG_TYPE_STRING: Config is a string. One can use the generic RedisModule_(Get/Set)Config
- *  - REDISMODULE_CONFIG_TYPE_ENUM: Config is an enum. One can use RedisModule_(Get/Set)EnumConfig
+ *  - REDISMODULE_CONFIG_TYPE_BOOL: Config is a boolean. One can use RedisModule_Config(Get/Set)Bool
+ *  - REDISMODULE_CONFIG_TYPE_NUMERIC: Config is a numeric value. One can use RedisModule_Config(Get/Set)Numeric
+ *  - REDISMODULE_CONFIG_TYPE_STRING: Config is a string. One can use the generic RedisModule_Config(Get/Set)
+ *  - REDISMODULE_CONFIG_TYPE_ENUM: Config is an enum. One can use RedisModule_Config(Get/Set)Enum
  *
  * If a config with the given name exists `res` is populated with its type, else
  * REDISMODULE_ERR is returned. */
-int RM_GetConfigType(const char *name, RedisModuleConfigType *res) {
+int RM_ConfigGetType(const char *name, RedisModuleConfigType *res) {
     sds config_name = sdsnew(name);
     configType type;
     int ret = moduleGetConfigType(config_name, &type);
@@ -13681,7 +13681,7 @@ int RM_GetConfigType(const char *name, RedisModuleConfigType *res) {
  * If a pattern was provided when creating the iterator, only configs matching
  * the pattern will be returned.
  *
- * See RedisModule_GetConfigIterator() for example usage. */
+ * See RedisModule_ConfigGetIterator() for example usage. */
 const char *RM_ConfigIteratorNext(RedisModuleConfigIterator *iter) {
     return moduleConfigIteratorNext(&iter->di, iter->pattern, iter->is_glob, NULL);
 }
@@ -13694,7 +13694,7 @@ const char *RM_ConfigIteratorNext(RedisModuleConfigIterator *iter) {
  *
  * If the config does not exist, REDISMODULE_ERR is returned, else REDISMODULE_OK
  * is returned and `res` is populated with the value. */
-int RM_GetConfig(RedisModuleCtx *ctx, const char *name, RedisModuleString **res) {
+int RM_ConfigGet(RedisModuleCtx *ctx, const char *name, RedisModuleString **res) {
     sds config_name = sdsnew(name);
     sds res_sds = NULL;
     int ret = moduleGetStringConfig(config_name, &res_sds);
@@ -13710,7 +13710,7 @@ int RM_GetConfig(RedisModuleCtx *ctx, const char *name, RedisModuleString **res)
  * If the config does not exist or is not a bool config, REDISMODULE_ERR is
  * returned, else REDISMODULE_OK is returned and `res` is populated with the
  * value. */
-int RM_GetBoolConfig(RedisModuleCtx *ctx, const char *name, int *res) {
+int RM_ConfigGetBool(RedisModuleCtx *ctx, const char *name, int *res) {
     UNUSED(ctx);
     sds config_name = sdsnew(name);
     int ret = moduleGetBoolConfig(config_name, res);
@@ -13724,7 +13724,7 @@ int RM_GetBoolConfig(RedisModuleCtx *ctx, const char *name, int *res) {
  * returned, else REDISMODULE_OK is returned and `res` is populated with the value.
  * If the config has multiple arguments they are returned as a space-separated
  * string. */
-int RM_GetEnumConfig(RedisModuleCtx *ctx, const char *name, RedisModuleString **res) {
+int RM_ConfigGetEnum(RedisModuleCtx *ctx, const char *name, RedisModuleString **res) {
     sds config_name = sdsnew(name);
     sds res_sds = NULL;
     int ret = moduleGetEnumConfig(config_name, &res_sds);
@@ -13740,7 +13740,7 @@ int RM_GetEnumConfig(RedisModuleCtx *ctx, const char *name, RedisModuleString **
  * If the config does not exist or is not a numeric config, REDISMODULE_ERR is
  * returned, else REDISMODULE_OK is returned and `res` is populated with the
  * value. */
-int RM_GetNumericConfig(RedisModuleCtx *ctx, const char *name, long long *res) {
+int RM_ConfigGetNumeric(RedisModuleCtx *ctx, const char *name, long long *res) {
     UNUSED(ctx);
     sds config_name = sdsnew(name);
     int ret = moduleGetNumericConfig(config_name, res);
@@ -13756,7 +13756,7 @@ int RM_GetNumericConfig(RedisModuleCtx *ctx, const char *name, long long *res) {
  *
  * If the value failed to be set REDISMODULE_ERR will be returned and if `err`
  * is not NULL, it will be populated with an error message. */
-int RM_SetConfig(RedisModuleCtx *ctx, const char *name, RedisModuleString *value, RedisModuleString **err) {
+int RM_ConfigSet(RedisModuleCtx *ctx, const char *name, RedisModuleString *value, RedisModuleString **err) {
     sds config_name = sdsnew(name);
     const char *cerr = NULL;
     const char *val = RM_StringPtrLen(value, NULL);
@@ -13769,8 +13769,8 @@ int RM_SetConfig(RedisModuleCtx *ctx, const char *name, RedisModuleString *value
 
 /* Set the value of a bool config.
  *
- * See RedisModule_SetConfig for return value. */
-int RM_SetBoolConfig(RedisModuleCtx *ctx, const char *name, int value, RedisModuleString **err) {
+ * See RedisModule_ConfigSet for return value. */
+int RM_ConfigSetBool(RedisModuleCtx *ctx, const char *name, int value, RedisModuleString **err) {
     const char *cerr = NULL;
     sds config_name = sdsnew(name);
     int res = moduleSetBoolConfig(ctx->client, config_name, value, &cerr);
@@ -13785,8 +13785,8 @@ int RM_SetBoolConfig(RedisModuleCtx *ctx, const char *name, int value, RedisModu
  * If the config is multi-argument the value parameter must be a space-separated
  * string.
  *
- * See RedisModule_SetConfig for return value. */
-int RM_SetEnumConfig(RedisModuleCtx *ctx, const char *name, RedisModuleString *value, RedisModuleString **err) {
+ * See RedisModule_ConfigSet for return value. */
+int RM_ConfigSetEnum(RedisModuleCtx *ctx, const char *name, RedisModuleString *value, RedisModuleString **err) {
     sds config_name = sdsnew(name);
     const char *cerr = NULL;
 
@@ -13811,8 +13811,8 @@ int RM_SetEnumConfig(RedisModuleCtx *ctx, const char *name, RedisModuleString *v
  * If the value passed is meant to be a percentage, it should be passed as a
  * negative value.
  *
- * See RedisModule_SetConfig for return value. */
-int RM_SetNumericConfig(RedisModuleCtx *ctx, const char *name, long long value, RedisModuleString **err) {
+ * See RedisModule_ConfigSet for return value. */
+int RM_ConfigSetNumeric(RedisModuleCtx *ctx, const char *name, long long value, RedisModuleString **err) {
     sds config_name = sdsnew(name);
     const char *cerr = NULL;
     int res = moduleSetNumericConfig(ctx->client, config_name, value, &cerr);
@@ -14859,16 +14859,16 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(RdbLoad);
     REGISTER_API(RdbSave);
     REGISTER_API(GetInternalSecret);
-    REGISTER_API(GetConfigIterator);
-    REGISTER_API(ReleaseConfigIterator);
+    REGISTER_API(ConfigGetIterator);
+    REGISTER_API(ConfigReleaseIterator);
     REGISTER_API(ConfigIteratorNext);
-    REGISTER_API(GetConfigType);
-    REGISTER_API(GetConfig);
-    REGISTER_API(GetBoolConfig);
-    REGISTER_API(GetEnumConfig);
-    REGISTER_API(GetNumericConfig);
-    REGISTER_API(SetConfig);
-    REGISTER_API(SetBoolConfig);
-    REGISTER_API(SetEnumConfig);
-    REGISTER_API(SetNumericConfig);
+    REGISTER_API(ConfigGetType);
+    REGISTER_API(ConfigGet);
+    REGISTER_API(ConfigGetBool);
+    REGISTER_API(ConfigGetEnum);
+    REGISTER_API(ConfigGetNumeric);
+    REGISTER_API(ConfigSet);
+    REGISTER_API(ConfigSetBool);
+    REGISTER_API(ConfigSetEnum);
+    REGISTER_API(ConfigSetNumeric);
 }

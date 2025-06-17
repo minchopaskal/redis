@@ -29,7 +29,7 @@ int TestGetConfigType_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv
     const char *config_name = RedisModule_StringPtrLen(argv[1], &len);
 
     RedisModuleConfigType type;
-    int res = RedisModule_GetConfigType(config_name, &type);
+    int res = RedisModule_ConfigGetType(config_name, &type);
     if (res == REDISMODULE_ERR) {
         RedisModule_ReplyWithError(ctx, "ERR Config does not exist");
         return REDISMODULE_ERR;
@@ -71,7 +71,7 @@ int TestConfigIteration_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **ar
         pattern = RedisModule_StringPtrLen(argv[1], NULL);
     }
 
-    RedisModuleConfigIterator *iter = RedisModule_GetConfigIterator(ctx, pattern);
+    RedisModuleConfigIterator *iter = RedisModule_ConfigGetIterator(ctx, pattern);
     if (!iter) {
         RedisModule_ReplyWithError(ctx, "ERR Failed to get config iterator");
         return REDISMODULE_ERR;
@@ -85,7 +85,7 @@ int TestConfigIteration_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **ar
     long count = 0;
     while ((config_name = RedisModule_ConfigIteratorNext(iter)) != NULL) {
         RedisModuleString *value = NULL;
-        RedisModule_GetConfig(ctx, config_name, &value);
+        RedisModule_ConfigGet(ctx, config_name, &value);
 
         RedisModule_ReplyWithArray(ctx, 2);
         RedisModule_ReplyWithStringBuffer(ctx, config_name, strlen(config_name));
@@ -97,7 +97,7 @@ int TestConfigIteration_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **ar
     RedisModule_ReplySetArrayLength(ctx, count);
 
     /* Free the iterator */
-    RedisModule_ReleaseConfigIterator(ctx, iter);
+    RedisModule_ConfigReleaseIterator(ctx, iter);
 
     return REDISMODULE_OK;
 }
@@ -112,7 +112,7 @@ int TestGetBoolConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv
     const char *config_name = RedisModule_StringPtrLen(argv[1], &len);
 
     int value;
-    if (RedisModule_GetBoolConfig(ctx, config_name, &value) == REDISMODULE_ERR) {
+    if (RedisModule_ConfigGetBool(ctx, config_name, &value) == REDISMODULE_ERR) {
         RedisModule_ReplyWithError(ctx, "ERR Failed to get bool config");
         return REDISMODULE_ERR;
     }
@@ -131,7 +131,7 @@ int TestGetNumericConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **a
     const char *config_name = RedisModule_StringPtrLen(argv[1], &len);
 
     long long value;
-    if (RedisModule_GetNumericConfig(ctx, config_name, &value) == REDISMODULE_ERR) {
+    if (RedisModule_ConfigGetNumeric(ctx, config_name, &value) == REDISMODULE_ERR) {
         RedisModule_ReplyWithError(ctx, "ERR Failed to get numeric config");
         return REDISMODULE_ERR;
     }
@@ -150,7 +150,7 @@ int TestGetConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, in
     const char *config_name = RedisModule_StringPtrLen(argv[1], &len);
 
     RedisModuleString *value;
-    if (RedisModule_GetConfig(ctx, config_name, &value) == REDISMODULE_ERR) {
+    if (RedisModule_ConfigGet(ctx, config_name, &value) == REDISMODULE_ERR) {
         RedisModule_ReplyWithError(ctx, "ERR Failed to get string config");
         return REDISMODULE_ERR;
     }
@@ -170,7 +170,7 @@ int TestGetEnumConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv
     const char *config_name = RedisModule_StringPtrLen(argv[1], &len);
 
     RedisModuleString *value;
-    if (RedisModule_GetEnumConfig(ctx, config_name, &value) == REDISMODULE_ERR) {
+    if (RedisModule_ConfigGetEnum(ctx, config_name, &value) == REDISMODULE_ERR) {
         RedisModule_ReplyWithError(ctx, "ERR Failed to get enum name config");
         return REDISMODULE_ERR;
     }
@@ -200,7 +200,7 @@ int TestSetBoolConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv
     }
 
     RedisModuleString *error = NULL;
-    int result = RedisModule_SetBoolConfig(ctx, config_name, bool_value, &error);
+    int result = RedisModule_ConfigSetBool(ctx, config_name, bool_value, &error);
     if (result == REDISMODULE_ERR) {
         RedisModule_ReplyWithErrorFormat(ctx, "ERR Failed to set bool config %s: %s", config_name, RedisModule_StringPtrLen(error, NULL));
         RedisModule_FreeString(ctx, error);
@@ -227,7 +227,7 @@ int TestSetNumericConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **a
     }
 
     RedisModuleString *error = NULL;
-    int result = RedisModule_SetNumericConfig(ctx, config_name, value, &error);
+    int result = RedisModule_ConfigSetNumeric(ctx, config_name, value, &error);
     if (result == REDISMODULE_OK) {
         RedisModule_ReplyWithSimpleString(ctx, "OK");
     } else {
@@ -249,7 +249,7 @@ int TestSetConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv, in
     const char *config_name = RedisModule_StringPtrLen(argv[1], &name_len);
 
     RedisModuleString *error = NULL;
-    int result = RedisModule_SetConfig(ctx, config_name, argv[2], &error);
+    int result = RedisModule_ConfigSet(ctx, config_name, argv[2], &error);
     if (result == REDISMODULE_OK) {
         RedisModule_ReplyWithSimpleString(ctx, "OK");
     } else {
@@ -270,7 +270,7 @@ int TestSetEnumConfig_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **argv
     const char *config_name = RedisModule_StringPtrLen(argv[1], NULL);
 
     RedisModuleString *error = NULL;
-    int result = RedisModule_SetEnumConfig(ctx, config_name, argv[2], &error);
+    int result = RedisModule_ConfigSetEnum(ctx, config_name, argv[2], &error);
 
     if (result == REDISMODULE_OK) {
         RedisModule_ReplyWithSimpleString(ctx, "OK");
