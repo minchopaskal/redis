@@ -496,7 +496,7 @@ static void zsetKeyReset(RedisModuleKey *key);
 static void moduleInitKeyTypeSpecific(RedisModuleKey *key);
 void RM_FreeDict(RedisModuleCtx *ctx, RedisModuleDict *d);
 void RM_FreeServerInfo(RedisModuleCtx *ctx, RedisModuleServerInfoData *data);
-void RM_ConfigReleaseIterator(RedisModuleCtx *ctx, RedisModuleConfigIterator *iter);
+void RM_ConfigIteratorRelease(RedisModuleCtx *ctx, RedisModuleConfigIterator *iter);
 
 /* Helpers for RM_SetCommandInfo. */
 static int moduleValidateCommandInfo(const RedisModuleCommandInfo *info);
@@ -2617,7 +2617,7 @@ void autoMemoryCollect(RedisModuleCtx *ctx) {
         case REDISMODULE_AM_KEY: RM_CloseKey(ptr); break;
         case REDISMODULE_AM_DICT: RM_FreeDict(NULL,ptr); break;
         case REDISMODULE_AM_INFO: RM_FreeServerInfo(NULL,ptr); break;
-        case REDISMODULE_AM_CONFIG: RM_ConfigReleaseIterator(NULL, ptr); break;
+        case REDISMODULE_AM_CONFIG: RM_ConfigIteratorRelease(NULL, ptr); break;
         }
     }
     ctx->flags |= REDISMODULE_CTX_AUTO_MEMORY;
@@ -13557,8 +13557,8 @@ const char* RM_GetInternalSecret(RedisModuleCtx *ctx, size_t *len) {
  *
  * Example usage:
  * ```
- * // Below is same as RedisModule_ConfigGetIterator(ctx, NULL)
- * RedisModuleConfigIterator *iter = RedisModule_ConfigGetIterator(ctx, "*");
+ * // Below is same as RedisModule_ConfigIteratorCreate(ctx, NULL)
+ * RedisModuleConfigIterator *iter = RedisModule_ConfigIteratorCreate(ctx, "*");
  * const char *config_name = NULL;
  * while ((config_name = RedisModule_ConfigIteratorNext(iter)) != NULL) {
  *     RedisModuleString *value = NULL;
@@ -13567,11 +13567,11 @@ const char* RM_GetInternalSecret(RedisModuleCtx *ctx, size_t *len) {
  *         RedisModule_FreeString(ctx, value);
  *     }
  * }
- * RedisModule_ConfigReleaseIterator(ctx, iter);
+ * RedisModule_ConfigIteratorRelease(ctx, iter);
  *
  * // Or optionally one can check the type to get the config value directly
  * // via the appropriate API in case performance is of consideration
- * iter = RedisModule_ConfigGetIterator(ctx, "*");
+ * iter = RedisModule_ConfigIteratorCreate(ctx, "*");
  * while ((config_name = RedisModule_ConfigIteratorNext(iter)) != NULL) {
  *     RedisModuleConfigType type = RedisModule_ConfigGetType(config_name);
  *     if (type == REDISMODULE_CONFIG_TYPE_STRING) {
@@ -13594,13 +13594,13 @@ const char* RM_GetInternalSecret(RedisModuleCtx *ctx, size_t *len) {
  *         RedisModule_Free(value);
  *     }
  * }
- * RedisModule_ConfigReleaseIterator(ctx, iter);
+ * RedisModule_ConfigIteratorRelease(ctx, iter);
  * ```
  *
  * Returns a pointer to RedisModuleConfigIterator. Unless auto-memory is enabled
  * the caller is responsible for freeing the iterator using
- * RedisModule_ConfigReleaseIterator(). */
-RedisModuleConfigIterator *RM_ConfigGetIterator(RedisModuleCtx *ctx, const char *pattern) {
+ * RedisModule_ConfigIteratorRelease(). */
+RedisModuleConfigIterator *RM_ConfigIteratorCreate(RedisModuleCtx *ctx, const char *pattern) {
     RedisModuleConfigIterator *iter = RM_Alloc(sizeof(*iter));
 
     iter->di = moduleGetConfigIterator();
@@ -13614,10 +13614,10 @@ RedisModuleConfigIterator *RM_ConfigGetIterator(RedisModuleCtx *ctx, const char 
     return iter;
 }
 
-/* Release the iterator returned by RedisModule_ConfigGetIterator(). If auto-memory
+/* Release the iterator returned by RedisModule_ConfigIteratorCreate(). If auto-memory
  * is enabled and manual release is needed one must pass the same RedisModuleCtx
  * that was used to create the iterator. */
-void RM_ConfigReleaseIterator(RedisModuleCtx *ctx, RedisModuleConfigIterator *iter) {
+void RM_ConfigIteratorRelease(RedisModuleCtx *ctx, RedisModuleConfigIterator *iter) {
     if (ctx != NULL) autoMemoryFreed(ctx,REDISMODULE_AM_CONFIG,iter);
     if (iter->di) dictReleaseIterator(iter->di);
     sdsfree(iter->pattern);
@@ -13681,7 +13681,7 @@ int RM_ConfigGetType(const char *name, RedisModuleConfigType *res) {
  * If a pattern was provided when creating the iterator, only configs matching
  * the pattern will be returned.
  *
- * See RedisModule_ConfigGetIterator() for example usage. */
+ * See RedisModule_ConfigIteratorCreate() for example usage. */
 const char *RM_ConfigIteratorNext(RedisModuleConfigIterator *iter) {
     return moduleConfigIteratorNext(&iter->di, iter->pattern, iter->is_glob, NULL);
 }
@@ -14859,8 +14859,8 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(RdbLoad);
     REGISTER_API(RdbSave);
     REGISTER_API(GetInternalSecret);
-    REGISTER_API(ConfigGetIterator);
-    REGISTER_API(ConfigReleaseIterator);
+    REGISTER_API(ConfigIteratorCreate);
+    REGISTER_API(ConfigIteratorRelease);
     REGISTER_API(ConfigIteratorNext);
     REGISTER_API(ConfigGetType);
     REGISTER_API(ConfigGet);

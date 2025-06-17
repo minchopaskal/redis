@@ -1341,8 +1341,8 @@ REDISMODULE_API void (*RedisModule_RdbStreamFree)(RedisModuleRdbStream *stream) 
 REDISMODULE_API int (*RedisModule_RdbLoad)(RedisModuleCtx *ctx, RedisModuleRdbStream *stream, int flags) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_RdbSave)(RedisModuleCtx *ctx, RedisModuleRdbStream *stream, int flags) REDISMODULE_ATTR;
 REDISMODULE_API const char * (*RedisModule_GetInternalSecret)(RedisModuleCtx *ctx, size_t *len) REDISMODULE_ATTR;
-REDISMODULE_API RedisModuleConfigIterator* (*RedisModule_ConfigGetIterator)(RedisModuleCtx *ctx, const char *pattern) REDISMODULE_ATTR;
-REDISMODULE_API void (*RedisModule_ConfigReleaseIterator)(RedisModuleCtx *ctx, RedisModuleConfigIterator *iter) REDISMODULE_ATTR;
+REDISMODULE_API RedisModuleConfigIterator* (*RedisModule_ConfigIteratorCreate)(RedisModuleCtx *ctx, const char *pattern) REDISMODULE_ATTR;
+REDISMODULE_API void (*RedisModule_ConfigIteratorRelease)(RedisModuleCtx *ctx, RedisModuleConfigIterator *iter) REDISMODULE_ATTR;
 REDISMODULE_API const char * (*RedisModule_ConfigIteratorNext)(RedisModuleConfigIterator *iter) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_ConfigGetType)(const char *name, RedisModuleConfigType *res) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_ConfigGet)(RedisModuleCtx *ctx, const char *name, RedisModuleString **res) REDISMODULE_ATTR;
@@ -1728,8 +1728,8 @@ static int RedisModule_Init(RedisModuleCtx *ctx, const char *name, int ver, int 
     REDISMODULE_GET_API(RdbLoad);
     REDISMODULE_GET_API(RdbSave);
     REDISMODULE_GET_API(GetInternalSecret);
-    REDISMODULE_GET_API(ConfigGetIterator);
-    REDISMODULE_GET_API(ConfigReleaseIterator);
+    REDISMODULE_GET_API(ConfigIteratorCreate);
+    REDISMODULE_GET_API(ConfigIteratorRelease);
     REDISMODULE_GET_API(ConfigIteratorNext);
     REDISMODULE_GET_API(ConfigGetType);
     REDISMODULE_GET_API(ConfigGet);

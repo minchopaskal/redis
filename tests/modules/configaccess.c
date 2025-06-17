@@ -71,7 +71,7 @@ int TestConfigIteration_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **ar
         pattern = RedisModule_StringPtrLen(argv[1], NULL);
     }
 
-    RedisModuleConfigIterator *iter = RedisModule_ConfigGetIterator(ctx, pattern);
+    RedisModuleConfigIterator *iter = RedisModule_ConfigIteratorCreate(ctx, pattern);
     if (!iter) {
         RedisModule_ReplyWithError(ctx, "ERR Failed to get config iterator");
         return REDISMODULE_ERR;
@@ -97,7 +97,7 @@ int TestConfigIteration_RedisCommand(RedisModuleCtx *ctx, RedisModuleString **ar
     RedisModule_ReplySetArrayLength(ctx, count);
 
     /* Free the iterator */
-    RedisModule_ConfigReleaseIterator(ctx, iter);
+    RedisModule_ConfigIteratorRelease(ctx, iter);
 
     return REDISMODULE_OK;
 }
