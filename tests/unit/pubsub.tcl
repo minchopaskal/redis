@@ -619,21 +619,21 @@ start_server {tags {"pubsub network"}} {
         $rd1 close
     }
 
-    ### New KSN types: override and type_changed events
+    ### override and type_changed events
 
-    test "Keyspace notifications: override events - string to string" {
+    test "Keyspace notifications: overwrite events - string to string" {
         r config set notify-keyspace-events Eo
         r del foo
         set rd1 [redis_deferring_client]
         assert_equal {1} [psubscribe $rd1 *]
 
-        # First set - should not trigger override (new key)
+        # First set - should not trigger overwrite (new key)
         r set foo bar
 
-        # Second set - should trigger override (same type)
+        # Second set - should trigger overwrite (same type)
         r set foo baz
 
-        assert_equal "pmessage * __keyevent@${db}__:override foo" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:overwrite foo" [$rd1 read]
         $rd1 close
     }
 
@@ -653,7 +653,7 @@ start_server {tags {"pubsub network"}} {
         $rd1 close
     }
 
-    test "Keyspace notifications: both override and type_changed events" {
+    test "Keyspace notifications: both overwrite and type_changed events" {
         r config set notify-keyspace-events Eoc
         r del testkey3
         set rd1 [redis_deferring_client]
@@ -662,7 +662,7 @@ start_server {tags {"pubsub network"}} {
         # Set as hash first
         r hset testkey3 field "hash_value"
 
-        # Change to string - should trigger both override and type_changed
+        # Change to string - should trigger both overwrite and type_changed
         r set testkey3 "string_value"
 
         # We should receive both events (order may vary)
@@ -671,27 +671,9 @@ start_server {tags {"pubsub network"}} {
 
         # Check that we got both events
         set events [list $event1 $event2]
-        assert {[lsearch $events "pmessage * __keyevent@${db}__:override testkey3"] >= 0}
+        assert {[lsearch $events "pmessage * __keyevent@${db}__:overwrite testkey3"] >= 0}
         assert {[lsearch $events "pmessage * __keyevent@${db}__:type_changed testkey3"] >= 0}
 
-        $rd1 close
-    }
-
-    test "Keyspace notifications: RedisSearch use case simulation" {
-        # This simulates the RedisSearch use case where they want to know
-        # when a hash gets overwritten by a string (type change)
-        r config set notify-keyspace-events Ec
-        r del search_key
-        set rd1 [redis_deferring_client]
-        assert_equal {1} [psubscribe $rd1 *]
-
-        # RedisSearch tracks this hash
-        r hset search_key name "John" age 30
-
-        # Someone overwrites it with a string - RedisSearch needs to know!
-        r set search_key "some string value"
-
-        assert_equal "pmessage * __keyevent@${db}__:type_changed search_key" [$rd1 read]
         $rd1 close
     }
 
@@ -710,6 +692,125 @@ start_server {tags {"pubsub network"}} {
         r config set notify-keyspace-events oc
         set config [r config get notify-keyspace-events]
         assert {[lindex $config 1] eq "oc"}
+    }
+
+    ### RESTORE command tests for overwrite and type_changed KSN types
+
+    test "Keyspace notifications: RESTORE new key - only restore event" {
+        r config set notify-keyspace-events Eg
+        r del restore_test_key
+
+        # Create a string value and dump it (do this before subscribing)
+        r set temp_key "test_value"
+        set dump_data [r dump temp_key]
+        r del temp_key
+
+        set rd1 [redis_deferring_client]
+        assert_equal {1} [psubscribe $rd1 *]
+
+        # Restore to a new key - should only emit restore event
+        r restore restore_test_key 0 $dump_data
+
+        assert_equal "pmessage * __keyevent@${db}__:restore restore_test_key" [$rd1 read]
+        $rd1 close
+    }
+
+    test "Keyspace notifications: RESTORE REPLACE same type - restore and overwrite events" {
+        r config set notify-keyspace-events Ego
+        r del restore_test_key2
+
+        # Create another string value and dump it (do this before subscribing)
+        r set temp_key "new_value"
+        set dump_data [r dump temp_key]
+        r del temp_key
+
+        set rd1 [redis_deferring_client]
+        assert_equal {1} [psubscribe $rd1 *]
+
+        # Create initial string key
+        r set restore_test_key2 "initial_value"
+
+        # Restore with REPLACE - should emit restore and overwrite events
+        r restore restore_test_key2 0 $dump_data REPLACE
+
+        # Read events (order may vary)
+        set event1 [$rd1 read]
+        set event2 [$rd1 read]
+        set events [list $event1 $event2]
+
+        assert {[lsearch $events "pmessage * __keyevent@${db}__:restore restore_test_key2"] >= 0}
+        assert {[lsearch $events "pmessage * __keyevent@${db}__:overwrite restore_test_key2"] >= 0}
+        $rd1 close
+    }
+
+    test "Keyspace notifications: RESTORE REPLACE different type - restore, overwrite and type_changed events" {
+        r config set notify-keyspace-events Egoc
+        r del restore_test_key3
+
+        # Create a string value and dump it (do this before subscribing)
+        r set temp_key "string_value"
+        set dump_data [r dump temp_key]
+        r del temp_key
+
+        set rd1 [redis_deferring_client]
+        assert_equal {1} [psubscribe $rd1 *]
+
+        # Create initial hash key
+        r hset restore_test_key3 field "hash_value"
+
+        # Restore with REPLACE - should emit restore, overwrite and type_changed events
+        r restore restore_test_key3 0 $dump_data REPLACE
+
+        # Read events (order may vary)
+        set event1 [$rd1 read]
+        set event2 [$rd1 read]
+        set event3 [$rd1 read]
+        set events [list $event1 $event2 $event3]
+
+        assert {[lsearch $events "pmessage * __keyevent@${db}__:restore restore_test_key3"] >= 0}
+        assert {[lsearch $events "pmessage * __keyevent@${db}__:overwrite restore_test_key3"] >= 0}
+        assert {[lsearch $events "pmessage * __keyevent@${db}__:type_changed restore_test_key3"] >= 0}
+        $rd1 close
+    }
+
+    ### SET command tests for overwrite and type_changed KSN types
+
+    test "Keyspace notifications: SET on existing string key - overwrite event" {
+        r config set notify-keyspace-events Eo
+        r del set_test_key1
+        set rd1 [redis_deferring_client]
+        assert_equal {1} [psubscribe $rd1 *]
+
+        # Create initial string key
+        r set set_test_key1 "initial_value"
+
+        # Set new value on existing string key - should emit overwrite event
+        r set set_test_key1 "new_value"
+
+        assert_equal "pmessage * __keyevent@${db}__:overwrite set_test_key1" [$rd1 read]
+        $rd1 close
+    }
+
+    test "Keyspace notifications: SET on existing non-string key - overwrite and type_changed events" {
+        r config set notify-keyspace-events Eoc
+        r del set_test_key2
+        set rd1 [redis_deferring_client]
+        assert_equal {1} [psubscribe $rd1 *]
+
+        # Create initial hash key
+        r hset set_test_key2 field "hash_value"
+
+        # Set string value on existing hash key - should emit overwrite and type_changed events
+        r set set_test_key2 "string_value"
+
+        # Read events (order may vary)
+        set event1 [$rd1 read]
+        set event2 [$rd1 read]
+        set events [list $event1 $event2]
+
+        assert {[lsearch $events "pmessage * __keyevent@${db}__:overwrite set_test_key2"] >= 0}
+        assert {[lsearch $events "pmessage * __keyevent@${db}__:type_changed set_test_key2"] >= 0}
+        $rd1 close
     }
 
     test "publish to self inside multi" {

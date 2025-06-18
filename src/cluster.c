@@ -192,6 +192,7 @@ void restoreCommand(client *c) {
     /* Make sure this key does not already exist here... */
     robj *key = c->argv[1];
     kvobj *oldval = lookupKeyWrite(c->db,key);
+    int oldtype = oldval ? oldval->type : -1;
     if (!replace && oldval) {
         addReplyErrorObject(c,shared.busykeyerr);
         return;
@@ -241,7 +242,6 @@ void restoreCommand(client *c) {
 
     /* Create the key and set the TTL if any */
     kvobj *kv = dbAddInternal(c->db, key, &obj, NULL, ttl ? ttl : -1);
-    int newtype = kv->type;
 
     /* If minExpiredField was set, then the object is hash with expiration
      * on fields and need to register it in global HFE DS */
@@ -265,7 +265,7 @@ void restoreCommand(client *c) {
     notifyKeyspaceEvent(NOTIFY_GENERIC,"restore",key,c->db->id);
     if (deleted) {
         notifyKeyspaceEvent(NOTIFY_OVERWRITE, "overwrite", key, c->db->id);
-        if (oldval != NULL && oldval->type != newtype) {
+        if (oldtype != kv->type) {
             notifyKeyspaceEvent(NOTIFY_TYPE_CHANGED, "type_changed", key, c->db->id);
         }
     }
