@@ -753,9 +753,9 @@ typedef enum {
 #define NOTIFY_LOADED (1<<12)     /* module only key space notification, indicate a key loaded from rdb */
 #define NOTIFY_MODULE (1<<13)     /* d, module key space notification */
 #define NOTIFY_NEW (1<<14)        /* n, new key notification */
-#define NOTIFY_OVERWRITE (1<<15)   /* o, key override notification */
+#define NOTIFY_OVERWRITTEN (1<<15)   /* o, key overwrite notification */
 #define NOTIFY_TYPE_CHANGED (1<<16) /* c, key type changed notification */
-#define NOTIFY_ALL (NOTIFY_GENERIC | NOTIFY_STRING | NOTIFY_LIST | NOTIFY_SET | NOTIFY_HASH | NOTIFY_ZSET | NOTIFY_EXPIRED | NOTIFY_EVICTED | NOTIFY_STREAM | NOTIFY_MODULE | NOTIFY_OVERWRITE | NOTIFY_TYPE_CHANGED) /* A flag */
+#define NOTIFY_ALL (NOTIFY_GENERIC | NOTIFY_STRING | NOTIFY_LIST | NOTIFY_SET | NOTIFY_HASH | NOTIFY_ZSET | NOTIFY_EXPIRED | NOTIFY_EVICTED | NOTIFY_STREAM | NOTIFY_MODULE | NOTIFY_OVERWRITTEN | NOTIFY_TYPE_CHANGED) /* A flag */
 
 /* Using the following macro you can run code inside serverCron() with the
  * specified period, specified in milliseconds.

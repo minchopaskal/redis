@@ -611,7 +611,7 @@ void setKeyByLink(client *c, redisDb *db, robj *key, robj **valref, int flags, d
         dbSetValue(db, key, valref, *link, 1, 1, flags & SETKEY_KEEPTTL);
 
         /* Notify keyspace events for override and type change */
-        notifyKeyspaceEvent(NOTIFY_OVERWRITE, "overwrite", key, db->id);
+        notifyKeyspaceEvent(NOTIFY_OVERWRITTEN, "overwritten", key, db->id);
         if (oldtype != newtype)
             notifyKeyspaceEvent(NOTIFY_TYPE_CHANGED, "type_changed", key, db->id);
     } else {
@@ -1846,21 +1846,28 @@ void renameGenericCommand(client *c, int nx) {
 
     incrRefCount(o);
     expire = kvobjGetExpire(o);
-    if (lookupKeyWrite(c->db,c->argv[2]) != NULL) {
+    kvobj *destval = lookupKeyWrite(c->db,c->argv[2]);
+    int overwritten = 0;
+    int desttype = -1;
+    if (destval != NULL) {
         if (nx) {
             decrRefCount(o);
             addReply(c,shared.czero);
             return;
         }
+
         /* Overwrite: delete the old key before creating the new one
          * with the same name. */
+        desttype = destval->type;
         dbDelete(c->db,c->argv[2]);
+        overwritten = 1;
     }
 
     /* If hash with expiration on fields then remove it from global HFE DS and
      * keep next expiration time. Otherwise, dbDelete() will remove it from the
      * global HFE DS and we will lose the expiration time. */
-    if (o->type == OBJ_HASH)
+    int srctype = o->type;
+    if (srctype)
         minHashExpireTime = hashTypeRemoveFromExpires(&c->db->hexpires, o);
 
     dbDelete(c->db,c->argv[1]);
@@ -1876,6 +1883,11 @@ void renameGenericCommand(client *c, int nx) {
         c->argv[1],c->db->id);
     notifyKeyspaceEvent(NOTIFY_GENERIC,"rename_to",
         c->argv[2],c->db->id);
+    if (overwritten) {
+        notifyKeyspaceEvent(NOTIFY_OVERWRITTEN, "overwritten", c->argv[2], c->db->id);
+        if (desttype != srctype)
+            notifyKeyspaceEvent(NOTIFY_TYPE_CHANGED, "type_changed", c->argv[2], c->db->id);
+    }
     server.dirty++;
     addReply(c,nx ? shared.cone : shared.ok);
 }
@@ -2031,7 +2043,8 @@ void copyCommand(client *c) {
 
     /* Return zero if the key already exists in the target DB. 
      * If REPLACE option is selected, delete newkey from targetDB. */
-    if (lookupKeyWrite(dst,newkey) != NULL) {
+    kvobj *destval = lookupKeyWrite(dst,newkey);
+    if (destval != NULL) {
         if (replace) {
             delete = 1;
         } else {
@@ -2039,6 +2052,8 @@ void copyCommand(client *c) {
             return;
         }
     }
+    int destoldtype = destval ? destval->type : -1;
+    int destnewtype = o->type;
 
     /* Duplicate object according to object's type. */
     robj *newobj;
@@ -2073,6 +2088,13 @@ void copyCommand(client *c) {
     /* OK! key copied */
     signalModifiedKey(c,dst,c->argv[2]);
     notifyKeyspaceEvent(NOTIFY_GENERIC,"copy_to",c->argv[2],dst->id);
+
+    /* `delete` implies the destination key was overwritten */
+    if (delete) {
+        notifyKeyspaceEvent(NOTIFY_OVERWRITTEN, "overwritten", c->argv[2], dst->id);
+        if (destoldtype != destnewtype)
+            notifyKeyspaceEvent(NOTIFY_TYPE_CHANGED, "type_changed", c->argv[2], dst->id);
+    }
 
     server.dirty++;
     addReply(c,shared.cone);

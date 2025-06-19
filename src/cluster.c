@@ -263,8 +263,11 @@ void restoreCommand(client *c) {
     objectSetLRUOrLFU(kv, lfu_freq, lru_idle, lru_clock, 1000);
     signalModifiedKey(c,c->db,key);
     notifyKeyspaceEvent(NOTIFY_GENERIC,"restore",key,c->db->id);
+ 
+    /* If we deleted a key that means REPLACE parameter was passed and the
+     * destination key existed. */
     if (deleted) {
-        notifyKeyspaceEvent(NOTIFY_OVERWRITE, "overwrite", key, c->db->id);
+        notifyKeyspaceEvent(NOTIFY_OVERWRITTEN, "overwritten", key, c->db->id);
         if (oldtype != kv->type) {
             notifyKeyspaceEvent(NOTIFY_TYPE_CHANGED, "type_changed", key, c->db->id);
         }
