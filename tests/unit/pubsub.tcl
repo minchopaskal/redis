@@ -765,12 +765,12 @@ start_server {tags {"pubsub network"}} {
         # overwritten and type_changed events should be emitted for any->any
         # type conversion that uses the setKey command
         r flushdb
-        r lpush l 1 2 3
-        r sadd s1 "A"
-        r sadd s2 "B"
-        r sunionstore l s1 s2
-        assert_equal "pmessage * __keyevent@${db}__:overwritten l" [$rd1 read]
-        assert_equal "pmessage * __keyevent@${db}__:type_changed l" [$rd1 read]
+        r lpush l{t} 1 2 3
+        r sadd s1{t} "A"
+        r sadd s2{t} "B"
+        r sunionstore l{t} s1{t} s2{t}
+        assert_equal "pmessage * __keyevent@${db}__:overwritten l{t}" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:type_changed l{t}" [$rd1 read]
 
         r flushdb
         r sadd s1 "A"
