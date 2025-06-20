@@ -442,6 +442,7 @@ void getsetCommand(client *c) {
 void setrangeCommand(client *c) {
     int64_t oldLen = -1, newLen;
     long offset;
+    int overwritten = 0;
     sds value = c->argv[3]->ptr;
     const size_t value_len = sdslen(value);
 
@@ -490,6 +491,11 @@ void setrangeCommand(client *c) {
 
         newLen = max(oldLen, (int64_t) (offset + value_len));
         updateKeysizesHist(c->db, getKeySlot(c->argv[1]->ptr), OBJ_STRING, oldLen, newLen);            
+
+        /* If we completely overwrite the value the operation is functionally
+         * the same as if SET key value was called, so we want to emit the
+         * OVERWRITTEN */
+        overwritten = (offset == 0 && value_len >= (size_t)oldLen);
     }
 
     if (value_len > 0) {
@@ -498,6 +504,8 @@ void setrangeCommand(client *c) {
         signalModifiedKey(c,c->db,c->argv[1]);
         notifyKeyspaceEvent(NOTIFY_STRING,
             "setrange",c->argv[1],c->db->id);
+        if (overwritten)
+            notifyKeyspaceEvent(NOTIFY_OVERWRITTEN, "overwritten", c->argv[1], c->db->id);
         server.dirty++;
     }
 

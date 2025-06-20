@@ -718,18 +718,35 @@ start_server {tags {"pubsub network"}} {
     ### SET command tests for overwritten and type_changed KSN types
 
     test "Keyspace notifications: SET on existing string key - overwritten event" {
-        r config set notify-keyspace-events Eo
+        r config set notify-keyspace-events EA
         r del set_test_key1
         set rd1 [redis_deferring_client]
         assert_equal {1} [psubscribe $rd1 *]
 
         # Create initial string key
         r set set_test_key1 "initial_value"
+        assert_equal "pmessage * __keyevent@${db}__:set set_test_key1" [$rd1 read]
 
         # Set new value on existing string key - should emit overwritten event
         r set set_test_key1 "new_value"
 
         assert_equal "pmessage * __keyevent@${db}__:overwritten set_test_key1" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:set set_test_key1" [$rd1 read]
+
+        # overwritten event is also emitted if SETRANGE is overwrting the whole
+        # value
+        r flushdb
+        r set x "value"
+        assert_equal "pmessage * __keyevent@${db}__:set x" [$rd1 read]
+
+        # if we overwrite only part of the string we don't emit overwritten
+        r setrange x 1 "lua"
+        assert_equal "pmessage * __keyevent@${db}__:setrange x" [$rd1 read]
+
+        r setrange x 0 "bigger_value"
+        assert_equal "pmessage * __keyevent@${db}__:setrange x" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:overwritten x" [$rd1 read]
+
         $rd1 close
     }
 
