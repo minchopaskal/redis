@@ -801,7 +801,7 @@ start_server {tags {"pubsub network"}} {
         # test rename RENAME events
         r flushdb
         r hset hs field "hash_value"
-        r set x "string_value"
+        r sadd x 1 2 3
         r rename x hs
 
         assert_equal "pmessage * __keyevent@${db}__:overwritten hs" [$rd1 read]

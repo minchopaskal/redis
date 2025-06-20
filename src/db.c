@@ -1867,7 +1867,7 @@ void renameGenericCommand(client *c, int nx) {
      * keep next expiration time. Otherwise, dbDelete() will remove it from the
      * global HFE DS and we will lose the expiration time. */
     int srctype = o->type;
-    if (srctype)
+    if (srctype == OBJ_HASH)
         minHashExpireTime = hashTypeRemoveFromExpires(&c->db->hexpires, o);
 
     dbDelete(c->db,c->argv[1]);
