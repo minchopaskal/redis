@@ -773,12 +773,12 @@ start_server {tags {"pubsub network"}} {
         assert_equal "pmessage * __keyevent@${db}__:type_changed l{t}" [$rd1 read]
 
         r flushdb
-        r sadd s1 "A"
-        r set x "\x0f"
-        r set y "\xff"
-        r bitop and s1 x y
-        assert_equal "pmessage * __keyevent@${db}__:overwritten s1" [$rd1 read]
-        assert_equal "pmessage * __keyevent@${db}__:type_changed s1" [$rd1 read]
+        r sadd s1{t} "A"
+        r set x{t} "\x0f"
+        r set y{t} "\xff"
+        r bitop and s1{t} x{t} y{t}
+        assert_equal "pmessage * __keyevent@${db}__:overwritten s1{t}" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:type_changed s1{t}" [$rd1 read]
 
         $rd1 close
     }
@@ -791,21 +791,21 @@ start_server {tags {"pubsub network"}} {
 
         # test COPY events
         r flushdb
-        r hset hs 1 2 3 4
-        r lpush l 1 2 3 4
-        r copy hs l replace
+        r hset hs{t} 1 2 3 4
+        r lpush l{t} 1 2 3 4
+        r copy hs{t} l{t} replace
 
-        assert_equal "pmessage * __keyevent@${db}__:overwritten l" [$rd1 read]
-        assert_equal "pmessage * __keyevent@${db}__:type_changed l" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:overwritten l{t}" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:type_changed l{t}" [$rd1 read]
 
         # test rename RENAME events
         r flushdb
-        r hset hs field "hash_value"
-        r sadd x 1 2 3
-        r rename x hs
+        r hset hs{t} field "hash_value"
+        r sadd x{t} 1 2 3
+        r rename x{t} hs{t}
 
-        assert_equal "pmessage * __keyevent@${db}__:overwritten hs" [$rd1 read]
-        assert_equal "pmessage * __keyevent@${db}__:type_changed hs" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:overwritten hs{t}" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:type_changed hs{t}" [$rd1 read]
 
         $rd1 close
     }
