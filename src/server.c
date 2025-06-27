@@ -1058,7 +1058,7 @@ int updateClientMemUsageAndBucket(client *c) {
      * that special case we assert that at least the updated client's
      * running_tid is the main thread. The true main thread is allowed to call
      * this function on clients handled by IO-threads as it makes sure the
-     * IO-threads are paused, f.e see cleintsCron(). */
+     * IO-threads are paused, f.e see cleintsCron() and evictClients(). */
     serverAssert((pthread_equal(pthread_self(), server.main_thread_id)
                   || c->running_tid == IOTHREAD_MAIN_THREAD_ID)
                  && c->conn);
