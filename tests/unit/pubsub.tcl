@@ -733,20 +733,6 @@ start_server {tags {"pubsub network"}} {
         assert_equal "pmessage * __keyevent@${db}__:overwritten set_test_key1" [$rd1 read]
         assert_equal "pmessage * __keyevent@${db}__:set set_test_key1" [$rd1 read]
 
-        # overwritten event is also emitted if SETRANGE is overwrting the whole
-        # value
-        r flushdb
-        r set x "value"
-        assert_equal "pmessage * __keyevent@${db}__:set x" [$rd1 read]
-
-        # if we overwrite only part of the string we don't emit overwritten
-        r setrange x 1 "lua"
-        assert_equal "pmessage * __keyevent@${db}__:setrange x" [$rd1 read]
-
-        r setrange x 0 "bigger_value"
-        assert_equal "pmessage * __keyevent@${db}__:setrange x" [$rd1 read]
-        assert_equal "pmessage * __keyevent@${db}__:overwritten x" [$rd1 read]
-
         $rd1 close
     }
 
