@@ -796,6 +796,96 @@ start_server {tags {"pubsub network"}} {
         $rd1 close
     }
 
+    test "Keyspace notifications: overwritten and type_changed for *STORE* commands" {
+        r config set notify-keyspace-events Eoc
+
+        set rd1 [redis_deferring_client]
+        assert_equal {1} [psubscribe $rd1 *]
+
+        r flushdb
+        r set x{t} x
+
+        # SORT
+        r lpush l{t} 4 3 2 1
+        r sort l{t} store x{t}
+        assert_equal "pmessage * __keyevent@${db}__:overwritten x{t}" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:type_changed x{t}" [$rd1 read]
+
+        # SDIFFSTORE
+        r sadd s1{t} a b c d
+        r sadd s2{t} b e f
+        r sdiffstore x{t} s1{t} s2{t}
+        assert_equal "pmessage * __keyevent@${db}__:overwritten x{t}" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:type_changed x{t}" [$rd1 read]
+
+        # SINTERSTORE
+        r set d1{t} x
+        r sinterstore d1{t} s1{t} s2{t}
+        assert_equal "pmessage * __keyevent@${db}__:overwritten d1{t}" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:type_changed d1{t}" [$rd1 read]
+
+        # SUNIONSTORE
+        r set d2{t} x
+        r sunionstore d2{t} s1{t} s2{t}
+        assert_equal "pmessage * __keyevent@${db}__:overwritten d2{t}" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:type_changed d2{t}" [$rd1 read]
+
+        # ZUNIONSTORE
+        r set d3{t} x
+        r zadd z1{t} 1 a 2 b
+        r zadd z2{t} 3 c 4 d
+        r zunionstore d3{t} 2 z1{t} z2{t}
+        assert_equal "pmessage * __keyevent@${db}__:overwritten d3{t}" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:type_changed d3{t}" [$rd1 read]
+
+        # ZINTERSTORE
+        r set d4{t} x
+        r zadd z2{t} 2 a
+        r zinterstore d4{t} 2 z1{t} z2{t}
+        assert_equal "pmessage * __keyevent@${db}__:overwritten d4{t}" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:type_changed d4{t}" [$rd1 read]
+
+        # ZDIFFSTORE
+        r set d5{t} x
+        r zdiffstore d5{t} 2 z1{t} z2{t}
+        assert_equal "pmessage * __keyevent@${db}__:overwritten d5{t}" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:type_changed d5{t}" [$rd1 read]
+
+        # ZRANGESTORE
+        r set d6{t} x
+        r zadd zsrc{t} 1 a 2 b 3 c 4 d
+        r zrangestore d6{t} zsrc{t} 1 2
+        assert_equal "pmessage * __keyevent@${db}__:overwritten d6{t}" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:type_changed d6{t}" [$rd1 read]
+
+        # GEORADIUS with STORE
+        r set d7{t} x
+        r geoadd geo{t} 13.361389 38.115556 "Palermo" 15.087269 37.502669 "Catania"
+        r georadius geo{t} 15 37 200 km store d7{t}
+        assert_equal "pmessage * __keyevent@${db}__:overwritten d7{t}" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:type_changed d7{t}" [$rd1 read]
+
+        # GEORADIUS with STOREDIST
+        r set d8{t} x
+        r georadius geo{t} 15 37 200 km storedist d8{t}
+        assert_equal "pmessage * __keyevent@${db}__:overwritten d8{t}" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:type_changed d8{t}" [$rd1 read]
+
+        # GEOSEARCHSTORE
+        r set d9{t} x
+        r geosearchstore d9{t} geo{t} fromlonlat 15 37 byradius 200 km
+        assert_equal "pmessage * __keyevent@${db}__:overwritten d9{t}" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:type_changed d9{t}" [$rd1 read]
+
+        # GEOSEARCHSTORE with STOREDIST
+        r set d10{t} x
+        r geosearchstore d10{t} geo{t} fromlonlat 15 37 byradius 200 km storedist
+        assert_equal "pmessage * __keyevent@${db}__:overwritten d10{t}" [$rd1 read]
+        assert_equal "pmessage * __keyevent@${db}__:type_changed d10{t}" [$rd1 read]
+
+        $rd1 close
+    }
+
     test "publish to self inside multi" {
         r hello 3
         r subscribe foo
