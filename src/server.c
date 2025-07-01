@@ -1060,8 +1060,7 @@ int updateClientMemUsageAndBucket(client *c) {
      * this function on clients handled by IO-threads as it makes sure the
      * IO-threads are paused, f.e see cleintsCron() and evictClients(). */
     serverAssert((pthread_equal(pthread_self(), server.main_thread_id) ||
-                               c->running_tid == IOTHREAD_MAIN_THREAD_ID) &&
-                 c->conn);
+                  c->running_tid == IOTHREAD_MAIN_THREAD_ID) && c->conn);
     int allow_eviction = clientEvictionAllowed(c);
     removeClientFromMemUsageBucket(c, allow_eviction);
 
