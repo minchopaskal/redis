@@ -290,7 +290,6 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
     if (RedisModule_Init(ctx, "configaccess", 1, REDISMODULE_APIVER_1) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
 
-
     if (RedisModule_CreateCommand(ctx, "configaccess.getconfigs",
                                  TestConfigIteration_RedisCommand, "readonly", 0, 0, 0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
@@ -302,7 +301,6 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
     if (RedisModule_CreateCommand(ctx, "configaccess.getnumeric",
                                  TestGetNumericConfig_RedisCommand, "readonly", 0, 0, 0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
-
 
     if (RedisModule_CreateCommand(ctx, "configaccess.get",
                                  TestGetConfig_RedisCommand, "readonly", 0, 0, 0) == REDISMODULE_ERR)

@@ -214,5 +214,6 @@ start_server {tags {"modules"}} {
         }
 
         assert_equal [lindex [r config get port] 1] $og_port
+        close $sockfd
     }
 }
