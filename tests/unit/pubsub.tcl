@@ -718,7 +718,7 @@ start_server {tags {"pubsub network"}} {
     ### SET command tests for overwritten and type_changed KSN types
 
     test "Keyspace notifications: SET on existing string key - overwritten event" {
-        r config set notify-keyspace-events EA
+        r config set notify-keyspace-events EAo
         r del set_test_key1
         set rd1 [redis_deferring_client]
         assert_equal {1} [psubscribe $rd1 *]
