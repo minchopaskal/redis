@@ -13607,9 +13607,11 @@ RedisModuleConfigIterator *RM_ConfigIteratorCreate(RedisModuleCtx *ctx, const ch
     if (pattern != NULL) {
         iter->pattern = sdsnew(pattern);
         iter->is_glob = (strpbrk(pattern, "*?[") != NULL);
-    } else
+    } else {
         iter->pattern = NULL;
- 
+        iter->is_glob = false;
+    }
+
     if (ctx != NULL) autoMemoryAdd(ctx,REDISMODULE_AM_CONFIG, iter);
     return iter;
 }
