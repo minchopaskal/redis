@@ -3187,6 +3187,7 @@ void syncWithMaster(connection *conn) {
         if (server.supervised_mode == SUPERVISED_SYSTEMD) {
             redisCommunicateSystemd("STATUS=MASTER <-> REPLICA sync: Partial Resynchronization accepted. Ready to accept connections in read-write mode.\n");
         }
+        server.repl_state = REPL_STATE_CONNECTED;
         return;
     }
 
@@ -4387,6 +4388,15 @@ void replicationCacheMaster(client *c) {
      * replicationHandleMasterDisconnection(). */
     server.cached_master = server.master;
 
+    /* replicationCacheMaster is called from freeClient, we make sure the.
+     * If the master client was handled by an IO-thread we must have unbound
+     * the event loop. We also make sure set it's thread to the main one as
+     * later during ressurection/discarding the cached master we want it to be
+     * handled in the main thread. */
+    if (server.cached_master->tid != IOTHREAD_MAIN_THREAD_ID) {
+        server.cached_master->tid = IOTHREAD_MAIN_THREAD_ID;
+    }
+
     /* Invalidate the Peer ID cache. */
     if (c->peerid) {
         sdsfree(c->peerid);
@@ -4456,6 +4466,8 @@ void replicationDiscardCachedMaster(void) {
  * so the stream of data that we'll receive will start from where this
  * master left. */
 void replicationResurrectCachedMaster(connection *conn) {
+    serverAssert(server.cached_master->tid == IOTHREAD_MAIN_THREAD_ID);
+
     server.master = server.cached_master;
     server.cached_master = NULL;
     server.master->conn = conn;
@@ -4819,8 +4831,11 @@ void replicationCron(void) {
      * Note that we do not send periodic acks to masters that don't
      * support PSYNC and replication offsets. */
     if (server.masterhost && server.master &&
-        !(server.master->flags & CLIENT_PRE_PSYNC))
+        server.master->running_tid == IOTHREAD_MAIN_THREAD_ID &&
+        !(server.master->flags & CLIENT_PRE_PSYNC)) {
+        serverLog(LL_NOTICE, "ACK from MAIN");
         replicationSendAck();
+    }
 
     /* If we have attached slaves, PING them from time to time.
      * So slaves can implement an explicit timeout to masters, and will

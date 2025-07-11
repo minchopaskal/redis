@@ -2076,6 +2076,7 @@ void freeClient(client *c) {
         serverLog(LL_NOTICE,"Connection with master lost.");
         if (!(c->flags & (CLIENT_PROTOCOL_ERROR|CLIENT_BLOCKED))) {
             c->flags &= ~(CLIENT_CLOSE_ASAP|CLIENT_CLOSE_AFTER_REPLY);
+            c->io_flags &= ~CLIENT_IO_CLOSE_ASAP;
             replicationCacheMaster(c);
             return;
         }

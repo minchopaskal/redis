@@ -147,6 +147,10 @@ void fetchClientFromIOThread(client *c) {
  *   directly write them a reply when conditions are met.
  * - Script command with debug may operate connection directly. */
 int isClientMustHandledByMainThread(client *c) {
+    // If RDB replication is done it's save to move this client to an IO thread
+    if (c->flags & CLIENT_MASTER && server.repl_state == REPL_STATE_CONNECTED) {
+        return 0;
+    }
     if (c->flags & (CLIENT_CLOSE_ASAP | CLIENT_MASTER | CLIENT_SLAVE |
                     CLIENT_PUBSUB | CLIENT_MONITOR | CLIENT_BLOCKED |
                     CLIENT_UNBLOCKED | CLIENT_TRACKING | CLIENT_LUA_DEBUG |
@@ -716,6 +720,15 @@ void IOThreadClientsCron(IOThread *t) {
     }
 }
 
+void IOThreadReplicationCron(IOThread *t) {
+    if (server.masterhost && server.master &&
+        server.master->running_tid == t->id &&
+        !(server.master->flags & CLIENT_PRE_PSYNC)) {
+        serverLog(LL_NOTICE, "ACK from IOThread %d", t->id);
+        replicationSendAck();
+    }
+}
+
 /* This is the IO thread timer interrupt, CONFIG_DEFAULT_HZ times per second.
  * The current responsibility is to detect clients that have been stuck in the
  * IO thread for too long and hand them over to the main thread for handling. */
@@ -726,6 +739,20 @@ int IOThreadCron(struct aeEventLoop *eventLoop, long long id, void *clientData) 
 
     /* Run cron tasks for the clients in the IO thread. */
     IOThreadClientsCron(t);
+
+    /* Replication cron function -- used to reconnect to master,
+     * detect transfer failures, start background RDB transfers and so forth. 
+     * 
+     * If Redis is trying to failover then run the replication cron faster so
+     * progress on the handshake happens more quickly.
+     * 
+     * This is same as in main thread. */
+    if (server.failover_state != NO_FAILOVER) {
+        run_with_period(100) IOThreadReplicationCron(t);
+    } else {
+        run_with_period(1000) IOThreadReplicationCron(t);
+    }
+
 
     return 1000/CONFIG_DEFAULT_HZ;
 }
