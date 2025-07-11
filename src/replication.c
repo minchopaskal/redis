@@ -3187,7 +3187,6 @@ void syncWithMaster(connection *conn) {
         if (server.supervised_mode == SUPERVISED_SYSTEMD) {
             redisCommunicateSystemd("STATUS=MASTER <-> REPLICA sync: Partial Resynchronization accepted. Ready to accept connections in read-write mode.\n");
         }
-        server.repl_state = REPL_STATE_CONNECTED;
         return;
     }
 
@@ -4391,7 +4390,7 @@ void replicationCacheMaster(client *c) {
     /* replicationCacheMaster is called from freeClient, we make sure the.
      * If the master client was handled by an IO-thread we must have unbound
      * the event loop. We also make sure set it's thread to the main one as
-     * later during ressurection/discarding the cached master we want it to be
+     * later during resurrection/discarding the cached master we want it to be
      * handled in the main thread. */
     if (server.cached_master->tid != IOTHREAD_MAIN_THREAD_ID) {
         server.cached_master->tid = IOTHREAD_MAIN_THREAD_ID;
