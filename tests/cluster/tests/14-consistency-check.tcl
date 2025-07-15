@@ -35,7 +35,8 @@ proc get_one_of_my_replica {id} {
 
     # To avoid -LOADING reply, wait until replica syncs with master.
     wait_for_condition 1000 50 {
-        [RI $replica_id_num master_link_status] eq {up}
+        [RI $replica_id_num master_link_status] eq {up} &&
+        [R $replica_id_num dbsize] eq [R $id dbsize]
     } else {
         fail "Replica did not sync in time."
     }
@@ -61,20 +62,8 @@ proc test_slave_load_expired_keys {aof} {
         set replica_id [get_one_of_my_replica $master_id]
 
         set master_dbsize_0 [R $master_id dbsize]
-
-        # Generally this condition should be immediatelly true, unless we are in
-        # an iothreads context in which case a slave client may be transfered to
-        # an io-thread and there will be delay before the replica's rdb commands
-        # are streamed. I.e:
-        # * replica sends "REPLCONF ACK"
-        # * master node puts replica client online and sends it to an io-thread
-        # * replica receives dbsize
-        # * master streams rdb commands which change replica's dbsize
-        wait_for_condition 1000 50 {
-            $master_dbsize_0 eq [R $replica_id dbsize]
-        } else {
-            fail "Replica did not sync in time."
-        }
+        set replica_dbsize_0 [R $replica_id dbsize]
+        assert_equal $master_dbsize_0 $replica_dbsize_0
 
         # config the replica persistency and rewrite the config file to survive restart
         # note that this needs to be done before populating the volatile keys since
