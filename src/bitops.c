@@ -18,6 +18,10 @@
 #include <immintrin.h>
 #endif
 
+#ifdef HAVE_NEON
+#include <arm_neon.h>
+#endif
+
 #ifdef HAVE_AVX2
 #define BITOP_USE_AVX2 (__builtin_cpu_supports("avx2"))
 #else
@@ -811,6 +815,163 @@ unsigned long bitopCommandAVX(unsigned char **keys, unsigned char *res,
 }
 #endif /* HAVE_AVX2 */
 
+#ifdef HAVE_NEON
+/* Compute the given bitop operation using NEON intrinsics.
+ * Return how many bytes were successfully processed, as NEON operates on
+ * 128-bit registers so if `minlen` is not a multiple of 16 some of the bytes
+ * will be skipped. They will be taken care for in the unoptimized loop in the
+ * main bitopCommand function. */
+unsigned long bitopCommandNeon(unsigned char **keys, unsigned char *res, 
+                               unsigned long op, unsigned long numkeys,
+                               unsigned long minlen)
+{
+    const unsigned long step = sizeof(uint8x16_t);
+
+    unsigned long i;
+    unsigned long processed = 0;
+    unsigned char *res_start = res;
+    unsigned char *fst_key = keys[0];
+
+    if (minlen < step) {
+        return 0;
+    }
+
+    /* Unlike other operations that do the same with all source keys
+     * DIFF, DIFF1 and ANDOR all compute the disjunction of all the source keys
+     * but the first one. We first store that disjunction in `lres` and later 
+     * compute the final operation using the first source key. */
+    if (op != BITOP_DIFF && op != BITOP_DIFF1 && op != BITOP_ANDOR) {
+        memcpy(res, keys[0], minlen);
+    }
+
+    const uint8x16_t max128 = vdupq_n_u8(0xFF);
+    const uint8x16_t zero128 = vdupq_n_u8(0x00);
+
+    switch (op) {
+    case BITOP_AND:
+        while (minlen >= step) {
+            uint8x16_t lres = vld1q_u8(res);
+
+            for (i = 1; i < numkeys; i++) {
+                uint8x16_t lkey = vld1q_u8(keys[i] + processed);
+                lres = vandq_u8(lres, lkey);
+            }
+            vst1q_u8(res, lres);
+            res += step;
+            processed += step;
+            minlen -= step;
+        }
+        break;
+    case BITOP_DIFF:
+    case BITOP_DIFF1:
+    case BITOP_ANDOR:
+    case BITOP_OR:
+        while (minlen >= step) {
+            uint8x16_t lres = vld1q_u8(res);
+
+            for (i = 1; i < numkeys; i++) {
+                uint8x16_t lkey = vld1q_u8(keys[i] + processed);
+                lres = vorrq_u8(lres, lkey);
+            }
+            vst1q_u8(res, lres);
+            res += step;
+            processed += step;
+            minlen -= step;
+        }
+        break;
+    case BITOP_XOR:
+        while (minlen >= step) {
+            uint8x16_t lres = vld1q_u8(res);
+
+            for (i = 1; i < numkeys; i++) {
+                uint8x16_t lkey = vld1q_u8(keys[i] + processed);
+                lres = veorq_u8(lres, lkey);
+            }
+            vst1q_u8(res, lres);
+            res += step;
+            processed += step;
+            minlen -= step;
+        }
+        break;
+    case BITOP_NOT:
+        while (minlen >= step) {
+            uint8x16_t lres = vld1q_u8(res);
+            lres = veorq_u8(lres, max128);
+            vst1q_u8(res, lres);
+            res += step;
+            processed += step;
+            minlen -= step;
+        }
+        break;
+    case BITOP_ONE:
+        while (minlen >= step) {
+            uint8x16_t lres = vld1q_u8(res);
+            uint8x16_t common_bits = zero128;
+
+            for (i = 1; i < numkeys; i++) {
+                uint8x16_t lkey = vld1q_u8(keys[i] + processed);
+                uint8x16_t common = vandq_u8(lres, lkey);
+                common_bits = vorrq_u8(common_bits, common);
+
+                lres = veorq_u8(lres, lkey);
+            }
+            lres = vbicq_u8(lres, common_bits);
+            vst1q_u8(res, lres);
+            res += step;
+            processed += step;
+            minlen -= step;
+        }
+        break;
+    default:
+        break;
+    }
+
+    res = res_start;
+    switch (op) {
+    case BITOP_DIFF:
+        for (i = 0; i < processed; i += step) {
+            uint8x16_t lres = vld1q_u8(res);
+            uint8x16_t fkey = vld1q_u8(fst_key);
+
+            lres = vbicq_u8(fkey, lres);
+            vst1q_u8(res, lres);
+
+            res += step;
+            fst_key += step;
+        }
+        break;
+    case BITOP_DIFF1:
+        for (i = 0; i < processed; i += step) {
+            uint8x16_t lres = vld1q_u8(res);
+            uint8x16_t fkey = vld1q_u8(fst_key);
+
+            lres = vbicq_u8(lres, fkey);
+            vst1q_u8(res, lres);
+
+            res += step;
+            fst_key += step;
+        }
+        break;
+    case BITOP_ANDOR:
+        for (i = 0; i < processed; i += step) {
+            uint8x16_t lres = vld1q_u8(res);
+            uint8x16_t fkey = vld1q_u8(fst_key);
+
+            lres = vandq_u8(fkey, lres);
+            vst1q_u8(res, lres);
+
+            res += step;
+            fst_key += step;
+        }
+        break;
+    default:
+        break;
+    }
+
+    return processed;
+}
+#endif /* HAVE_NEON */
+
 /* BITOP op_name target_key src_key1 src_key2 src_key3 ... src_keyN */
 REDIS_NO_SANITIZE("alignment")
 void bitopCommand(client *c) {
@@ -900,6 +1061,7 @@ void bitopCommand(client *c) {
         unsigned char output, byte, disjunction, common_bits;
         unsigned long i;
         int useAVX2 = 0;
+        int useNEON = 0;
 
         /* Number of bytes processed from each source key */
         j = 0;
@@ -915,20 +1077,30 @@ void bitopCommand(client *c) {
         }
 #endif
 
+#if defined(HAVE_NEON)
+        j = bitopCommandNeon(src, res, op, numkeys, minlen);
+
+        serverAssert(minlen >= j);
+        minlen -= j;
+
+        useNEON = 1;
+#endif
+
 #if !defined(USE_ALIGNED_ACCESS)
         /* We don't have AVX2 but we still have fast path:
          * as far as we have data for all the input bitmaps we
          * can take a fast path that performs much better than the
-         * vanilla algorithm. On ARM we skip the fast path since it will
+         * vanilla algorithm. On 32-bit ARM we skip the fast path since it will
          * result in GCC compiling the code using multiple-words load/store
          * operations that are not supported even in ARM >= v6. */
         if (minlen >= sizeof(unsigned long)*4) {
-            /* We can't have entered the AVX2 path since minlen >= sizeof(unsigned long)*4
+            /* We can't have entered the AVX2 or NEON path since minlen >= sizeof(unsigned long)*4
              * AVX2 path operates on steps of sizeof(__m256i) which for 64-bit
              * machines (the only ones supporting AVX2) is equal to
-             * sizeof(unsigned long)*4. That means after the AVX2
-             * path minlen will necessarily be < sizeof(unsigned long)*4. */
-            serverAssert(!useAVX2);
+             * sizeof(unsigned long)*4. NEON path operates on steps of 16 bytes.
+             * That means after the AVX2/NEON path minlen will necessarily be 
+             * < sizeof(unsigned long)*4. */
+            serverAssert(!useAVX2 && !useNEON);
 
             unsigned long **lp = (unsigned long**)src;
             unsigned long *lres = (unsigned long*) res;

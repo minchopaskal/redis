@@ -358,4 +358,9 @@ void setcpuaffinity(const char *cpulist);
 #define ATTRIBUTE_TARGET_AVX2
 #endif
 
+/* Check if we can compile NEON code */
+#if defined(__aarch64__)
+#define HAVE_NEON
+#endif
+
 #endif
