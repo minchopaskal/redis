@@ -598,10 +598,6 @@ int processClientsFromMainThread(IOThread *t) {
          * we only set io_flags when clients in io thread are freed ASAP. */
         serverAssert(!(c->flags & CLIENT_CLOSE_ASAP));
 
-        if (c->flags & CLIENT_SLAVE) {
-            serverLog(LL_NOTICE, "Processing slave client in IO-thread %d", t->id);
-        }
-
         /* Link client in IO thread clients list first. */
         serverAssert(c->io_thread_client_list_node == NULL);
         listUnlinkNode(t->processing_clients, ln);
@@ -707,8 +703,8 @@ void IOThreadClientsCron(IOThread *t) {
 void IOThreadReplicationCron(IOThread *t) {
     if (server.masterhost && server.master &&
         server.master->running_tid == t->id &&
-        !(server.master->flags & CLIENT_PRE_PSYNC)) {
-        serverLog(LL_NOTICE, "ACK from IOThread %d", t->id);
+        !(server.master->flags & CLIENT_PRE_PSYNC))
+    {
         replicationSendAck();
     }
 }
