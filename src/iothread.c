@@ -147,10 +147,18 @@ void fetchClientFromIOThread(client *c) {
  *   directly write them a reply when conditions are met.
  * - Script command with debug may operate connection directly. */
 int isClientMustHandledByMainThread(client *c) {
-    // If RDB replication is done it's save to move this client to an IO thread
-    if (c->flags & CLIENT_MASTER && server.repl_state == REPL_STATE_CONNECTED) {
+    /* If RDB replication is done it's save to move the master client to an IO thread */
+    if (c->flags & CLIENT_MASTER && server.repl_state == REPL_STATE_CONNECTED)
+        return 0;
+
+    /* If RDB replication is done for this slave it's save to move it to an IO thread */
+    if (c->flags & CLIENT_SLAVE &&
+        c->replstate == SLAVE_STATE_ONLINE &&
+        c->repl_start_cmd_stream_on_ack == 0)
+    {
         return 0;
     }
+
     if (c->flags & (CLIENT_CLOSE_ASAP | CLIENT_MASTER | CLIENT_SLAVE |
                     CLIENT_PUBSUB | CLIENT_MONITOR | CLIENT_BLOCKED |
                     CLIENT_UNBLOCKED | CLIENT_TRACKING | CLIENT_LUA_DEBUG |
@@ -617,6 +625,10 @@ int processClientsFromMainThread(IOThread *t) {
         /* Main thread must handle clients with CLIENT_CLOSE_ASAP flag, since
          * we only set io_flags when clients in io thread are freed ASAP. */
         serverAssert(!(c->flags & CLIENT_CLOSE_ASAP));
+
+        if (c->flags & CLIENT_SLAVE) {
+            serverLog(LL_NOTICE, "Processing slave client in IO-thread %d", t->id);
+        }
 
         /* Link client in IO thread clients list first. */
         serverAssert(c->io_thread_client_list_node == NULL);
