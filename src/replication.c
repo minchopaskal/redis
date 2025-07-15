@@ -4836,6 +4836,9 @@ void replicationCron(void) {
         replicationSendAck();
     }
 
+    // TODO: we need to have all this logic in IO-threads replication cron in order
+    // to handle slave clients that are inside an IOthread
+
     /* If we have attached slaves, PING them from time to time.
      * So slaves can implement an explicit timeout to masters, and will
      * be able to detect a link disconnection even if the TCP connection
