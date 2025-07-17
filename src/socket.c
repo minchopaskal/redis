@@ -97,6 +97,7 @@ static int connSocketConnect(connection *conn, const char *addr, int port, const
     conn->conn_handler = connect_handler;
     aeCreateFileEvent(conn->el, conn->fd, AE_WRITABLE,
             conn->type->ae_handler, conn);
+    aeRegisterFile(conn->el, conn->fd);
 
     return C_OK;
 }
@@ -219,9 +220,11 @@ static int connSocketSetWriteHandler(connection *conn, ConnectionCallbackFunc fu
         conn->flags &= ~CONN_FLAG_WRITE_BARRIER;
     if (!conn->write_handler)
         aeDeleteFileEvent(conn->el,conn->fd,AE_WRITABLE);
-    else
+    else {
         if (aeCreateFileEvent(conn->el,conn->fd,AE_WRITABLE,
                     conn->type->ae_handler,conn) == AE_ERR) return C_ERR;
+        aeRegisterFile(conn->el, conn->fd);
+    }
     return C_OK;
 }
 
@@ -234,9 +237,11 @@ static int connSocketSetReadHandler(connection *conn, ConnectionCallbackFunc fun
     conn->read_handler = func;
     if (!conn->read_handler)
         aeDeleteFileEvent(conn->el,conn->fd,AE_READABLE);
-    else
+    else {
         if (aeCreateFileEvent(conn->el,conn->fd,
                     AE_READABLE,conn->type->ae_handler,conn) == AE_ERR) return C_ERR;
+        aeRegisterFile(conn->el, conn->fd);
+    }
     return C_OK;
 }
 

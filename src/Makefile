@@ -231,6 +231,11 @@ else
 	# All the other OSes (notably Linux)
 	FINAL_LDFLAGS+= -rdynamic
 	FINAL_LIBS+=-ldl -pthread -lrt
+	# Check for liburing availability
+	LIBURING_PKGCONFIG := $(shell $(PKG_CONFIG) --exists liburing && echo $$?)
+	ifeq ($(LIBURING_PKGCONFIG),0)
+		FINAL_LIBS+= $(shell $(PKG_CONFIG) --libs liburing)
+	endif
 endif
 endif
 endif

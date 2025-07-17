@@ -29,22 +29,26 @@
 
 /* Include the best multiplexing layer supported by this system.
  * The following should be ordered by performances, descending. */
-#ifdef HAVE_EVPORT
-#include "ae_evport.c"
+#ifdef HAVE_IOURING
+#include "ae_iouring.c"
 #else
-    #ifdef HAVE_EPOLL
-    #include "ae_epoll.c"
+    #ifdef HAVE_EVPORT
+    #include "ae_evport.c"
     #else
-        #ifdef HAVE_KQUEUE
-        #include "ae_kqueue.c"
+        #ifdef HAVE_EPOLL
+        #include "ae_epoll.c"
         #else
-        #include "ae_select.c"
+            #ifdef HAVE_KQUEUE
+            #include "ae_kqueue.c"
+            #else
+            #include "ae_select.c"
+            #endif
         #endif
     #endif
 #endif
 
 #define INITIAL_EVENT 1024
-aeEventLoop *aeCreateEventLoop(int setsize) {
+aeEventLoop *aeCreateEventLoop(int setsize, int extflags, int num_threads) {
     aeEventLoop *eventLoop;
     int i;
 
@@ -63,6 +67,8 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     eventLoop->beforesleep = NULL;
     eventLoop->aftersleep = NULL;
     eventLoop->flags = 0;
+    eventLoop->extflags = extflags;
+    eventLoop->num_threads = num_threads;
     memset(eventLoop->privdata, 0, sizeof(eventLoop->privdata));
     if (aeApiCreate(eventLoop) == -1) goto err;
     /* Events with mask == AE_NONE are not set. So let's initialize the
@@ -169,6 +175,50 @@ int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
 
     if (aeApiAddEvent(eventLoop, fd, mask) == -1)
         return AE_ERR;
+    fe->mask |= mask;
+    if (mask & AE_READABLE) fe->rfileProc = proc;
+    if (mask & AE_WRITABLE) fe->wfileProc = proc;
+    fe->clientData = clientData;
+    if (fd > eventLoop->maxfd)
+        eventLoop->maxfd = fd;
+    return AE_OK;
+}
+
+int aeCreateFileEventWithBuf(aeEventLoop *eventLoop, int fd, int mask,
+                             aeFileProc *proc, void *clientData, struct iovec *iovecs)
+{
+    if (fd >= eventLoop->setsize) {
+        errno = ERANGE;
+        return AE_ERR;
+    }
+
+    /* Resize the events and fired arrays if the file
+     * descriptor exceeds the current number of events. */
+    if (unlikely(fd >= eventLoop->nevents)) {
+        int newnevents = eventLoop->nevents;
+        newnevents = (newnevents * 2 > fd + 1) ? newnevents * 2 : fd + 1;
+        newnevents = (newnevents > eventLoop->setsize) ? eventLoop->setsize : newnevents;
+        eventLoop->events = zrealloc(eventLoop->events, sizeof(aeFileEvent) * newnevents);
+        eventLoop->fired = zrealloc(eventLoop->fired, sizeof(aeFiredEvent) * newnevents);
+
+        /* Initialize new slots with an AE_NONE mask */
+        for (int i = eventLoop->nevents; i < newnevents; i++)
+            eventLoop->events[i].mask = AE_NONE;
+        eventLoop->nevents = newnevents;
+    }
+
+    aeFileEvent *fe = &eventLoop->events[fd];
+
+#ifdef HAVE_IOURING
+    /* Use io_uring specific API if available */
+    if (aeApiAddEventWithBuf(eventLoop, fd, mask, iovecs) == -1)
+        return AE_ERR;
+#else
+    /* Fall back to standard API */
+    if (aeApiAddEvent(eventLoop, fd, mask) == -1)
+        return AE_ERR;
+#endif
+
     fe->mask |= mask;
     if (mask & AE_READABLE) fe->rfileProc = proc;
     if (mask & AE_WRITABLE) fe->wfileProc = proc;
@@ -508,4 +558,15 @@ void aeSetBeforeSleepProc(aeEventLoop *eventLoop, aeBeforeSleepProc *beforesleep
 
 void aeSetAfterSleepProc(aeEventLoop *eventLoop, aeBeforeSleepProc *aftersleep) {
     eventLoop->aftersleep = aftersleep;
+}
+
+void aeRegisterFile(aeEventLoop *eventLoop, int fd) {
+#ifdef HAVE_IOURING
+    /* Register file descriptor for io_uring fixed file operations */
+    aeApiRegisterFile(eventLoop, fd);
+#else
+    /* No-op for other backends */
+    (void)eventLoop;
+    (void)fd;
+#endif
 }

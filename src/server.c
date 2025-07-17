@@ -2619,6 +2619,7 @@ int createSocketAcceptHandler(connListener *sfd, aeFileProc *accept_handler) {
             for (j = j-1; j >= 0; j--) aeDeleteFileEvent(server.el, sfd->fd[j], AE_READABLE);
             return C_ERR;
         }
+        aeRegisterFile(server.el, sfd->fd[j]);
     }
     return C_OK;
 }
@@ -2829,7 +2830,7 @@ void initServer(void) {
     adjustOpenFilesLimit();
     const char *clk_msg = monotonicInit();
     serverLog(LL_NOTICE, "monotonic clock: %s", clk_msg);
-    server.el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR);
+    server.el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR, 0, 1);
     if (server.el == NULL) {
         serverLog(LL_WARNING,
             "Failed creating the event loop. Error message: '%s'",

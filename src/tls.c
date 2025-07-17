@@ -577,13 +577,19 @@ static void registerSSLEvent(tls_connection *conn, WantIOType want) {
     switch (want) {
         case WANT_READ:
             if (mask & AE_WRITABLE) aeDeleteFileEvent(conn->c.el, conn->c.fd, AE_WRITABLE);
-            if (!(mask & AE_READABLE)) aeCreateFileEvent(conn->c.el, conn->c.fd, AE_READABLE,
+            if (!(mask & AE_READABLE)) {
+                aeCreateFileEvent(conn->c.el, conn->c.fd, AE_READABLE,
                         tlsEventHandler, conn);
+                aeRegisterFile(conn->c.el, conn->c.fd);
+            }
             break;
         case WANT_WRITE:
             if (mask & AE_READABLE) aeDeleteFileEvent(conn->c.el, conn->c.fd, AE_READABLE);
-            if (!(mask & AE_WRITABLE)) aeCreateFileEvent(conn->c.el, conn->c.fd, AE_WRITABLE,
+            if (!(mask & AE_WRITABLE)) {
+                aeCreateFileEvent(conn->c.el, conn->c.fd, AE_WRITABLE,
                         tlsEventHandler, conn);
+                aeRegisterFile(conn->c.el, conn->c.fd);
+            }
             break;
         default:
             serverAssert(0);
@@ -597,13 +603,17 @@ static void updateSSLEvent(tls_connection *conn) {
     int need_read = conn->c.read_handler || (conn->flags & TLS_CONN_FLAG_WRITE_WANT_READ);
     int need_write = conn->c.write_handler || (conn->flags & TLS_CONN_FLAG_READ_WANT_WRITE);
 
-    if (need_read && !(mask & AE_READABLE))
+    if (need_read && !(mask & AE_READABLE)) {
         aeCreateFileEvent(conn->c.el, conn->c.fd, AE_READABLE, tlsEventHandler, conn);
+        aeRegisterFile(conn->c.el, conn->c.fd);
+    }
     if (!need_read && (mask & AE_READABLE))
         aeDeleteFileEvent(conn->c.el, conn->c.fd, AE_READABLE);
 
-    if (need_write && !(mask & AE_WRITABLE))
+    if (need_write && !(mask & AE_WRITABLE)) {
         aeCreateFileEvent(conn->c.el, conn->c.fd, AE_WRITABLE, tlsEventHandler, conn);
+        aeRegisterFile(conn->c.el, conn->c.fd);
+    }
     if (!need_write && (mask & AE_WRITABLE))
         aeDeleteFileEvent(conn->c.el, conn->c.fd, AE_WRITABLE);
 }

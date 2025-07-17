@@ -50,7 +50,7 @@ int main (int argc, char **argv) {
         return 1;
     }
 
-    loop = aeCreateEventLoop(64);
+    loop = aeCreateEventLoop(64, 0, 1);
     redisAeAttach(loop, c);
     redisAsyncSetConnectCallback(c,connectCallback);
     redisAsyncSetDisconnectCallback(c,disconnectCallback);

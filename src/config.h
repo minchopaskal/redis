@@ -82,6 +82,12 @@
 /* Test for polling API */
 #ifdef __linux__
 #define HAVE_EPOLL 1
+/* Test for io_uring support */
+#if defined(__linux__) && defined(__has_include)
+#if __has_include(<liburing.h>)
+#define HAVE_IOURING 1
+#endif
+#endif
 #endif
 
 /* Test for accept4() */

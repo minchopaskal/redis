@@ -735,7 +735,7 @@ void initThreadedIO(void) {
     for (int i = 1; i < server.io_threads_num; i++) {
         IOThread *t = &IOThreads[i];
         t->id = i;
-        t->el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR);
+        t->el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR, 0, 1);
         t->el->privdata[0] = t;
         t->pending_clients = listCreate();
         t->processing_clients = listCreate();
@@ -759,6 +759,7 @@ void initThreadedIO(void) {
             serverLog(LL_WARNING, "Fatal: Can't register file event for IO thread notifications.");
             exit(1);
         }
+        aeRegisterFile(t->el, getReadEventFd(t->pending_clients_notifier));
 
         /* This is the timer callback of the IO thread, used to gradually handle 
          * some background operations, such as clients cron. */
@@ -785,6 +786,7 @@ void initThreadedIO(void) {
             serverLog(LL_WARNING, "Fatal: Can't register file event for main thread notifications.");
             exit(1);
         }
+        aeRegisterFile(server.el, getReadEventFd(mainThreadPendingClientsNotifiers[i]));
         if (attr) zfree(attr);
     }
 }
