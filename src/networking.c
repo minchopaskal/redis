@@ -3272,6 +3272,7 @@ void readQueryFromClient(connection *conn) {
 
     c->lastinteraction = server.unixtime;
     if (c->flags & CLIENT_MASTER) {
+        printf("\n %d read from client\n\n", nread);
         c->read_reploff += nread;
         atomicIncr(server.stat_net_repl_input_bytes, nread);
     } else {

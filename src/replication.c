@@ -4794,6 +4794,9 @@ void replicationCron(void) {
 
     // TODO: we need to have all this logic in IO-threads replication cron in order
     // to handle slave clients that are inside an IOthread
+    // Generally replicationFeedSlaved could be called when some(or all) of the
+    // slaves are being processed by IO threads. Meaning we can get race conditions
+    // on the repl buffer
 
     /* If we have attached slaves, PING them from time to time.
      * So slaves can implement an explicit timeout to masters, and will
@@ -4821,6 +4824,7 @@ void replicationCron(void) {
             isPausedActionsWithUpdate(PAUSE_ACTION_REPLICA);
 
         if (!manual_failover_in_progress) {
+            printf("\n============== feed slaves from MAIN\n\n");
             ping_argv[0] = shared.ping;
             replicationFeedSlaves(server.slaves, -1,
                 ping_argv, 1);
