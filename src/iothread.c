@@ -144,13 +144,20 @@ void fetchClientFromIOThread(client *c) {
  * - Script command with debug may operate connection directly. */
 int isClientMustHandledByMainThread(client *c) {
     /* If RDB replication is done it's save to move the master client to an IO thread */
-    if (c->flags & CLIENT_MASTER && server.repl_state == REPL_STATE_CONNECTED)
+    if (c->flags & CLIENT_MASTER &&
+        server.repl_state == REPL_STATE_CONNECTED &&
+        server.repl_rdb_ch_state == REPL_RDB_CH_STATE_NONE)
         return 0;
 
-    /* If RDB replication is done for this slave it's save to move it to an IO thread */
+    /* If RDB replication is done for this slave it's save to move it to an IO thread
+     * Note that we also check if the ref_repl_buf_node is initialized in order
+     * to prevent race conditions with main thread when it feeds the replication
+     * buffer. */
     if (c->flags & CLIENT_SLAVE &&
         c->replstate == SLAVE_STATE_ONLINE &&
-        c->repl_start_cmd_stream_on_ack == 0)
+        c->repl_start_cmd_stream_on_ack == 0 &&
+        c->ref_repl_buf_node != NULL &&
+        c->ref_last_node != NULL)
     {
         return 0;
     }
@@ -497,6 +504,18 @@ int processClientsFromIOThread(IOThread *t) {
         if (!(c->flags & CLIENT_PENDING_WRITE) && clientHasPendingReplies(c))
             putClientInPendingWriteQueue(c);
 
+        /* We save the used count in case the ref_repl_buf_node is the last node
+         * in the replication buffer. That would remove the data race on `used`
+         * when later feedReplicationBuffer(main thread) writes into it and at
+         * the same time _writeToClientSlave(io-thread) tries to read it.
+         * Note, we don't need the `ref_last_node_used` in case client is running
+         * exclusively in main thread, as there will be no data race on `used`.
+         * See _writeToClientSlave for more details. */
+        if (c->flags & CLIENT_SLAVE && likely(c->ref_repl_buf_node != NULL)) {
+            c->ref_last_node = listLast(server.repl_buffer_blocks);
+            c->ref_last_node_used = ((replBufBlock*)listNodeValue(c->ref_last_node))->used;
+        }
+
         /* The client only can be processed in the main thread, otherwise data
          * race will happen, since we may touch client's data in main thread. */
         if (isClientMustHandledByMainThread(c)) {
@@ -510,10 +529,11 @@ int processClientsFromIOThread(IOThread *t) {
             c->flags &= ~CLIENT_PENDING_WRITE;
             listUnlinkNode(server.clients_pending_write, &c->clients_pending_write_node);
         }
+
         c->running_tid = c->tid;
         listLinkNodeHead(mainThreadPendingClientsToIOThreads[c->tid], node);
         node = NULL;
-    
+
         /* If there are several clients to process, let io thread handle them ASAP. */
         sendPendingClientsToIOThreadIfNeeded(t, 1);
     }

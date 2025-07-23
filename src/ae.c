@@ -48,9 +48,6 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     aeEventLoop *eventLoop;
     int i;
 
-    int *arr = malloc(100 * sizeof(int));
-    printf("arr[5]: %d\n", arr[5]);
-
     monotonicInit();    /* just in case the calling app didn't initialize */
 
     if ((eventLoop = zmalloc(sizeof(*eventLoop))) == NULL) goto err;

@@ -1114,10 +1114,11 @@ typedef struct clientReplyBlock {
 /* Similar with 'clientReplyBlock', it is used for shared buffers between
  * all replica clients and replication backlog. */
 typedef struct replBufBlock {
-    int refcount;           /* Number of replicas or repl backlog using. */
-    long long id;           /* The unique incremental number. */
-    long long repl_offset;  /* Start replication offset of the block. */
-    size_t size, used;
+    redisAtomic int refcount; /* Number of replicas or repl backlog using. */
+    long long id;             /* The unique incremental number. */
+    long long repl_offset;    /* Start replication offset of the block. */
+    size_t size;              /* Capacity of the buf in bytes */
+    size_t used;  /* Count of written bytes */
     char buf[];
 } replBufBlock;
 
@@ -1489,6 +1490,11 @@ typedef struct client {
                                   * see the definition of replBufBlock. */
     size_t ref_block_pos;        /* Access position of referenced buffer block,
                                   * i.e. the next offset to send. */
+    listNode *ref_last_node;     /* Last seen last replication buffer node,
+                                  * before the client was sent to an io-thread */
+    size_t ref_last_node_used;   /* Last seen used byte count of the last seen repl
+                                  * block. Only valid when ref_repl_buf_block is
+                                  * equal to the last node in server.repl_buffer_blocks */
 
     /* list node in clients_pending_write list */
     listNode clients_pending_write_node;

@@ -162,6 +162,8 @@ client *createClient(connection *conn) {
     c->buf_peak_last_reset_time = server.unixtime;
     c->ref_repl_buf_node = NULL;
     c->ref_block_pos = 0;
+    c->ref_last_node = NULL;
+    c->ref_last_node_used = 0;
     c->qb_pos = 0;
     c->querybuf = NULL;
     c->querybuf_peak = 0;
@@ -1329,7 +1331,7 @@ void copyReplicaOutputBuffer(client *dst, client *src) {
     if (src->ref_repl_buf_node == NULL) return;
     dst->ref_repl_buf_node = src->ref_repl_buf_node;
     dst->ref_block_pos = src->ref_block_pos;
-    ((replBufBlock *)listNodeValue(dst->ref_repl_buf_node))->refcount++;
+    atomicIncr(((replBufBlock *)listNodeValue(dst->ref_repl_buf_node))->refcount, 1);
 }
 
 static inline int _clientHasPendingRepliesNonSlave(client *c) {
@@ -1344,10 +1346,13 @@ static inline int _clientHasPendingRepliesSlave(client *c) {
 
     /* If the last replication buffer block content is totally sent,
      * we have nothing to send. */
-    listNode *ln = listLast(server.repl_buffer_blocks);
-    replBufBlock *tail = listNodeValue(ln);
-    if (ln == c->ref_repl_buf_node &&
-        c->ref_block_pos == tail->used) return 0;
+    listNode *ln = c->running_tid == IOTHREAD_MAIN_THREAD_ID ?
+        listLast(server.repl_buffer_blocks) : c->ref_last_node;
+
+    size_t used = c->running_tid == IOTHREAD_MAIN_THREAD_ID ?
+        ((replBufBlock*)listNodeValue(ln))->used : c->ref_last_node_used;
+
+    if (ln == c->ref_repl_buf_node && c->ref_block_pos == used) return 0;
     return 1;
 }
 
@@ -2167,23 +2172,62 @@ static inline int _writeToClientNonSlave(client *c, ssize_t *nwritten) {
 static inline int _writeToClientSlave(client *c, ssize_t *nwritten) {
     *nwritten = 0;
     serverAssert(c->bufpos == 0 && listLength(c->reply) == 0);
+
+    listNode *ln = c->running_tid == IOTHREAD_MAIN_THREAD_ID ?
+        listLast(server.repl_buffer_blocks) : c->ref_last_node;
+
     replBufBlock *o = listNodeValue(c->ref_repl_buf_node);
-    serverAssert(o->used >= c->ref_block_pos);
+
+    /* Since there is contention on replBufBlock::used by this function(which
+     * may be called from an io-thread) and feedReplicationBuffer (main thread)
+     * we make sure to cache the last seen value of `used` just before sending
+     * the client to an io-thread (see processClientsFromIOThread).
+     * If the current block we are reading is not the last one, that means it's
+     * full and main thread doesn't write to it anymore so it's safe to directly
+     * read from it. */
+    size_t used;
+    if (c->running_tid != IOTHREAD_MAIN_THREAD_ID && c->ref_repl_buf_node == ln)
+        used = c->ref_last_node_used;
+    else
+        used = o->used;
+
+    serverAssert(used >= c->ref_block_pos);
     /* Send current block if it is not fully sent. */
-    if (o->used > c->ref_block_pos) {
+    if (used > c->ref_block_pos) {
         *nwritten = connWrite(c->conn, o->buf+c->ref_block_pos,
-                                o->used-c->ref_block_pos);
+                                used-c->ref_block_pos);
         if (*nwritten <= 0) return C_ERR;
         c->ref_block_pos += *nwritten;
     }
+
+    /* No need to search for next node if we've reached the last repl buffer
+     * node. This check is mainly here for IO-threads. If we were in main thread
+     * the `ln` would be the real last node, so the listNextNode would have
+     * returned NULL. But in IO-threads case `ln` may be a stale value for the
+     * last node - `next` would give us a node we shouldn't know about. */
+    if (c->ref_repl_buf_node == ln)
+        return C_OK;
+
     /* If we fully sent the object on head, go to the next one. */
     listNode *next = listNextNode(c->ref_repl_buf_node);
-    if (next && c->ref_block_pos == o->used) {
-        o->refcount--;
-        ((replBufBlock *)(listNodeValue(next)))->refcount++;
+    if (next && c->ref_block_pos == used) {
+        /* We need the barrier here as we want to make sure these atomic operations
+         * are performed only if we've read the whole block. Also note the incr
+         * is necessarily before the decr as the following may happen:
+         *   - we decrease the refcount
+         *   - main thread starts trimming and trims the current node
+         *   - main thread moves on to the next one and its refcount is not
+         *     increased hence may trim it too
+         *   - this thread tries to increase the just trimmed node's refcount
+         * So we make sure main thread first sees the increase of next's refcount
+         * before the decrease of current's. */
+        atomicIncrWithSync(((replBufBlock *)(listNodeValue(next)))->refcount, 1);
+        atomicDecrWithSync(o->refcount, 1);
+
         c->ref_repl_buf_node = next;
         c->ref_block_pos = 0;
-        incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
+        if (c->running_tid == IOTHREAD_MAIN_THREAD_ID)
+            incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
     }
     return C_OK;
 }
@@ -3272,7 +3316,6 @@ void readQueryFromClient(connection *conn) {
 
     c->lastinteraction = server.unixtime;
     if (c->flags & CLIENT_MASTER) {
-        printf("\n %d read from client\n\n", nread);
         c->read_reploff += nread;
         atomicIncr(server.stat_net_repl_input_bytes, nread);
     } else {
