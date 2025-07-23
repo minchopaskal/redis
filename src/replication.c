@@ -194,8 +194,12 @@ void freeReplicationBacklog(void) {
     if (server.repl_backlog->ref_repl_buf_node) {
         replBufBlock *o = listNodeValue(
             server.repl_backlog->ref_repl_buf_node);
-        serverAssert(o->refcount == 1); /* Last reference. */
-        o->refcount--;
+
+        int refcount;
+        atomicGetWithSync(o->refcount, refcount);
+        serverAssert(refcount == 1); /* Last reference. */
+
+        atomicDecrWithSync(o->refcount, 1);
     }
 
     /* Replication buffer blocks are completely released when we free the
@@ -337,7 +341,9 @@ void incrementalTrimReplicationBacklog(size_t max_blocks) {
         listNode *first = listFirst(server.repl_buffer_blocks);
         serverAssert(first == server.repl_backlog->ref_repl_buf_node);
         replBufBlock *fo = listNodeValue(first);
-        if (fo->refcount != 1) break;
+        int refcount;
+        atomicGetWithSync(fo->refcount, refcount);
+        if (refcount != 1) break;
 
         /* We don't try trim backlog if backlog valid size will be lessen than
          * setting backlog size once we release the first repl buffer block. */
@@ -345,7 +351,7 @@ void incrementalTrimReplicationBacklog(size_t max_blocks) {
             server.repl_backlog_size) break;
 
         /* Decr refcount and release the first block later. */
-        fo->refcount--;
+        atomicDecr(fo->refcount, 1);
         trimmed_blocks++;
         server.repl_backlog->histlen -= fo->size;
 
@@ -354,7 +360,7 @@ void incrementalTrimReplicationBacklog(size_t max_blocks) {
         server.repl_backlog->ref_repl_buf_node = next;
         serverAssert(server.repl_backlog->ref_repl_buf_node != NULL);
         /* Incr reference count to keep the new head node. */
-        ((replBufBlock *)listNodeValue(next))->refcount++;
+        atomicIncr(((replBufBlock *)listNodeValue(next))->refcount, 1);
 
         /* Remove the node in recorded blocks. */
         uint64_t encoded_offset = htonu64(fo->repl_offset);
@@ -362,7 +368,8 @@ void incrementalTrimReplicationBacklog(size_t max_blocks) {
             (unsigned char*)&encoded_offset, sizeof(uint64_t), NULL);
 
         /* Delete the first node from global replication buffer. */
-        serverAssert(fo->refcount == 0 && fo->used == fo->size);
+        atomicGetWithSync(fo->refcount, refcount);
+        serverAssert(refcount == 0 && fo->used == fo->size);
         server.repl_buffer_mem -= (fo->size +
             sizeof(listNode) + sizeof(replBufBlock));
         listDelNode(server.repl_buffer_blocks, first);
@@ -375,11 +382,17 @@ void incrementalTrimReplicationBacklog(size_t max_blocks) {
 
 /* Free replication buffer blocks that are referenced by this client. */
 void freeReplicaReferencedReplBuffer(client *replica) {
+    serverAssert(replica->running_tid == IOTHREAD_MAIN_THREAD_ID);
+
     if (replica->ref_repl_buf_node != NULL) {
         /* Decrease the start buffer node reference count. */
         replBufBlock *o = listNodeValue(replica->ref_repl_buf_node);
-        serverAssert(o->refcount > 0);
-        o->refcount--;
+
+        int refcount;
+        atomicGetWithSync(o->refcount, refcount);
+        serverAssert(refcount > 0);
+        atomicDecrWithSync(o->refcount, 1);
+
         incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
     }
     replica->ref_repl_buf_node = NULL;
@@ -412,13 +425,16 @@ void feedReplicationBuffer(char *s, size_t len) {
         /* Append to tail string when possible. */
         if (tail && tail->size > tail->used) {
             start_node = listLast(server.repl_buffer_blocks);
+
             start_pos = tail->used;
             /* Copy the part we can fit into the tail, and leave the rest for a
              * new node */
             size_t avail = tail->size - tail->used;
             size_t copy = (avail >= len) ? len : avail;
             memcpy(tail->buf + tail->used, s, copy);
+
             tail->used += copy;
+
             s += copy;
             len -= copy;
             server.master_repl_offset += copy;
@@ -437,8 +453,12 @@ void feedReplicationBuffer(char *s, size_t len) {
             /* Take over the allocation's internal fragmentation */
             tail->size = usable_size - sizeof(replBufBlock);
             size_t copy = (tail->size >= len) ? len : tail->size;
+
+            /* Note that we don't need write barrier here as slaves still don't
+             * know about this node, hence there is no contention on it */
             tail->used = copy;
-            tail->refcount = 0;
+            atomicSet(tail->refcount, 0);
+
             tail->repl_offset = server.master_repl_offset + 1;
             tail->id = repl_block_id++;
             memcpy(tail->buf, s, copy);
@@ -468,7 +488,7 @@ void feedReplicationBuffer(char *s, size_t len) {
                 slave->ref_repl_buf_node = start_node;
                 slave->ref_block_pos = start_pos;
                 /* Only increase the start block reference count. */
-                ((replBufBlock *)listNodeValue(start_node))->refcount++;
+                atomicIncr(((replBufBlock *)listNodeValue(start_node))->refcount, 1);
             }
 
             /* Check output buffer limit only when add new block. */
@@ -479,7 +499,7 @@ void feedReplicationBuffer(char *s, size_t len) {
         if (server.repl_backlog->ref_repl_buf_node == NULL) {
             server.repl_backlog->ref_repl_buf_node = start_node;
             /* Only increase the start block reference count. */
-            ((replBufBlock *)listNodeValue(start_node))->refcount++;
+            atomicIncr(((replBufBlock *)listNodeValue(start_node))->refcount, 1);
 
             /* Replication buffer must be empty before adding replication stream
              * into replication backlog. */
@@ -510,6 +530,9 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
     /* In case we propagate a command that doesn't touch keys (PING, REPLCONF) we
      * pass dbid=-1 that indicate there is no need to replicate `select` command. */
     serverAssert(dictid == -1 || (dictid >= 0 && dictid < server.dbnum));
+
+    // TODO: remove
+    serverAssert(pthread_equal(pthread_self(), server.main_thread_id));
 
     /* If the instance is not a top level master, return ASAP: we'll just proxy
      * the stream of data we receive from our master instead, in order to
@@ -706,6 +729,8 @@ void replicationFeedMonitors(client *c, list *monitors, int dictid, robj **argv,
 /* Feed the slave 'c' with the replication backlog starting from the
  * specified 'offset' up to the end of the backlog. */
 long long addReplyReplicationBacklog(client *c, long long offset) {
+    serverAssert(c->running_tid == IOTHREAD_MAIN_THREAD_ID);
+
     long long skip;
 
     serverLog(LL_DEBUG, "[PSYNC] Replica request offset: %lld", offset);
@@ -765,7 +790,7 @@ long long addReplyReplicationBacklog(client *c, long long offset) {
     prepareClientToWrite(c);
     /* Setting output buffer of the replica. */
     replBufBlock *o = listNodeValue(node);
-    o->refcount++;
+    atomicIncr(o->refcount, 1);
     c->ref_repl_buf_node = node;
     c->ref_block_pos = offset - o->repl_offset;
 
@@ -4831,16 +4856,8 @@ void replicationCron(void) {
      * support PSYNC and replication offsets. */
     if (server.masterhost && server.master &&
         server.master->running_tid == IOTHREAD_MAIN_THREAD_ID &&
-        !(server.master->flags & CLIENT_PRE_PSYNC)) {
-        serverLog(LL_NOTICE, "ACK from MAIN");
+        !(server.master->flags & CLIENT_PRE_PSYNC))
         replicationSendAck();
-    }
-
-    // TODO: we need to have all this logic in IO-threads replication cron in order
-    // to handle slave clients that are inside an IOthread
-    // Generally replicationFeedSlaved could be called when some(or all) of the
-    // slaves are being processed by IO threads. Meaning we can get race conditions
-    // on the repl buffer
 
     /* If we have attached slaves, PING them from time to time.
      * So slaves can implement an explicit timeout to masters, and will
@@ -4868,7 +4885,6 @@ void replicationCron(void) {
             isPausedActionsWithUpdate(PAUSE_ACTION_REPLICA);
 
         if (!manual_failover_in_progress) {
-            printf("\n============== feed slaves from MAIN\n\n");
             ping_argv[0] = shared.ping;
             replicationFeedSlaves(server.slaves, -1,
                 ping_argv, 1);
@@ -4987,8 +5003,10 @@ void replicationCron(void) {
      * replicas number + 1(replication backlog). */
     if (listLength(server.repl_buffer_blocks) > 0) {
         replBufBlock *o = listNodeValue(listFirst(server.repl_buffer_blocks));
-        serverAssert(o->refcount > 0 &&
-            o->refcount <= (int)listLength(server.slaves)+1);
+        int refcount;
+        atomicGet(o->refcount, refcount);
+        serverAssert(refcount > 0 &&
+            refcount <= (int)listLength(server.slaves)+1);
     }
 
     /* Refresh the number of slaves with lag <= min-slaves-max-lag. */
