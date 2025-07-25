@@ -160,8 +160,7 @@ int isClientMustHandledByMainThread(client *c) {
     if (c->flags & CLIENT_SLAVE &&
         c->replstate == SLAVE_STATE_ONLINE &&
         c->repl_start_cmd_stream_on_ack == 0 &&
-        c->ref_repl_buf_node != NULL &&
-        c->ref_last_node != NULL)
+        c->ref_repl_buf_node != NULL)
     {
         return 0;
     }
@@ -199,6 +198,12 @@ void assignClientToIOThread(client *c) {
 
     /* The client running in IO thread needs to have deferred objects array. */
     c->deferred_objects = zmalloc(sizeof(deferredObject) * CLIENT_MAX_DEFERRED_OBJECTS);
+
+    if (c->flags & CLIENT_SLAVE) {
+        c->ref_last_node = listLast(server.repl_buffer_blocks);
+        if (c->ref_last_node)
+            c->ref_last_node_used = ((replBufBlock*)listNodeValue(c->ref_last_node))->used;
+    }
 
     /* Unbind connection of client from main thread event loop, disable read and
      * write, and then put it in the list, main thread will send these clients
