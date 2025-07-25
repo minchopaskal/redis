@@ -196,10 +196,10 @@ void freeReplicationBacklog(void) {
             server.repl_backlog->ref_repl_buf_node);
 
         int refcount;
-        atomicGetWithSync(o->refcount, refcount);
+        atomicGet(o->refcount, refcount);
         serverAssert(refcount == 1); /* Last reference. */
 
-        atomicDecrWithSync(o->refcount, 1);
+        atomicDecr(o->refcount, 1);
     }
 
     /* Replication buffer blocks are completely released when we free the
@@ -389,9 +389,9 @@ void freeReplicaReferencedReplBuffer(client *replica) {
         replBufBlock *o = listNodeValue(replica->ref_repl_buf_node);
 
         int refcount;
-        atomicGetWithSync(o->refcount, refcount);
+        atomicGet(o->refcount, refcount);
         serverAssert(refcount > 0);
-        atomicDecrWithSync(o->refcount, 1);
+        atomicDecr(o->refcount, 1);
 
         incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
     }
@@ -526,9 +526,6 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
     /* In case we propagate a command that doesn't touch keys (PING, REPLCONF) we
      * pass dbid=-1 that indicate there is no need to replicate `select` command. */
     serverAssert(dictid == -1 || (dictid >= 0 && dictid < server.dbnum));
-
-    // TODO: remove
-    serverAssert(pthread_equal(pthread_self(), server.main_thread_id));
 
     /* If the instance is not a top level master, return ASAP: we'll just proxy
      * the stream of data we receive from our master instead, in order to
