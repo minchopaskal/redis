@@ -74,6 +74,10 @@ void unbindClientFromIOThreadEventLoop(client *c) {
     if (!connHasEventLoop(c->conn)) return;
     /* As calling in main thread, we should pause the io thread to make it safe. */
     pauseIOThread(c->tid);
+    if (c->flags & CLIENT_MASTER) {
+        IOThread *t = c->conn->el->privdata[0];
+        t->master = NULL;
+    }
     connUnbindEventLoop(c->conn);
     resumeIOThread(c->tid);
 }
@@ -476,6 +480,10 @@ int processClientsFromIOThread(IOThread *t) {
             continue;
         }
 
+        if (c->io_flags & CLIENT_IO_PENDING_REPL_ACK) {
+            replicationSendAck();
+        }
+
         /* Run cron task for the client per second or it is marked as pending cron. */
         if (c->last_cron_check_time + 1000 <= server.mstime ||
             c->io_flags & CLIENT_IO_PENDING_CRON)
@@ -645,6 +653,7 @@ int processClientsFromMainThread(IOThread *t) {
         /* Only bind once, we never remove read handler unless freeing client. */
         if (!connHasEventLoop(c->conn)) {
             connRebindEventLoop(c->conn, t->el);
+            if (c->flags & CLIENT_MASTER) t->master = c;
             serverAssert(!connHasReadHandler(c->conn));
             connSetReadHandler(c->conn, readQueryFromClient);
         }
@@ -670,6 +679,10 @@ void IOThreadBeforeSleep(struct aeEventLoop *el) {
 
     /* If any connection type(typical TLS) still has pending unread data don't sleep at all. */
     int dont_sleep = connTypeHasPendingData(el);
+
+    /* Previous loop may have enqueued clients to main thread, send them before
+     * processing clients from main thread */
+    sendPendingClientsToMainThreadIfNeeded(t, 0);
 
     /* Process clients from main thread, since the main thread may deliver clients
      * without notification during IO thread processing events. */
@@ -726,13 +739,15 @@ void IOThreadClientsCron(IOThread *t) {
 }
 
 void IOThreadReplicationCron(IOThread *t) {
-    if (server.masterhost && server.master &&
-        server.master->running_tid == t->id &&
+    if (t->master && t->master->running_tid == t->id &&
         !(server.master->flags & CLIENT_PRE_PSYNC))
     {
-        replicationSendAck();
+        t->master->io_flags |= CLIENT_IO_PENDING_REPL_ACK;
+        enqueuePendingClientsToMainThread(t->master, 0);
     }
 }
+
+#define run_with_period_io(_t_, _ms_) if (((_ms_) <= 1000/CONFIG_DEFAULT_HZ) || !((_t_)->cronloops%((_ms_)/(1000/CONFIG_DEFAULT_HZ))))
 
 /* This is the IO thread timer interrupt, CONFIG_DEFAULT_HZ times per second.
  * The current responsibility is to detect clients that have been stuck in the
@@ -753,11 +768,12 @@ int IOThreadCron(struct aeEventLoop *eventLoop, long long id, void *clientData) 
      * 
      * This is same as in main thread. */
     if (server.failover_state != NO_FAILOVER) {
-        run_with_period(100) IOThreadReplicationCron(t);
+        run_with_period_io(t, 100) IOThreadReplicationCron(t);
     } else {
-        run_with_period(1000) IOThreadReplicationCron(t);
+        run_with_period_io(t, 1000) IOThreadReplicationCron(t);
     }
 
+    t->cronloops++;
 
     return 1000/CONFIG_DEFAULT_HZ;
 }
@@ -801,6 +817,8 @@ void initThreadedIO(void) {
         t->processing_clients = listCreate();
         t->pending_clients_to_main_thread = listCreate();
         t->clients = listCreate();
+        t->cronloops = 0;
+        t->master = NULL;
         atomicSetWithSync(t->paused, IO_THREAD_UNPAUSED);
         atomicSetWithSync(t->running, 0);
 
