@@ -164,6 +164,7 @@ client *createClient(connection *conn) {
     c->ref_block_pos = 0;
     c->ref_last_node = NULL;
     c->ref_last_node_used = 0;
+    c->last_slave_read = 0;
     c->qb_pos = 0;
     c->querybuf = NULL;
     c->querybuf_peak = 0;
@@ -3224,6 +3225,7 @@ void readQueryFromClient(connection *conn) {
     int nread, big_arg = 0;
     size_t qblen, readlen;
     if (!(c->io_flags & CLIENT_IO_READ_ENABLED)) return;
+    if (c->flags & CLIENT_SLAVE) c->last_slave_read = mstime();
     c->read_error = 0;
 
     /* Update the number of reads of io threads on server */
