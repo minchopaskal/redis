@@ -688,6 +688,13 @@ int processClientsFromMainThread(IOThread *t) {
 
         /* If the client has pending replies, write replies to client. */
         if (clientHasPendingReplies(c)) {
+            if (c->flags & CLIENT_SLAVE) {
+                /* Write as much as we can and send back to main thread for more */
+                writeToClient(c, 0);
+                if (mstime() - c->last_slave_read < 1000)
+                    enqueuePendingClientsToMainThread(c, 0);
+                continue;
+            }
             writeToClient(c, 0);
             if (!(c->io_flags & CLIENT_IO_CLOSE_ASAP) && clientHasPendingReplies(c)) {
                 connSetWriteHandler(c->conn, sendReplyToClient);
@@ -707,6 +714,8 @@ void IOThreadBeforeSleep(struct aeEventLoop *el) {
 
     /* If any connection type(typical TLS) still has pending unread data don't sleep at all. */
     int dont_sleep = connTypeHasPendingData(el);
+
+    
 
     /* Previous loop may have enqueued clients to main thread, send them before
      * processing clients from main thread */
