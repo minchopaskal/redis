@@ -1454,6 +1454,7 @@ typedef struct client {
     size_t ref_last_node_used;   /* Last seen used byte count of the last seen repl
                                   * block. Only valid when ref_repl_buf_block is
                                   * equal to the last node in server.repl_buffer_blocks */
+    long long last_slave_read; 
 
     /* list node in clients_pending_write list */
     listNode clients_pending_write_node;
