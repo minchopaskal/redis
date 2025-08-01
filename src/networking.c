@@ -160,6 +160,7 @@ client *createClient(connection *conn) {
     c->bufpos = 0;
     c->buf_peak = c->buf_usable_size;
     c->buf_peak_last_reset_time = server.unixtime;
+    c->ref_repl_start_node = NULL;
     c->ref_repl_buf_node = NULL;
     c->ref_block_pos = 0;
     c->ref_last_node = NULL;
@@ -321,8 +322,9 @@ static inline int _prepareClientToWrite(client *c) {
      * If the client runs in an IO thread, we should not put the client in the
      * pending write queue. Instead, we will install the write handler to the
      * corresponding IO thread’s event loop and let it handle the reply. */
-    if (!clientHasPendingReplies(c) && likely(c->running_tid == IOTHREAD_MAIN_THREAD_ID))
+    if (!clientHasPendingReplies(c) && likely(c->running_tid == IOTHREAD_MAIN_THREAD_ID)) {
         putClientInPendingWriteQueue(c);
+    }
 
     /* Authorize the caller to queue in the output buffer of this client. */
     return C_OK;
@@ -1330,9 +1332,13 @@ void copyReplicaOutputBuffer(client *dst, client *src) {
     serverAssert(src->bufpos == 0 && listLength(src->reply) == 0);
 
     if (src->ref_repl_buf_node == NULL) return;
+
+    serverAssert(src->ref_repl_start_node == src->ref_repl_buf_node);
+
+    dst->ref_repl_start_node = src->ref_repl_start_node;
     dst->ref_repl_buf_node = src->ref_repl_buf_node;
     dst->ref_block_pos = src->ref_block_pos;
-    atomicIncr(((replBufBlock *)listNodeValue(dst->ref_repl_buf_node))->refcount, 1);
+    atomicIncr(((replBufBlock *)listNodeValue(dst->ref_repl_start_node))->refcount, 1);
 }
 
 static inline int _clientHasPendingRepliesNonSlave(client *c) {
@@ -2222,8 +2228,10 @@ static inline int _writeToClientSlave(client *c, ssize_t *nwritten) {
          *   - this thread tries to increase the just trimmed node's refcount
          * So we make sure main thread first sees the increase of next's refcount
          * before the decrease of current's. */
-        atomicIncrWithSync(((replBufBlock *)(listNodeValue(next)))->refcount, 1);
-        atomicDecrWithSync(o->refcount, 1);
+        if (c->running_tid == IOTHREAD_MAIN_THREAD_ID) {
+            atomicIncr(((replBufBlock *)(listNodeValue(next)))->refcount, 1);
+            atomicDecr(o->refcount, 1);
+        }
 
         c->ref_repl_buf_node = next;
         c->ref_block_pos = 0;
@@ -2339,50 +2347,6 @@ void sendReplyToClient(connection *conn) {
     writeToClient(c,1);
 }
 
-void handleSlaveClientsFromIOThreads(void) {
-    if (server.io_threads_num <= 1)
-        return;
-
-    listIter li;
-    listNode *ln;
-    listRewind(server.slaves, &li);
-    while ((ln = listNext(&li))) {
-        client *c = listNodeValue(ln);
-        if (c->running_tid != IOTHREAD_MAIN_THREAD_ID) {
-            continue;
-        }
-
-        /* We save the used count in case the ref_repl_buf_node is the last node
-         * in the replication buffer. That would remove the data race on `used`
-         * when later feedReplicationBuffer(main thread) writes into it and at
-         * the same time _writeToClientSlave(io-thread) tries to read it.
-         * Note, we don't need the `ref_last_node_used` in case client is running
-         * exclusively in main thread, as there will be no data race on `used`.
-         * See _writeToClientSlave for more details. */
-        if (unlikely(c->ref_repl_buf_node == NULL)) {
-            continue;
-        }
-
-        /* We send the replica back to io-thread in case there is new repl data
-         * OR some time has passed since last read. This ensures we give time
-         * for replica to read ACK in io-thread even if there is no repl data to
-         * write. */
-        int sendto_io = (mstime() - c->last_slave_read) < 1000;
-        if (c->ref_last_node != listLast(server.repl_buffer_blocks)) {
-            c->ref_last_node = listLast(server.repl_buffer_blocks);
-            sendto_io = 1;
-        }
-
-        if (c->ref_last_node_used != ((replBufBlock*)listNodeValue(c->ref_last_node))->used) {
-            c->ref_last_node_used = ((replBufBlock*)listNodeValue(c->ref_last_node))->used;
-            sendto_io = 1;
-        }
-
-        if (sendto_io)
-            putInPendingClienstForIOThreads(c);
-    }
-}
-
 /* This function is called just before entering the event loop, in the hope
  * we can just write the replies to the client output buffer without any
  * need to use a syscall in order to install the writable event handler,
@@ -2405,9 +2369,17 @@ int handleClientsWithPendingWrites(void) {
         /* Don't write to clients that are going to be closed anyway. */
         if (c->flags & CLIENT_CLOSE_ASAP) continue;
 
+        if (c->flags & CLIENT_SLAVE && c->tid != IOTHREAD_MAIN_THREAD_ID && c->running_tid == IOTHREAD_MAIN_THREAD_ID) {
+            c->ref_last_node = listLast(server.repl_buffer_blocks);
+            c->ref_last_node_used = ((replBufBlock*)listNodeValue(c->ref_last_node))->used;
+            putInPendingClienstForIOThreads(c);
+            continue;
+        }
+
         /* Let IO thread handle the client if possible. */
         if (server.io_threads_num > 1 &&
             !(c->flags & CLIENT_CLOSE_AFTER_REPLY) &&
+            c->tid == IOTHREAD_MAIN_THREAD_ID &&
             !isClientMustHandledByMainThread(c))
         {
             assignClientToIOThread(c);

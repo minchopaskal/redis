@@ -384,9 +384,9 @@ void incrementalTrimReplicationBacklog(size_t max_blocks) {
 void freeReplicaReferencedReplBuffer(client *replica) {
     serverAssert(replica->running_tid == IOTHREAD_MAIN_THREAD_ID);
 
-    if (replica->ref_repl_buf_node != NULL) {
+    if (replica->ref_repl_start_node != NULL) {
         /* Decrease the start buffer node reference count. */
-        replBufBlock *o = listNodeValue(replica->ref_repl_buf_node);
+        replBufBlock *o = listNodeValue(replica->ref_repl_start_node);
 
         int refcount;
         atomicGet(o->refcount, refcount);
@@ -395,6 +395,7 @@ void freeReplicaReferencedReplBuffer(client *replica) {
 
         incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
     }
+    replica->ref_repl_start_node = NULL;
     replica->ref_repl_buf_node = NULL;
     replica->ref_block_pos = 0;
 }
@@ -481,6 +482,7 @@ void feedReplicationBuffer(char *s, size_t len) {
 
             /* Update shared replication buffer start position. */
             if (slave->ref_repl_buf_node == NULL) {
+                slave->ref_repl_start_node = start_node;
                 slave->ref_repl_buf_node = start_node;
                 slave->ref_block_pos = start_pos;
                 /* Only increase the start block reference count. */
@@ -784,6 +786,7 @@ long long addReplyReplicationBacklog(client *c, long long offset) {
     /* Setting output buffer of the replica. */
     replBufBlock *o = listNodeValue(node);
     atomicIncr(o->refcount, 1);
+    c->ref_repl_start_node = node;
     c->ref_repl_buf_node = node;
     c->ref_block_pos = offset - o->repl_offset;
 
