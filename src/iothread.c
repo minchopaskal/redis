@@ -66,6 +66,11 @@ void enqueuePendingClientsToMainThread(client *c, int unbind) {
     }
 }
 
+void putInPendingClienstForIOThreads(client *c) {
+    c->running_tid = c->tid;
+    listAddNodeHead(mainThreadPendingClientsToIOThreads[c->tid], c);
+}
+
 /* Unbind connection of client from io thread event loop, write and read handlers
  * also be removed, ensures that we can operate the client safely. */
 void unbindClientFromIOThreadEventLoop(client *c) {
@@ -512,22 +517,17 @@ int processClientsFromIOThread(IOThread *t) {
         if (!(c->flags & CLIENT_PENDING_WRITE) && clientHasPendingReplies(c))
             putClientInPendingWriteQueue(c);
 
-        /* We save the used count in case the ref_repl_buf_node is the last node
-         * in the replication buffer. That would remove the data race on `used`
-         * when later feedReplicationBuffer(main thread) writes into it and at
-         * the same time _writeToClientSlave(io-thread) tries to read it.
-         * Note, we don't need the `ref_last_node_used` in case client is running
-         * exclusively in main thread, as there will be no data race on `used`.
-         * See _writeToClientSlave for more details. */
-        if (c->flags & CLIENT_SLAVE && likely(c->ref_repl_buf_node != NULL)) {
-            c->ref_last_node = listLast(server.repl_buffer_blocks);
-            c->ref_last_node_used = ((replBufBlock*)listNodeValue(c->ref_last_node))->used;
-        }
-
         /* The client only can be processed in the main thread, otherwise data
          * race will happen, since we may touch client's data in main thread. */
         if (isClientMustHandledByMainThread(c)) {
             keepClientInMainThread(c);
+            continue;
+        }
+
+        /* Replicas that are handled by io-threads will be kept in main thread
+         * while they are waiting for new replication data */
+        if (!(c->flags & CLIENT_PENDING_WRITE) && c->flags & CLIENT_SLAVE) {
+            node = NULL;
             continue;
         }
 
@@ -660,13 +660,6 @@ int processClientsFromMainThread(IOThread *t) {
 
         /* If the client has pending replies, write replies to client. */
         if (clientHasPendingReplies(c)) {
-            if (c->flags & CLIENT_SLAVE) {
-                /* Write as much as we can and send back to main thread for more */
-                writeToClient(c, 0);
-                if (mstime() - c->last_slave_read < 1000)
-                    enqueuePendingClientsToMainThread(c, 0);
-                continue;
-            }
             writeToClient(c, 0);
             if (!(c->io_flags & CLIENT_IO_CLOSE_ASAP) && clientHasPendingReplies(c)) {
                 connSetWriteHandler(c->conn, sendReplyToClient);
@@ -686,8 +679,6 @@ void IOThreadBeforeSleep(struct aeEventLoop *el) {
 
     /* If any connection type(typical TLS) still has pending unread data don't sleep at all. */
     int dont_sleep = connTypeHasPendingData(el);
-
-    
 
     /* Previous loop may have enqueued clients to main thread, send them before
      * processing clients from main thread */
