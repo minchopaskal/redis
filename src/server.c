@@ -1980,10 +1980,47 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
         }
     }
 
+    listIter li;
+    listNode *ln;
+    listRewind(server.slaves,&li);
+    while((ln = listNext(&li))) {
+        client *c = ln->value;
+        if (c->ref_repl_buf_node == NULL ||
+            c->running_tid != IOTHREAD_MAIN_THREAD_ID ||
+            c->tid == IOTHREAD_MAIN_THREAD_ID ||
+            c->flags & CLIENT_PENDING_WRITE)
+            continue;
+
+        /* We send the replica back to io-thread in case there is new repl data
+          * OR some time has passed since last read. This ensures we give time
+          * for replica to read ACK in io-thread even if there is no repl data to
+          * write. */
+        int sendto_io = (mstime() - c->last_slave_read) < 1000;
+        if (c->ref_last_node != listLast(server.repl_buffer_blocks)) {
+            c->ref_last_node = listLast(server.repl_buffer_blocks);
+            sendto_io = 1;
+        }
+
+        /* We save the used count in case the ref_repl_buf_node is the last node
+          * in the replication buffer. That would remove the data race on `used`
+          * when later feedReplicationBuffer(main thread) writes into it and at
+          * the same time _writeToClientSlave(io-thread) tries to read it.
+          * Note, we don't need the `ref_last_node_used` in case client is running
+          * exclusively in main thread, as there will be no data race on `used`.
+          * See _writeToClientSlave for more details. */
+        if (c->ref_last_node_used != ((replBufBlock*)listNodeValue(c->ref_last_node))->used) {
+            c->ref_last_node_used = ((replBufBlock*)listNodeValue(c->ref_last_node))->used;
+            sendto_io = 1;
+        }
+
+        if (sendto_io) {
+            putInPendingClienstForIOThreads(c);
+        }
+    }
+
+
     /* Handle writes with pending output buffers. */
     handleClientsWithPendingWrites();
-
-    handleSlaveClientsFromIOThreads();
 
     /* Let io thread to handle its pending clients. */
     sendPendingClientsToIOThreads();

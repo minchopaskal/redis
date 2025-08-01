@@ -69,6 +69,10 @@ void enqueuePendingClientsToMainThread(client *c, int unbind) {
 void putInPendingClienstForIOThreads(client *c) {
     c->running_tid = c->tid;
     listAddNodeHead(mainThreadPendingClientsToIOThreads[c->tid], c);
+    if (c->flags & CLIENT_PENDING_WRITE) {
+        c->flags &= ~CLIENT_PENDING_WRITE;
+        listUnlinkNode(server.clients_pending_write, &c->clients_pending_write_node);
+    }
 }
 
 /* Unbind connection of client from io thread event loop, write and read handlers
@@ -517,6 +521,19 @@ int processClientsFromIOThread(IOThread *t) {
             replicationSendAck();
         }
 
+        if (c->flags & CLIENT_SLAVE && c->ref_repl_start_node != NULL &&
+            c->ref_repl_start_node != c->ref_last_node) {
+            serverAssert(c->ref_last_node);
+            serverAssert(c->ref_repl_buf_node == c->ref_last_node &&
+                         c->ref_block_pos == c->ref_last_node_used);
+
+            atomicDecr(((replBufBlock*)listNodeValue(c->ref_repl_start_node))->refcount, 1);
+            atomicIncr(((replBufBlock*)listNodeValue(c->ref_last_node))->refcount, 1);
+            c->ref_repl_start_node = c->ref_last_node;
+
+            incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
+        }
+
         /* Run cron task for the client per second or it is marked as pending cron. */
         if (c->last_cron_check_time + 1000 <= server.mstime ||
             c->io_flags & CLIENT_IO_PENDING_CRON)
@@ -541,9 +558,13 @@ int processClientsFromIOThread(IOThread *t) {
         /* We may have pending replies if io thread may not finish writing
          * reply to client, so we did not put the client in pending write
          * queue. And we should do that first since we may keep the client
-         * in main thread instead of returning to io threads. */
+         * in main thread instead of returning to io threads.
+         * NOTE, replicas are dealth with in the main thread, see
+         * handleClientsWithPendingWrites */
         if (!(c->flags & CLIENT_PENDING_WRITE) && clientHasPendingReplies(c))
+        {
             putClientInPendingWriteQueue(c);
+        }
 
         /* The client only can be processed in the main thread, otherwise data
          * race will happen, since we may touch client's data in main thread. */
@@ -554,9 +575,15 @@ int processClientsFromIOThread(IOThread *t) {
 
         /* Replicas that are handled by io-threads will be kept in main thread
          * while they are waiting for new replication data */
-        if (!(c->flags & CLIENT_PENDING_WRITE) && c->flags & CLIENT_SLAVE) {
-            node = NULL;
-            continue;
+        if (c->flags & CLIENT_SLAVE) {
+            /* If we already have new replication data no need to keep the slave
+             * in main thread*/
+            if (c->flags & CLIENT_PENDING_WRITE) {
+                c->ref_last_node = listLast(server.repl_buffer_blocks);
+                c->ref_last_node_used = ((replBufBlock*)listNodeValue(c->ref_last_node))->used;
+            } else {
+                continue;
+            }
         }
 
         /* Remove this client from pending write clients queue of main thread,
