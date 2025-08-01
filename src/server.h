@@ -3146,6 +3146,7 @@ void whileBlockedCron(void);
 void blockingOperationStarts(void);
 void blockingOperationEnds(void);
 int handleClientsWithPendingWrites(void);
+void handleSlaveClientsFromIOThreads(void);
 int clientHasPendingReplies(client *c);
 int updateClientMemUsageAndBucket(client *c);
 void removeClientFromMemUsageBucket(client *c, int allow_eviction);
