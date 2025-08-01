@@ -1936,6 +1936,8 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
     /* Handle writes with pending output buffers. */
     handleClientsWithPendingWrites();
 
+    handleSlaveClientsFromIOThreads();
+
     /* Let io thread to handle its pending clients. */
     sendPendingClientsToIOThreads();
 
