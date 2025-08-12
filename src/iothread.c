@@ -515,11 +515,7 @@ int processClientsFromIOThread(IOThread *t) {
         if (c->io_flags & CLIENT_IO_CLOSE_ASAP) {
             freeClient(c);
             continue;
-        }
-
-        if (c->io_flags & CLIENT_IO_PENDING_REPL_ACK) {
-            replicationSendAck();
-        }
+        } 
 
         if (c->flags & CLIENT_SLAVE && c->ref_repl_start_node != NULL &&
             c->ref_repl_start_node != c->ref_last_node) {
@@ -555,6 +551,11 @@ int processClientsFromIOThread(IOThread *t) {
             }
         }
 
+        if (c->io_flags & CLIENT_IO_PENDING_REPL_ACK) {
+            c->io_flags &= ~CLIENT_IO_PENDING_REPL_ACK;
+            replicationSendAck();
+        }
+
         /* We may have pending replies if io thread may not finish writing
          * reply to client, so we did not put the client in pending write
          * queue. And we should do that first since we may keep the client
@@ -581,7 +582,7 @@ int processClientsFromIOThread(IOThread *t) {
             if (c->flags & CLIENT_PENDING_WRITE) {
                 c->ref_last_node = listLast(server.repl_buffer_blocks);
                 c->ref_last_node_used = ((replBufBlock*)listNodeValue(c->ref_last_node))->used;
-            } else {
+            } else if ((mstime() - c->last_slave_read) < 1000) {
                 continue;
             }
         }
