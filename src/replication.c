@@ -394,7 +394,9 @@ void freeReplicaReferencedReplBuffer(client *replica) {
     }
     replica->ref_repl_start_node = NULL;
     replica->ref_repl_buf_node = NULL;
+    replica->ref_last_node = NULL;
     replica->ref_block_pos = 0;
+    replica->ref_last_node_used = 0;
 }
 
 /* Append bytes into the global replication buffer list, replication backlog and
