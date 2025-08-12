@@ -492,8 +492,6 @@ int processClientsFromIOThread(IOThread *t) {
         if (c->flags & CLIENT_SLAVE && c->ref_repl_start_node != NULL &&
             c->ref_repl_start_node != c->ref_last_node) {
             serverAssert(c->ref_last_node);
-            serverAssert(c->ref_repl_buf_node == c->ref_last_node &&
-                         c->ref_block_pos == c->ref_last_node_used);
 
             atomicDecr(((replBufBlock*)listNodeValue(c->ref_repl_start_node))->refcount, 1);
             atomicIncr(((replBufBlock*)listNodeValue(c->ref_last_node))->refcount, 1);
