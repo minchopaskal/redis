@@ -2330,7 +2330,7 @@ int writeToClient(client *c, int handler_installed) {
             return C_ERR;
         }
 
-        if (c->flags & CLIENT_SLAVE && c->running_tid != IOTHREAD_MAIN_THREAD_ID)
+        if (c->flags & CLIENT_SLAVE && c->running_tid != IOTHREAD_MAIN_THREAD_ID && (mstime() - c->last_slave_read) < 1000)
             enqueuePendingClientsToMainThread(c, 0);
     }
     /* Update client's memory usage after writing.
