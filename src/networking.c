@@ -2147,6 +2147,15 @@ static inline int _writeToClientSlave(client *c, ssize_t *nwritten) {
     else
         used = o->used;
 
+    if (used < c->ref_block_pos) {
+        serverLog(LL_NOTICE, "========================= WHAT");
+        serverLog(LL_NOTICE, "slave %ld: tid: %d running_tid: %d start: %p(%lld), curr: %p(%lld), last: %p(%lld) curr_pos: %lu, last_used: %lu",
+                  c->id, c->tid, c->running_tid,
+                  (void*)c->ref_repl_start_node, ((replBufBlock*)listNodeValue(c->ref_repl_start_node))->repl_offset,
+                  (void*)c->ref_repl_buf_node, ((replBufBlock*)listNodeValue(c->ref_repl_buf_node))->repl_offset,
+                  (void*)c->ref_last_node, ((replBufBlock*)listNodeValue(c->ref_last_node))->repl_offset,
+                  c->ref_block_pos, c->ref_last_node_used);
+    }
     serverAssert(used >= c->ref_block_pos);
     /* Send current block if it is not fully sent. */
     if (used > c->ref_block_pos) {
@@ -2178,10 +2187,11 @@ static inline int _writeToClientSlave(client *c, ssize_t *nwritten) {
          * So we make sure main thread first sees the increase of next's refcount
          * before the decrease of current's. */
         if (c->running_tid == IOTHREAD_MAIN_THREAD_ID) {
+            c->ref_repl_start_node = next;
             ((replBufBlock *)(listNodeValue(next)))->refcount++;
             o->refcount--;
         }
-
+        
         c->ref_repl_buf_node = next;
         c->ref_block_pos = 0;
         if (c->running_tid == IOTHREAD_MAIN_THREAD_ID)
