@@ -1115,7 +1115,7 @@ typedef struct clientReplyBlock {
 /* Similar with 'clientReplyBlock', it is used for shared buffers between
  * all replica clients and replication backlog. */
 typedef struct replBufBlock {
-    redisAtomic int refcount; /* Number of replicas or repl backlog using. */
+    int refcount; /* Number of replicas or repl backlog using. */
     long long id;             /* The unique incremental number. */
     long long repl_offset;    /* Start replication offset of the block. */
     size_t size;              /* Capacity of the buf in bytes */
