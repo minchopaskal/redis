@@ -1320,7 +1320,7 @@ void copyReplicaOutputBuffer(client *dst, client *src) {
     dst->ref_repl_start_node = src->ref_repl_start_node;
     dst->ref_repl_buf_node = src->ref_repl_buf_node;
     dst->ref_block_pos = src->ref_block_pos;
-    atomicIncr(((replBufBlock *)listNodeValue(dst->ref_repl_start_node))->refcount, 1);
+    ((replBufBlock *)listNodeValue(dst->ref_repl_start_node))->refcount++;
 }
 
 static inline int _clientHasPendingRepliesNonSlave(client *c) {
@@ -2178,8 +2178,8 @@ static inline int _writeToClientSlave(client *c, ssize_t *nwritten) {
          * So we make sure main thread first sees the increase of next's refcount
          * before the decrease of current's. */
         if (c->running_tid == IOTHREAD_MAIN_THREAD_ID) {
-            atomicIncr(((replBufBlock *)(listNodeValue(next)))->refcount, 1);
-            atomicDecr(o->refcount, 1);
+            ((replBufBlock *)(listNodeValue(next)))->refcount++;
+            o->refcount--;
         }
 
         c->ref_repl_buf_node = next;

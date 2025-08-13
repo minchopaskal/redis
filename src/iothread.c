@@ -493,8 +493,8 @@ int processClientsFromIOThread(IOThread *t) {
             c->ref_repl_start_node != c->ref_last_node) {
             serverAssert(c->ref_last_node);
 
-            atomicDecr(((replBufBlock*)listNodeValue(c->ref_repl_start_node))->refcount, 1);
-            atomicIncr(((replBufBlock*)listNodeValue(c->ref_last_node))->refcount, 1);
+            ((replBufBlock*)listNodeValue(c->ref_repl_start_node))->refcount--;
+            ((replBufBlock*)listNodeValue(c->ref_last_node))->refcount++;
             c->ref_repl_start_node = c->ref_last_node;
 
             incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);

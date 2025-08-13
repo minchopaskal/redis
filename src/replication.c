@@ -194,11 +194,9 @@ void freeReplicationBacklog(void) {
         replBufBlock *o = listNodeValue(
             server.repl_backlog->ref_repl_buf_node);
 
-        int refcount;
-        atomicGet(o->refcount, refcount);
-        serverAssert(refcount == 1); /* Last reference. */
+        serverAssert(o->refcount == 1); /* Last reference. */
 
-        atomicDecr(o->refcount, 1);
+        o->refcount--;
     }
 
     /* Replication buffer blocks are completely released when we free the
@@ -338,9 +336,7 @@ void incrementalTrimReplicationBacklog(size_t max_blocks) {
         listNode *first = listFirst(server.repl_buffer_blocks);
         serverAssert(first == server.repl_backlog->ref_repl_buf_node);
         replBufBlock *fo = listNodeValue(first);
-        int refcount;
-        atomicGetWithSync(fo->refcount, refcount);
-        if (refcount != 1) break;
+        if (fo->refcount != 1) break;
 
         /* We don't try trim backlog if backlog valid size will be lessen than
          * setting backlog size once we release the first repl buffer block. */
@@ -348,7 +344,7 @@ void incrementalTrimReplicationBacklog(size_t max_blocks) {
             server.repl_backlog_size) break;
 
         /* Decr refcount and release the first block later. */
-        atomicDecr(fo->refcount, 1);
+        fo->refcount--;
         trimmed_blocks++;
         server.repl_backlog->histlen -= fo->size;
 
@@ -357,7 +353,7 @@ void incrementalTrimReplicationBacklog(size_t max_blocks) {
         server.repl_backlog->ref_repl_buf_node = next;
         serverAssert(server.repl_backlog->ref_repl_buf_node != NULL);
         /* Incr reference count to keep the new head node. */
-        atomicIncr(((replBufBlock *)listNodeValue(next))->refcount, 1);
+        ((replBufBlock *)listNodeValue(next))->refcount++;
 
         /* Remove the node in recorded blocks. */
         uint64_t encoded_offset = htonu64(fo->repl_offset);
@@ -365,12 +361,13 @@ void incrementalTrimReplicationBacklog(size_t max_blocks) {
             (unsigned char*)&encoded_offset, sizeof(uint64_t), NULL);
 
         /* Delete the first node from global replication buffer. */
-        atomicGetWithSync(fo->refcount, refcount);
-        serverAssert(refcount == 0 && fo->used == fo->size);
+        serverAssert(fo->refcount == 0 && fo->used == fo->size);
         server.repl_buffer_mem -= (fo->size +
             sizeof(listNode) + sizeof(replBufBlock));
         listDelNode(server.repl_buffer_blocks, first);
     }
+
+    // if (trimmed_blocks > 0) serverLog(LL_NOTICE, "trimmed: %lu", trimmed_blocks);
 
     /* Set the offset of the first byte we have in the backlog. */
     server.repl_backlog->offset = server.master_repl_offset -
@@ -385,10 +382,8 @@ void freeReplicaReferencedReplBuffer(client *replica) {
         /* Decrease the start buffer node reference count. */
         replBufBlock *o = listNodeValue(replica->ref_repl_start_node);
 
-        int refcount;
-        atomicGet(o->refcount, refcount);
-        serverAssert(refcount > 0);
-        atomicDecr(o->refcount, 1);
+        serverAssert(o->refcount > 0);
+        o->refcount--;
 
         incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
     }
@@ -453,7 +448,7 @@ void feedReplicationBuffer(char *s, size_t len) {
             /* Note that we don't need write barrier here as slaves still don't
              * know about this node, hence there is no contention on it */
             tail->used = copy;
-            atomicSet(tail->refcount, 0);
+            tail->refcount = 0;
 
             tail->repl_offset = server.master_repl_offset + 1;
             tail->id = repl_block_id++;
@@ -485,7 +480,7 @@ void feedReplicationBuffer(char *s, size_t len) {
                 slave->ref_repl_buf_node = start_node;
                 slave->ref_block_pos = start_pos;
                 /* Only increase the start block reference count. */
-                atomicIncr(((replBufBlock *)listNodeValue(start_node))->refcount, 1);
+                ((replBufBlock *)listNodeValue(start_node))->refcount++;
             }
 
             /* Check output buffer limit only when add new block. */
@@ -496,7 +491,7 @@ void feedReplicationBuffer(char *s, size_t len) {
         if (server.repl_backlog->ref_repl_buf_node == NULL) {
             server.repl_backlog->ref_repl_buf_node = start_node;
             /* Only increase the start block reference count. */
-            atomicIncr(((replBufBlock *)listNodeValue(start_node))->refcount, 1);
+            ((replBufBlock *)listNodeValue(start_node))->refcount++;
 
             /* Replication buffer must be empty before adding replication stream
              * into replication backlog. */
@@ -771,7 +766,7 @@ long long addReplyReplicationBacklog(client *c, long long offset) {
     prepareClientToWrite(c);
     /* Setting output buffer of the replica. */
     replBufBlock *o = listNodeValue(node);
-    atomicIncr(o->refcount, 1);
+    o->refcount++;
     c->ref_repl_start_node = node;
     c->ref_repl_buf_node = node;
     c->ref_block_pos = offset - o->repl_offset;
@@ -4828,10 +4823,8 @@ void replicationCron(void) {
      * replicas number + 1(replication backlog). */
     if (listLength(server.repl_buffer_blocks) > 0) {
         replBufBlock *o = listNodeValue(listFirst(server.repl_buffer_blocks));
-        int refcount;
-        atomicGet(o->refcount, refcount);
-        serverAssert(refcount > 0 &&
-            refcount <= (int)listLength(server.slaves)+1);
+        serverAssert(o->refcount > 0 &&
+            o->refcount <= (int)listLength(server.slaves)+1);
     }
 
     /* Refresh the number of slaves with lag <= min-slaves-max-lag. */
