@@ -4227,7 +4227,6 @@ void replicationCacheMaster(client *c) {
      * This is safe to do as replicationCacheMaster is called by freeClient
      * and we must have already unbound the io-thread event loop. */
     if (server.cached_master->tid != IOTHREAD_MAIN_THREAD_ID) {
-        serverAssert(server.cached_master->conn->el == NULL);
         server.cached_master->tid = IOTHREAD_MAIN_THREAD_ID;
     }
 
