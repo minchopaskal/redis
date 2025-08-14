@@ -42,7 +42,6 @@
 
 void replicationDiscardCachedMaster(void);
 void replicationResurrectCachedMaster(connection *conn);
-void replicationSendAck(void);
 int replicaPutOnline(client *slave);
 void replicaStartCommandStream(client *slave);
 int cancelReplicationHandshake(int reconnect);
@@ -193,9 +192,7 @@ void freeReplicationBacklog(void) {
     if (server.repl_backlog->ref_repl_buf_node) {
         replBufBlock *o = listNodeValue(
             server.repl_backlog->ref_repl_buf_node);
-
         serverAssert(o->refcount == 1); /* Last reference. */
-
         o->refcount--;
     }
 
@@ -367,8 +364,6 @@ void incrementalTrimReplicationBacklog(size_t max_blocks) {
         listDelNode(server.repl_buffer_blocks, first);
     }
 
-    // if (trimmed_blocks > 0) serverLog(LL_NOTICE, "trimmed: %lu", trimmed_blocks);
-
     /* Set the offset of the first byte we have in the backlog. */
     server.repl_backlog->offset = server.master_repl_offset -
                               server.repl_backlog->histlen + 1;
@@ -416,16 +411,13 @@ void feedReplicationBuffer(char *s, size_t len) {
         /* Append to tail string when possible. */
         if (tail && tail->size > tail->used) {
             start_node = listLast(server.repl_buffer_blocks);
-
             start_pos = tail->used;
             /* Copy the part we can fit into the tail, and leave the rest for a
              * new node */
             size_t avail = tail->size - tail->used;
             size_t copy = (avail >= len) ? len : avail;
             memcpy(tail->buf + tail->used, s, copy);
-
             tail->used += copy;
-
             s += copy;
             len -= copy;
             server.master_repl_offset += copy;
@@ -444,9 +436,6 @@ void feedReplicationBuffer(char *s, size_t len) {
             /* Take over the allocation's internal fragmentation */
             tail->size = usable_size - sizeof(replBufBlock);
             size_t copy = (tail->size >= len) ? len : tail->size;
-
-            /* Note that we don't need write barrier here as slaves still don't
-             * know about this node, hence there is no contention on it */
             tail->used = copy;
             tail->refcount = 0;
 
@@ -901,7 +890,7 @@ int masterTryPartialResynchronization(client *c, long long psync_offset) {
      * 3) Send the backlog data (from the offset to the end) to the slave. */
     c->flags |= CLIENT_SLAVE;
     c->replstate = SLAVE_STATE_ONLINE;
-    c->repl_ack_time = server.unixtime;
+    c->repl_ack_time = server.mstime;
     c->repl_start_cmd_stream_on_ack = 0;
     listAddNodeTail(server.slaves,c);
     /* We can't use the connection buffers since they are used to accumulate
@@ -1146,7 +1135,7 @@ void syncCommand(client *c) {
                  * delivery starts, we'll stream repl data to the main channel.*/
                 c->flags |= CLIENT_SLAVE;
                 c->replstate = SLAVE_STATE_WAIT_RDB_CHANNEL;
-                c->repl_ack_time = server.unixtime;
+                c->repl_ack_time = server.mstime;
                 listAddNodeTail(server.slaves, c);
                 createReplicationBacklogIfNeeded();
 
@@ -1353,7 +1342,7 @@ void replconfCommand(client *c) {
                 if (offset > c->repl_aof_off)
                     c->repl_aof_off = offset;
             }
-            c->repl_ack_time = server.unixtime;
+            c->repl_ack_time = server.mstime;
             /* If this was a diskless replication, we need to really put
              * the slave online when the first ACK is received (which
              * confirms slave is online and ready to get more data). This
@@ -1475,7 +1464,7 @@ int replicaPutOnline(client *slave) {
         return 0;
     }
     slave->replstate = SLAVE_STATE_ONLINE;
-    slave->repl_ack_time = server.unixtime; /* Prevent false timeout. */
+    slave->repl_ack_time = server.mstime; /* Prevent false timeout. */
 
     refreshGoodSlavesCount();
     /* Fire the replica change modules event. */
@@ -4232,12 +4221,13 @@ void replicationCacheMaster(client *c) {
      * replicationHandleMasterDisconnection(). */
     server.cached_master = server.master;
 
-    /* replicationCacheMaster is called from freeClient, we make sure the.
-     * If the master client was handled by an IO-thread we must have unbound
-     * the event loop. We also make sure set it's thread to the main one as
-     * later during resurrection/discarding the cached master we want it to be
-     * handled in the main thread. */
+    /* If the master client was handled by an IO-thread we make sure to reset
+     * it's thread to the main one as later during resurrection/discarding the
+     * cached master we want that to be handled in the main thread.
+     * This is safe to do as replicationCacheMaster is called by freeClient
+     * and we must have already unbound the io-thread event loop. */
     if (server.cached_master->tid != IOTHREAD_MAIN_THREAD_ID) {
+        serverAssert(server.cached_master->conn->el == NULL);
         server.cached_master->tid = IOTHREAD_MAIN_THREAD_ID;
     }
 
@@ -4364,7 +4354,7 @@ void refreshGoodSlavesCount(void) {
     listRewind(server.slaves,&li);
     while((ln = listNext(&li))) {
         client *slave = ln->value;
-        time_t lag = server.unixtime - slave->repl_ack_time;
+        time_t lag = (server.mstime - slave->repl_ack_time) / 1000;
 
         if (slave->replstate == SLAVE_STATE_ONLINE &&
             lag <= server.repl_min_slaves_max_lag) good++;
@@ -4751,7 +4741,7 @@ void replicationCron(void) {
             if (slave->replstate == SLAVE_STATE_ONLINE) {
                 if (slave->flags & CLIENT_PRE_PSYNC)
                     continue;
-                if ((server.unixtime - slave->repl_ack_time) > server.repl_timeout) {
+                if ((server.unixtime - slave->repl_ack_time) / 1000 > server.repl_timeout) {
                     serverLog(LL_WARNING, "Disconnecting timedout replica (streaming sync): %s",
                           replicationGetSlaveName(slave));
                     freeClient(slave);

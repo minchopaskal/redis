@@ -1095,16 +1095,18 @@ typedef struct clientReplyBlock {
  * node, it should first increase the next node's refcount, and when we trim
  * the replication buffer nodes, we remove node always from the head node which
  * refcount is 0. If the refcount of the head node is not 0, we must stop
- * trimming and never iterate the next node. */
+ * trimming and never iterate the next node.
+ *
+ * TODO: add comment about handling nodes in io-threads. */
 
 /* Similar with 'clientReplyBlock', it is used for shared buffers between
  * all replica clients and replication backlog. */
 typedef struct replBufBlock {
-    int refcount; /* Number of replicas or repl backlog using. */
-    long long id;             /* The unique incremental number. */
-    long long repl_offset;    /* Start replication offset of the block. */
-    size_t size;              /* Capacity of the buf in bytes */
-    size_t used;  /* Count of written bytes */
+    int refcount;           /* Number of replicas or repl backlog using. */
+    long long id;           /* The unique incremental number. */
+    long long repl_offset;  /* Start replication offset of the block. */
+    size_t size;            /* Capacity of the buf in bytes */
+    size_t used;            /* Count of written bytes */
     char buf[];
 } replBufBlock;
 
@@ -1388,7 +1390,7 @@ typedef struct client {
     long long repl_applied; /* Applied replication data count in querybuf, if this is a replica. */
     long long repl_ack_off; /* Replication ack offset, if this is a slave. */
     long long repl_aof_off; /* Replication AOF fsync ack offset, if this is a slave. */
-    long long repl_ack_time;/* Replication ack time, if this is a slave. */
+    long long repl_ack_time;/* Replication ack time in ms, if this is a slave. */
     long long repl_last_partial_write; /* The last time the server did a partial write from the RDB child pipe to this replica  */
     long long psync_initial_offset; /* FULLRESYNC reply offset other slaves
                                        copying this slave output buffer
@@ -1445,17 +1447,16 @@ typedef struct client {
     listNode *mem_usage_bucket_node;
     clientMemUsageBucket *mem_usage_bucket;
 
-    listNode *ref_repl_start_node;
+    listNode *ref_repl_start_node; /* TODO: add comment */
     listNode *ref_repl_buf_node; /* Referenced node of replication buffer blocks,
                                   * see the definition of replBufBlock. */
     size_t ref_block_pos;        /* Access position of referenced buffer block,
                                   * i.e. the next offset to send. */
-    listNode *ref_last_node;     /* Last seen last replication buffer node,
+    listNode *ref_last_node;     /* TODO: better comment Last seen last replication buffer node,
                                   * before the client was sent to an io-thread */
-    size_t ref_last_node_used;   /* Last seen used byte count of the last seen repl
+    size_t ref_last_node_used;   /* TODO: better comment Last seen used byte count of the last seen repl
                                   * block. Only valid when ref_repl_buf_block is
                                   * equal to the last node in server.repl_buffer_blocks */
-    long long last_slave_read;
 
     /* list node in clients_pending_write list */
     listNode clients_pending_write_node;
@@ -2962,6 +2963,7 @@ int processClientsFromMainThread(IOThread *t);
 void assignClientToIOThread(client *c);
 void fetchClientFromIOThread(client *c);
 int isClientMustHandledByMainThread(client *c);
+int IOThreadSlaveNeedsAckRead(client *slave);
 
 /* logreqres.c - logging of requests and responses */
 void reqresReset(client *c, int free_buf);

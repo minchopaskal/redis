@@ -158,7 +158,6 @@ client *createClient(connection *conn) {
     c->ref_block_pos = 0;
     c->ref_last_node = NULL;
     c->ref_last_node_used = 0;
-    c->last_slave_read = 0;
     c->qb_pos = 0;
     c->querybuf = NULL;
     c->querybuf_peak = 0;
@@ -308,8 +307,17 @@ static inline int _prepareClientToWrite(client *c) {
      *
      * If the client runs in an IO thread, we should not put the client in the
      * pending write queue. Instead, we will install the write handler to the
-     * corresponding IO thread’s event loop and let it handle the reply. */
-    if (!clientHasPendingReplies(c) && likely(c->running_tid == IOTHREAD_MAIN_THREAD_ID)) {
+     * corresponding IO thread’s event loop and let it handle the reply.
+     *
+     * Replicas handled by io-threads ignore the check to clientHasPendingReplies
+     * since it checks how far they've read into the replication buffer and may
+     * return true without them already being in the pending write queue if main
+     * thread has written into the replication buffer while they were in io-thread.
+     * Later handleClientsWithPendingReplies will deal with them. */
+    int iothread_replica = c->flags & CLIENT_SLAVE && c->tid != IOTHREAD_MAIN_THREAD_ID;
+    if ((!clientHasPendingReplies(c) || iothread_replica) &&
+        likely(c->running_tid == IOTHREAD_MAIN_THREAD_ID))
+    {
         putClientInPendingWriteQueue(c);
     }
 
@@ -2129,33 +2137,21 @@ static inline int _writeToClientSlave(client *c, ssize_t *nwritten) {
     *nwritten = 0;
     serverAssert(c->bufpos == 0 && listLength(c->reply) == 0);
 
+    /* If replica is handled in io-thread we used a cached version of the last
+     * replication buffer node and how much data is written to it (denoted by
+     * `used`) so that we avoid contention with main thread when it writes to
+     * said last node in feedReplicationBuffer */
     listNode *ln = c->running_tid == IOTHREAD_MAIN_THREAD_ID ?
         listLast(server.repl_buffer_blocks) : c->ref_last_node;
 
     replBufBlock *o = listNodeValue(c->ref_repl_buf_node);
 
-    /* Since there is contention on replBufBlock::used by this function(which
-     * may be called from an io-thread) and feedReplicationBuffer (main thread)
-     * we make sure to cache the last seen value of `used` just before sending
-     * the client to an io-thread (see processClientsFromIOThread).
-     * If the current block we are reading is not the last one, that means it's
-     * full and main thread doesn't write to it anymore so it's safe to directly
-     * read from it. */
     size_t used;
     if (c->running_tid != IOTHREAD_MAIN_THREAD_ID && c->ref_repl_buf_node == ln)
         used = c->ref_last_node_used;
     else
         used = o->used;
 
-    if (used < c->ref_block_pos) {
-        serverLog(LL_NOTICE, "========================= WHAT");
-        serverLog(LL_NOTICE, "slave %ld: tid: %d running_tid: %d start: %p(%lld), curr: %p(%lld), last: %p(%lld) curr_pos: %lu, last_used: %lu",
-                  c->id, c->tid, c->running_tid,
-                  (void*)c->ref_repl_start_node, ((replBufBlock*)listNodeValue(c->ref_repl_start_node))->repl_offset,
-                  (void*)c->ref_repl_buf_node, ((replBufBlock*)listNodeValue(c->ref_repl_buf_node))->repl_offset,
-                  (void*)c->ref_last_node, ((replBufBlock*)listNodeValue(c->ref_last_node))->repl_offset,
-                  c->ref_block_pos, c->ref_last_node_used);
-    }
     serverAssert(used >= c->ref_block_pos);
     /* Send current block if it is not fully sent. */
     if (used > c->ref_block_pos) {
@@ -2176,26 +2172,19 @@ static inline int _writeToClientSlave(client *c, ssize_t *nwritten) {
     /* If we fully sent the object on head, go to the next one. */
     listNode *next = listNextNode(c->ref_repl_buf_node);
     if (next && c->ref_block_pos == used) {
-        /* We need the barrier here as we want to make sure these atomic operations
-         * are performed only if we've read the whole block. Also note the incr
-         * is necessarily before the decr as the following may happen:
-         *   - we decrease the refcount
-         *   - main thread starts trimming and trims the current node
-         *   - main thread moves on to the next one and its refcount is not
-         *     increased hence may trim it too
-         *   - this thread tries to increase the just trimmed node's refcount
-         * So we make sure main thread first sees the increase of next's refcount
-         * before the decrease of current's. */
+        /* Main thread can safely write to repl buffer nodes so we handle
+         * refcounting here. For io-thread replicas refcount is handled in
+         * processClientsFromIOThread */
         if (c->running_tid == IOTHREAD_MAIN_THREAD_ID) {
-            c->ref_repl_start_node = next;
             ((replBufBlock *)(listNodeValue(next)))->refcount++;
             o->refcount--;
+
+            c->ref_repl_start_node = next;
+            incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
         }
-        
+
         c->ref_repl_buf_node = next;
         c->ref_block_pos = 0;
-        if (c->running_tid == IOTHREAD_MAIN_THREAD_ID)
-            incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
     }
     return C_OK;
 }
@@ -2289,8 +2278,16 @@ int writeToClient(client *c, int handler_installed) {
             return C_ERR;
         }
 
-        if (c->flags & CLIENT_SLAVE && c->running_tid != IOTHREAD_MAIN_THREAD_ID && (mstime() - c->last_slave_read) < 1000)
+        /* If replica client has send all the replication data it knows about
+         * we send it to main thread so it can receive new repl data ASAP.
+         *
+         * If some time has passed since we received ACK from replica we keep it
+         * in io-thread so it has the chance to read it. */
+        if (c->flags & CLIENT_SLAVE && c->running_tid != IOTHREAD_MAIN_THREAD_ID &&
+            IOThreadSlaveNeedsAckRead(c))
+        {
             enqueuePendingClientsToMainThread(c, 0);
+        }
     }
     /* Update client's memory usage after writing.
      * Since this isn't thread safe we do this conditionally. */
@@ -2328,7 +2325,12 @@ int handleClientsWithPendingWrites(void) {
         /* Don't write to clients that are going to be closed anyway. */
         if (c->flags & CLIENT_CLOSE_ASAP) continue;
 
-        if (c->flags & CLIENT_SLAVE && c->tid != IOTHREAD_MAIN_THREAD_ID && c->running_tid == IOTHREAD_MAIN_THREAD_ID) {
+        /* We update the cached values of last repl buffer node and its used
+         * count for io-thread replicas so that we avoid contention on said
+         * last node when io-thread reads from it and main thread writes to it
+         * in feedReplicationBuffer.
+         * See replBufBlock for more info. */
+        if (c->flags & CLIENT_SLAVE && c->tid != IOTHREAD_MAIN_THREAD_ID) {
             c->ref_last_node = listLast(server.repl_buffer_blocks);
             c->ref_last_node_used = ((replBufBlock*)listNodeValue(c->ref_last_node))->used;
             putInPendingClienstForIOThreads(c);
@@ -2483,7 +2485,7 @@ int processInlineBuffer(client *c) {
      * This is useful for a slave to ping back while loading a big
      * RDB file. */
     if (querylen == 0 && clientTypeIsSlave(c))
-        c->repl_ack_time = server.unixtime;
+        c->repl_ack_time = server.mstime;
 
     /* Masters should never send us inline protocol to run actual
      * commands. If this happens, it is likely due to a bug in Redis where
@@ -3083,7 +3085,6 @@ void readQueryFromClient(connection *conn) {
     int nread, big_arg = 0;
     size_t qblen, readlen;
     if (!(c->io_flags & CLIENT_IO_READ_ENABLED)) return;
-    if (c->flags & CLIENT_SLAVE) c->last_slave_read = mstime();
     c->read_error = 0;
 
     /* Update the number of reads of io threads on server */
