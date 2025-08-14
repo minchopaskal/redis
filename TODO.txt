@@ -1,5 +1,0 @@
-# TODO
-
-[] handleClientsFromIOThreads -> handleClientFromIOThread and call it inside handleClientsWithPendingWrites as slaves residing in main thread will be put in writing queue by feedReplicationData
-[] make refcount NON-atomic - handle refcount decrement in main thread during processClientsFromIOThreads. At this point the slave must have send all the data it sees. We can safely decr the refcount there
-[] In order to do above we need to change _writeToClientSlave so that it doesn't advance the ref_repl_buf_node (we need it in order to know where we can decr the refcount).

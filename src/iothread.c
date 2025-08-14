@@ -10,6 +10,10 @@
 
 #include "server.h"
 
+/* Replicates the behaviour of run_with_period used in serverCron but for
+ * io-threads. IO-threads use default Hz for now. */
+#define run_with_period_io(_t_, _ms_) if (((_ms_) <= 1000/CONFIG_DEFAULT_HZ) || !((_t_)->cronloops%((_ms_)/(1000/CONFIG_DEFAULT_HZ))))
+
 /* IO threads. */
 static IOThread IOThreads[IO_THREADS_MAX_NUM];
 
@@ -169,7 +173,7 @@ int isClientMustHandledByMainThread(client *c) {
     /* If RDB replication is done for this slave it's save to move it to an IO thread
      * Note that we also check if the ref_repl_buf_node is initialized in order
      * to prevent race conditions with main thread when it feeds the replication
-     * buffer. */
+     * buffer for the first time. */
     if (c->flags & CLIENT_SLAVE &&
         c->replstate == SLAVE_STATE_ONLINE &&
         c->repl_start_cmd_stream_on_ack == 0 &&
@@ -187,6 +191,13 @@ int isClientMustHandledByMainThread(client *c) {
         return 1;
     }
     return 0;
+}
+
+int IOThreadSlaveNeedsAckRead(client *slave) {
+  serverAssert(slave->running_tid != IOTHREAD_MAIN_THREAD_ID);
+
+  time_t lag = mstime() - slave->repl_ack_time;
+  return lag >= 1000;
 }
 
 /* When the main thread accepts a new client or transfers clients to IO threads,
@@ -212,6 +223,8 @@ void assignClientToIOThread(client *c) {
     /* The client running in IO thread needs to have deferred objects array. */
     c->deferred_objects = zmalloc(sizeof(deferredObject) * CLIENT_MAX_DEFERRED_OBJECTS);
 
+    /* Initial caching of replication buffer's last node. See comment above
+     * replBufBlock for more info */
     if (c->flags & CLIENT_SLAVE) {
         c->ref_last_node = listLast(server.repl_buffer_blocks);
         if (c->ref_last_node)
@@ -517,12 +530,16 @@ int processClientsFromIOThread(IOThread *t) {
             continue;
         } 
 
+        /* TODO: add comment about why we update only these two */
         if (c->flags & CLIENT_SLAVE && c->ref_repl_start_node != NULL &&
-            c->ref_repl_start_node != c->ref_last_node) {
-            serverAssert(c->ref_last_node);
+            c->ref_repl_start_node != c->ref_repl_buf_node) {
+            serverAssert(c->ref_repl_buf_node);
 
             ((replBufBlock*)listNodeValue(c->ref_repl_start_node))->refcount--;
             ((replBufBlock*)listNodeValue(c->ref_repl_buf_node))->refcount++;
+
+            /* Forget about nodes before ref_repl_buf_node as we already
+             * processed them */
             c->ref_repl_start_node = c->ref_repl_buf_node;
 
             incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
@@ -557,12 +574,16 @@ int processClientsFromIOThread(IOThread *t) {
         /* We may have pending replies if io thread may not finish writing
          * reply to client, so we did not put the client in pending write
          * queue. And we should do that first since we may keep the client
-         * in main thread instead of returning to io threads.
-         * NOTE, replicas are dealth with in the main thread, see
-         * handleClientsWithPendingWrites */
+         * in main thread instead of returning to io threads. */
         if (!(c->flags & CLIENT_PENDING_WRITE) && clientHasPendingReplies(c))
         {
             putClientInPendingWriteQueue(c);
+        }
+
+        /* Replicas are always kept in main so they are updated with the latest
+         * repl buffer data ASAP. See handleClientsWithPendingWrites */
+        if (c->flags & CLIENT_SLAVE) {
+            continue;
         }
 
         /* The client only can be processed in the main thread, otherwise data
@@ -570,19 +591,6 @@ int processClientsFromIOThread(IOThread *t) {
         if (isClientMustHandledByMainThread(c)) {
             keepClientInMainThread(c);
             continue;
-        }
-
-        /* Replicas that are handled by io-threads will be kept in main thread
-         * while they are waiting for new replication data */
-        if (c->flags & CLIENT_SLAVE) {
-            /* If we already have new replication data no need to keep the slave
-             * in main thread*/
-            if (c->flags & CLIENT_PENDING_WRITE) {
-                c->ref_last_node = listLast(server.repl_buffer_blocks);
-                c->ref_last_node_used = ((replBufBlock*)listNodeValue(c->ref_last_node))->used;
-            } else if ((mstime() - c->last_slave_read) < 1000) {
-                continue;
-            }
         }
 
         /* Remove this client from pending write clients queue of main thread,
@@ -793,15 +801,15 @@ void IOThreadClientsCron(IOThread *t) {
 }
 
 void IOThreadReplicationCron(IOThread *t) {
+    /* Let main thread handle sending ACK to master.
+     * For more info on ACK see replicationCron */
     if (t->master && t->master->running_tid == t->id &&
-        !(server.master->flags & CLIENT_PRE_PSYNC))
+        !(t->master->flags & CLIENT_PRE_PSYNC))
     {
         t->master->io_flags |= CLIENT_IO_PENDING_REPL_ACK;
         enqueuePendingClientsToMainThread(t->master, 0);
     }
 }
-
-#define run_with_period_io(_t_, _ms_) if (((_ms_) <= 1000/CONFIG_DEFAULT_HZ) || !((_t_)->cronloops%((_ms_)/(1000/CONFIG_DEFAULT_HZ))))
 
 /* This is the IO thread timer interrupt, CONFIG_DEFAULT_HZ times per second.
  * The current responsibility is to detect clients that have been stuck in the
@@ -814,18 +822,7 @@ int IOThreadCron(struct aeEventLoop *eventLoop, long long id, void *clientData) 
     /* Run cron tasks for the clients in the IO thread. */
     IOThreadClientsCron(t);
 
-    /* Replication cron function -- used to reconnect to master,
-     * detect transfer failures, start background RDB transfers and so forth. 
-     * 
-     * If Redis is trying to failover then run the replication cron faster so
-     * progress on the handshake happens more quickly.
-     * 
-     * This is same as in main thread. */
-    if (server.failover_state != NO_FAILOVER) {
-        run_with_period_io(t, 100) IOThreadReplicationCron(t);
-    } else {
-        run_with_period_io(t, 1000) IOThreadReplicationCron(t);
-    }
+    run_with_period_io(t, 1000) IOThreadReplicationCron(t);
 
     t->cronloops++;
 
