@@ -522,8 +522,8 @@ int processClientsFromIOThread(IOThread *t) {
             serverAssert(c->ref_last_node);
 
             ((replBufBlock*)listNodeValue(c->ref_repl_start_node))->refcount--;
-            ((replBufBlock*)listNodeValue(c->ref_last_node))->refcount++;
-            c->ref_repl_start_node = c->ref_last_node;
+            ((replBufBlock*)listNodeValue(c->ref_repl_buf_node))->refcount++;
+            c->ref_repl_start_node = c->ref_repl_buf_node;
 
             incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
         }
