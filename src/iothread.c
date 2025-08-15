@@ -193,13 +193,6 @@ int isClientMustHandledByMainThread(client *c) {
     return 0;
 }
 
-int IOThreadSlaveNeedsAckRead(client *slave) {
-  serverAssert(slave->running_tid != IOTHREAD_MAIN_THREAD_ID);
-
-  time_t lag = mstime() - slave->repl_ack_time;
-  return lag >= 100;
-}
-
 /* When the main thread accepts a new client or transfers clients to IO threads,
  * it assigns the client to the IO thread with the fewest clients. */
 void assignClientToIOThread(client *c) {

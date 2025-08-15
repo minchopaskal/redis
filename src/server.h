@@ -3208,7 +3208,6 @@ void assignClientToIOThread(client *c);
 void keepClientInMainThread(client *c);
 void fetchClientFromIOThread(client *c);
 int isClientMustHandledByMainThread(client *c);
-int IOThreadSlaveNeedsAckRead(client *slave);
 
 /* logreqres.c - logging of requests and responses */
 void reqresReset(client *c, int free_buf);
@@ -3348,6 +3347,8 @@ void replDataBufInit(replDataBuf *buf);
 void replDataBufClear(replDataBuf *buf);
 void replDataBufReadFromConn(connection *conn, replDataBuf *buf, void (*error_handler)(connection *conn));
 int replDataBufStreamToDb(replDataBuf *buf, replDataBufToDbCtx *ctx);
+int slaveFromIOThreadNeedsAckRead(client *slave);
+void putSlavesNeedingAckReadInPendingClientsToIOThreads(void);
 
 /* Generic persistence functions */
 void startLoadingFile(size_t size, char* filename, int rdbflags);
