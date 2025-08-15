@@ -103,7 +103,7 @@ int slaveFromIOThreadNeedsAckRead(client *slave) {
   return lag >= 1000;
 }
 
-void putSlavesNeedingAckReadInPendingClientsToIOThreads() {
+void putSlavesNeedingAckReadInPendingClientsToIOThreads(void) {
     listIter li;
     listNode *ln;
     listRewind(server.slaves,&li);
