@@ -95,14 +95,12 @@
 
 #include <stdatomic.h>
 #define atomicIncr(var,count) atomic_fetch_add_explicit(&var,(count),memory_order_relaxed)
-#define atomicIncrWithSync(var,count) atomic_fetch_add_explicit(&var,(count),memory_order_seq_cst)
 #define atomicGetIncr(var,oldvalue_var,count) do { \
     oldvalue_var = atomic_fetch_add_explicit(&var,(count),memory_order_relaxed); \
 } while(0)
 #define atomicIncrGet(var, newvalue_var, count) \
     newvalue_var = atomicIncr(var,count) + count
 #define atomicDecr(var,count) atomic_fetch_sub_explicit(&var,(count),memory_order_relaxed)
-#define atomicDecrWithSync(var,count) atomic_fetch_sub_explicit(&var,(count),memory_order_seq_cst)
 #define atomicGet(var,dstvar) do { \
     dstvar = atomic_load_explicit(&var,memory_order_relaxed); \
 } while(0)
@@ -122,14 +120,12 @@
 /* Implementation using __atomic macros. */
 
 #define atomicIncr(var,count) __atomic_add_fetch(&var,(count),__ATOMIC_RELAXED)
-#define atomicIncrWithSync(var,count) __atomic_add_fetch(&var,(count),__ATOMIC_SEQ_CST)
 #define atomicIncrGet(var, newvalue_var, count) \
     newvalue_var = __atomic_add_fetch(&var,(count),__ATOMIC_RELAXED)
 #define atomicGetIncr(var,oldvalue_var,count) do { \
     oldvalue_var = __atomic_fetch_add(&var,(count),__ATOMIC_RELAXED); \
 } while(0)
 #define atomicDecr(var,count) __atomic_sub_fetch(&var,(count),__ATOMIC_RELAXED)
-#define atomicDecrWithSync(var,count) __atomic_sub_fetch(&var,(count),__ATOMIC_SEQ_CST)
 #define atomicGet(var,dstvar) do { \
     dstvar = __atomic_load_n(&var,__ATOMIC_RELAXED); \
 } while(0)
@@ -147,14 +143,12 @@
 /* Implementation using __sync macros. */
 
 #define atomicIncr(var,count) __sync_add_and_fetch(&var,(count))
-#define atomicIncrWithSync(var,count) __sync_add_and_fetch(&var,(count),__sync_synchronize)
 #define atomicIncrGet(var, newvalue_var, count) \
     newvalue_var = __sync_add_and_fetch(&var,(count))
 #define atomicGetIncr(var,oldvalue_var,count) do { \
     oldvalue_var = __sync_fetch_and_add(&var,(count)); \
 } while(0)
 #define atomicDecr(var,count) __sync_sub_and_fetch(&var,(count))
-#define atomicDecrWithSync(var,count) __sync_sub_and_fetch(&var,(count),__sync_synchronize)
 #define atomicGet(var,dstvar) do { \
     dstvar = __sync_sub_and_fetch(&var,0); \
 } while(0)

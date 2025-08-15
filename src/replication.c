@@ -4221,11 +4221,11 @@ void replicationCacheMaster(client *c) {
      * replicationHandleMasterDisconnection(). */
     server.cached_master = server.master;
 
-    /* If the master client was handled by an IO-thread we make sure to reset
+    /* If the master client was handled by an IO thread we make sure to reset
      * it's thread to the main one as later during resurrection/discarding the
      * cached master we want that to be handled in the main thread.
      * This is safe to do as replicationCacheMaster is called by freeClient
-     * and we must have already unbound the io-thread event loop. */
+     * and we must have already unbound the IO thread event loop. */
     if (server.cached_master->tid != IOTHREAD_MAIN_THREAD_ID) {
         server.cached_master->tid = IOTHREAD_MAIN_THREAD_ID;
     }
@@ -4740,7 +4740,7 @@ void replicationCron(void) {
             if (slave->replstate == SLAVE_STATE_ONLINE) {
                 if (slave->flags & CLIENT_PRE_PSYNC)
                     continue;
-                if ((server.unixtime - slave->repl_ack_time) / 1000 > server.repl_timeout) {
+                if ((server.mstime - slave->repl_ack_time) / 1000 > server.repl_timeout) {
                     serverLog(LL_WARNING, "Disconnecting timedout replica (streaming sync): %s",
                           replicationGetSlaveName(slave));
                     freeClient(slave);
