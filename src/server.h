@@ -1121,7 +1121,24 @@ typedef struct clientReplyBlock {
  * refcount is 0. If the refcount of the head node is not 0, we must stop
  * trimming and never iterate the next node.
  *
- * TODO: add comment about handling nodes in io-threads. */
+ * For replicas in IO threads we don't update the refcount while sending the
+ * repl data, but only when the thread is send back to main. This avoids data
+ * races. In order to achieve this the replica clients keeps track of following:
+ * - ref_repl_start_node - the node we started to send repl data from
+ * - ref_repl_buf_node - the current node we've reached
+ * - ref_repl_last_node - the last node in the replication buffer as seen by
+ *                        the replica client before it was send to IO thread
+ *
+ * When the client is send to main it can decrement ref_repl_start_node's refcount
+ * and increment it for ref_repl_buf_node, since all the nodes in-between are
+ * already send and the client doesnt hold reference to them.
+ *
+ * `ref_repl_last_node` is needed since while sending data IO thread needs to
+ * know when to stop. If it was reading directly from the replication buffer
+ * there will be a data race on the last node when main thread write to it
+ * during `feedReplicationBuffer`. `ref_repl_last_node` is cached in the client
+ * together with its used size just before sending the client to IO thread
+ * in `handleClientsWithPendingWrites`. */
 
 /* Similar with 'clientReplyBlock', it is used for shared buffers between
  * all replica clients and replication backlog. */
@@ -1522,16 +1539,22 @@ typedef struct client {
     listNode *mem_usage_bucket_node;
     clientMemUsageBucket *mem_usage_bucket;
 
-    listNode *ref_repl_start_node; /* TODO: add comment */
-    listNode *ref_repl_buf_node; /* Referenced node of replication buffer blocks,
-                                  * see the definition of replBufBlock. */
-    size_t ref_block_pos;        /* Access position of referenced buffer block,
-                                  * i.e. the next offset to send. */
-    listNode *ref_last_node;     /* TODO: better comment Last seen last replication buffer node,
-                                  * before the client was sent to an io-thread */
-    size_t ref_last_node_used;   /* TODO: better comment Last seen used byte count of the last seen repl
-                                  * block. Only valid when ref_repl_buf_block is
-                                  * equal to the last node in server.repl_buffer_blocks */
+    listNode *ref_repl_start_node; /* Referenced node of replication buffer blocks
+                                    * indicating the initial data this client
+                                    * starts to send. Used by IO threads to keep
+                                    * track of nodes' refcounts. see replBufBlock. */
+    listNode *ref_repl_buf_node;   /* Referenced node of replication buffer blocks,
+                                    * indicating the current node we need to send
+                                    * from.
+                                    * see the definition of replBufBlock. */
+    size_t ref_block_pos;          /* Access position of referenced buffer block,
+                                    * i.e. the next offset to send. */
+    listNode *ref_last_node;       /* Cached reference to the last node in the
+                                    * replication buffer. Used only by IO thread
+                                    * to avoid contention with main thread when
+                                    * it feeds the replication buffer. */
+    size_t ref_last_node_used;     /* Cached value of the used bytes in
+                                    * ref_last_node. */
 
     /* list node in clients_pending_write list */
     listNode clients_pending_write_node;

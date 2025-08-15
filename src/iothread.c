@@ -11,7 +11,7 @@
 #include "server.h"
 
 /* Replicates the behaviour of run_with_period used in serverCron but for
- * io-threads. IO-threads use default Hz for now. */
+ * IO threads. IO threads use default Hz for now. */
 #define run_with_period_io(_t_, _ms_) if (((_ms_) <= 1000/CONFIG_DEFAULT_HZ) || !((_t_)->cronloops%((_ms_)/(1000/CONFIG_DEFAULT_HZ))))
 
 /* IO threads. */
@@ -160,7 +160,7 @@ void fetchClientFromIOThread(client *c) {
  * data race to be processed in IO threads.
  *
  * - Close ASAP, we must free the client in main thread.
- * - Replica, pubsub, monitor, blocked, tracking clients, main thread may
+ * - Pubsub, monitor, blocked, tracking clients, main thread may
  *   directly write them a reply when conditions are met.
  * - Script command with debug may operate connection directly. */
 int isClientMustHandledByMainThread(client *c) {
@@ -168,18 +168,18 @@ int isClientMustHandledByMainThread(client *c) {
     if (c->flags & CLIENT_MASTER &&
         server.repl_state == REPL_STATE_CONNECTED &&
         server.repl_rdb_ch_state == REPL_RDB_CH_STATE_NONE)
-        return 0;
+        return 1;
 
     /* If RDB replication is done for this slave it's save to move it to an IO thread
-     * Note that we also check if the ref_repl_buf_node is initialized in order
+     * Note that we also check if the ref_repl_start_node is initialized in order
      * to prevent race conditions with main thread when it feeds the replication
-     * buffer for the first time. */
+     * buffer. */
     if (c->flags & CLIENT_SLAVE &&
         c->replstate == SLAVE_STATE_ONLINE &&
         c->repl_start_cmd_stream_on_ack == 0 &&
-        c->ref_repl_buf_node != NULL)
+        c->ref_repl_start_node != NULL)
     {
-        return 0;
+        return 1;
     }
 
     if (c->flags & (CLIENT_CLOSE_ASAP | CLIENT_MASTER | CLIENT_SLAVE |
@@ -197,7 +197,7 @@ int IOThreadSlaveNeedsAckRead(client *slave) {
   serverAssert(slave->running_tid != IOTHREAD_MAIN_THREAD_ID);
 
   time_t lag = mstime() - slave->repl_ack_time;
-  return lag >= 1000;
+  return lag >= 100;
 }
 
 /* When the main thread accepts a new client or transfers clients to IO threads,
@@ -530,9 +530,13 @@ int processClientsFromIOThread(IOThread *t) {
             continue;
         } 
 
-        /* TODO: add comment about why we update only these two */
+        /* IO thread has send all the nodes from [ref_repl_start_node, ref_repl_buf_node)
+         * Since it only keeps refcount to the start_node we need to decrement
+         * it and increment the refcount of the lastly processed buf_node which
+         * will become the new start node for the next IO thread iteration. */
         if (c->flags & CLIENT_SLAVE && c->ref_repl_start_node != NULL &&
-            c->ref_repl_start_node != c->ref_repl_buf_node) {
+            c->ref_repl_start_node != c->ref_repl_buf_node)
+        {
             serverAssert(c->ref_repl_buf_node);
 
             ((replBufBlock*)listNodeValue(c->ref_repl_start_node))->refcount--;
@@ -580,16 +584,17 @@ int processClientsFromIOThread(IOThread *t) {
             putClientInPendingWriteQueue(c);
         }
 
-        /* Replicas are always kept in main so they are updated with the latest
-         * repl buffer data ASAP. See handleClientsWithPendingWrites */
-        if (c->flags & CLIENT_SLAVE) {
-            continue;
-        }
-
         /* The client only can be processed in the main thread, otherwise data
          * race will happen, since we may touch client's data in main thread. */
         if (isClientMustHandledByMainThread(c)) {
             keepClientInMainThread(c);
+            continue;
+        }
+
+        /* IO thread replicas are always kept in main so they are updated with
+         * the latest repl buffer data ASAP.
+         * See handleClientsWithPendingWrites */
+        if (c->flags & CLIENT_SLAVE) {
             continue;
         }
 
