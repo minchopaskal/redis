@@ -2336,7 +2336,7 @@ int writeToClient(client *c, int handler_installed) {
          * If some time has passed since we received ACK from replica we keep it
          * in IO thread so it has the chance to read it. */
         if (c->flags & CLIENT_SLAVE && c->running_tid != IOTHREAD_MAIN_THREAD_ID &&
-            !IOThreadSlaveNeedsAckRead(c))
+            !slaveFromIOThreadNeedsAckRead(c))
         {
             enqueuePendingClientsToMainThread(c, 0);
         }
