@@ -168,7 +168,7 @@ int isClientMustHandledByMainThread(client *c) {
     if (c->flags & CLIENT_MASTER &&
         server.repl_state == REPL_STATE_CONNECTED &&
         server.repl_rdb_ch_state == REPL_RDB_CH_STATE_NONE)
-        return 1;
+        return 0;
 
     /* If RDB replication is done for this slave it's save to move it to an IO thread
      * Note that we also check if the ref_repl_start_node is initialized in order
@@ -179,7 +179,7 @@ int isClientMustHandledByMainThread(client *c) {
         c->repl_start_cmd_stream_on_ack == 0 &&
         c->ref_repl_start_node != NULL)
     {
-        return 1;
+        return 0;
     }
 
     if (c->flags & (CLIENT_CLOSE_ASAP | CLIENT_MASTER | CLIENT_SLAVE |
