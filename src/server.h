@@ -1107,7 +1107,7 @@ typedef struct clientReplyBlock {
  *
  * When the client is send to main it can decrement ref_repl_start_node's refcount
  * and increment it for ref_repl_buf_node, since all the nodes in-between are
- * already send and the client doesnt hold reference to them.
+ * already send and the client doesn't hold reference to them.
  *
  * `ref_repl_last_node` is needed since while sending data IO thread needs to
  * know when to stop. If it was reading directly from the replication buffer
