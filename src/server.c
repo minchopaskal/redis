@@ -6476,7 +6476,7 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
                 const char *state = replstateToString(slave->replstate);
                 if (state[0] == '\0') continue;
                 if (slave->replstate == SLAVE_STATE_ONLINE)
-                    lag = (time(NULL) - slave->repl_ack_time) / 1000;
+                    lag = (mstime() - slave->repl_ack_time) / 1000;
 
                 info = sdscatprintf(info,
                     "slave%d:ip=%s,port=%d,state=%s,"
