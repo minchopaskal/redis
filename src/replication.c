@@ -96,6 +96,29 @@ unsigned long replicationLogicalReplicaCount(void) {
     return count;
 }
 
+int slaveFromIOThreadNeedsAckRead(client *slave) {
+  serverAssert(slave->tid != IOTHREAD_MAIN_THREAD_ID);
+
+  time_t lag = mstime() - slave->repl_ack_time;
+  return lag >= 1000;
+}
+
+void putSlavesNeedingAckReadInPendingClientsToIOThreads() {
+    listIter li;
+    listNode *ln;
+    listRewind(server.slaves,&li);
+    while((ln = listNext(&li))) {
+        client *slave = ln->value;
+
+        if (slave->tid != IOTHREAD_MAIN_THREAD_ID &&
+            slave->running_tid == IOTHREAD_MAIN_THREAD_ID &&
+            slaveFromIOThreadNeedsAckRead(slave))
+        {
+            putInPendingClienstForIOThreads(slave);
+        }
+    }
+}
+
 static ConnectionType *connTypeOfReplication(void) {
     if (server.tls_replication) {
         return connectionTypeTls();
