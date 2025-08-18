@@ -2096,8 +2096,14 @@ static int numericBoundaryCheck(standardConfig *config, long long ll, const char
     if (config->data.numeric.numeric_type == NUMERIC_TYPE_ULONG_LONG ||
         config->data.numeric.numeric_type == NUMERIC_TYPE_UINT ||
         config->data.numeric.numeric_type == NUMERIC_TYPE_SIZE_T) {
-        /* Boundary check for unsigned types */
-        if (ll < 0) {
+        /* Boundary check for unsigned types
+         * The upper/lower bound check should suffice but for UINT type if
+         * negative value is passed that certainly means an error. This check
+         * is only here for the module config API - see moduleSetNumericConfig.
+         * If the numeric config was not set through a module, the codepath
+         * would be through numericConfigSet, which deals with wrong values
+         * via numericParseString. */
+        if (config->data.numeric.numeric_type == NUMERIC_TYPE_UINT && ll < 0) {
             *err = "argument must be greater or equal to 0";
             return 0;
         }
