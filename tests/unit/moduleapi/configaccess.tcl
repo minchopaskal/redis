@@ -133,6 +133,11 @@ start_server {tags {"modules"}} {
         # Test setting a numeric config with out-of-range value
         catch {r configaccess.setnumeric moduleconfigs.numeric 5000} err
         assert_match "*ERR*" $err
+        catch {r configaccess.setnumeric maxclients -1} err
+        assert_match "*argument must be greater or equal to 0*" $err
+
+        # Sanity check
+        assert_equal [r configaccess.setnumeric maxmemory 18446744073709551615] "OK"
     }
 
     test {Test module get all configs} {
