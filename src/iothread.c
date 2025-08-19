@@ -67,6 +67,12 @@ void enqueuePendingClientsToMainThread(client *c, int unbind) {
         listUnlinkNode(t->clients, c->io_thread_client_list_node);
         listLinkNodeTail(t->pending_clients_to_main_thread, c->io_thread_client_list_node);
         c->io_thread_client_list_node = NULL;
+
+        /* Forget about the master client so that replication cron doesn't
+         * access its data while it's in main thread */
+        if (c == t->master) {
+            t->master = NULL;
+        }
     }
 }
 
@@ -84,11 +90,15 @@ void putInPendingClienstForIOThreads(client *c) {
 void unbindClientFromIOThreadEventLoop(client *c) {
     serverAssert(c->tid != IOTHREAD_MAIN_THREAD_ID &&
                  c->running_tid == IOTHREAD_MAIN_THREAD_ID);
-    if (!connHasEventLoop(c->conn)) return;
+    /* If the client is not bound to an event loop there is nothing to do,
+     * unless the client is master in which case we need to make the IOThread
+     * forget about it. */
+    if (!connHasEventLoop(c->conn) && !(c->flags & CLIENT_MASTER)) return;
+
     /* As calling in main thread, we should pause the io thread to make it safe. */
     pauseIOThread(c->tid);
     if (c->flags & CLIENT_MASTER) {
-        IOThread *t = c->conn->el->privdata[0];
+        IOThread *t = &IOThreads[c->tid];
         t->master = NULL;
     }
     connUnbindEventLoop(c->conn);
@@ -162,8 +172,20 @@ void fetchClientFromIOThread(client *c) {
  * - Close ASAP, we must free the client in main thread.
  * - Pubsub, monitor, blocked, tracking clients, main thread may
  *   directly write them a reply when conditions are met.
- * - Script command with debug may operate connection directly. */
+ * - Script command with debug may operate connection directly.
+ * - Master/Replica are only handled by IO thread when RDB replication is
+ *   completed. Note we need to check them after checking for other flags
+ *   that may overlap with CLIENT_MASTER/SLAVE - CLOSE_ASAP, MONITOR,
+ *   (UN)BLOCKED, TRACKING. */
 int isClientMustHandledByMainThread(client *c) {
+    if (c->flags & (CLIENT_CLOSE_ASAP |
+                    CLIENT_PUBSUB | CLIENT_MONITOR | CLIENT_BLOCKED |
+                    CLIENT_UNBLOCKED | CLIENT_TRACKING | CLIENT_LUA_DEBUG |
+                    CLIENT_LUA_DEBUG_SYNC))
+    {
+        return 1;
+    }
+
     /* If RDB replication is done it's save to move the master client to an IO thread */
     if (c->flags & CLIENT_MASTER &&
         server.repl_state == REPL_STATE_CONNECTED &&
@@ -182,14 +204,8 @@ int isClientMustHandledByMainThread(client *c) {
         return 0;
     }
 
-    if (c->flags & (CLIENT_CLOSE_ASAP | CLIENT_MASTER | CLIENT_SLAVE |
-                    CLIENT_PUBSUB | CLIENT_MONITOR | CLIENT_BLOCKED |
-                    CLIENT_UNBLOCKED | CLIENT_TRACKING | CLIENT_LUA_DEBUG |
-                    CLIENT_LUA_DEBUG_SYNC | CLIENT_ASM_MIGRATING |
-                    CLIENT_ASM_IMPORTING))
-    {
-        return 1;
-    }
+    if (c->flags & (CLIENT_MASTER | CLIENT_SLAVE)) return 1;
+
     return 0;
 }
 
@@ -523,6 +539,21 @@ int processClientsFromIOThread(IOThread *t) {
             continue;
         } 
 
+        /* Update some client members since using them directly in IO thread
+         * would have created contention with main thread. */
+        if (c->io_last_ack_time / 1000 > c->repl_ack_time) {
+            c->repl_ack_time = c->io_last_ack_time;
+        }
+        if (c->io_lastinteraction != 0) {
+            c->lastinteraction = c->io_lastinteraction;
+            c->io_lastinteraction = 0;
+        }
+        if (c->io_acc_read_reploff != 0) {
+            serverAssert(c->flags & CLIENT_MASTER);
+            c->read_reploff += c->io_acc_read_reploff;
+            c->io_acc_read_reploff = 0;
+        }
+
         /* IO thread has send all the nodes from [ref_repl_start_node, ref_repl_buf_node)
          * Since it only keeps refcount to the start_node we need to decrement
          * it and increment the refcount of the lastly processed buf_node which
@@ -563,9 +594,9 @@ int processClientsFromIOThread(IOThread *t) {
             }
         }
 
-        if (c->io_flags & CLIENT_IO_PENDING_REPL_ACK) {
-            c->io_flags &= ~CLIENT_IO_PENDING_REPL_ACK;
-            replicationSendAck();
+        if (c->io_flags & CLIENT_IO_PENDING_REPL_CRON) {
+            c->io_flags &= ~CLIENT_IO_PENDING_REPL_CRON;
+            runConnectedMasterClientReplicationCron();
         }
 
         /* We may have pending replies if io thread may not finish writing
@@ -573,9 +604,7 @@ int processClientsFromIOThread(IOThread *t) {
          * queue. And we should do that first since we may keep the client
          * in main thread instead of returning to io threads. */
         if (!(c->flags & CLIENT_PENDING_WRITE) && clientHasPendingReplies(c))
-        {
             putClientInPendingWriteQueue(c);
-        }
 
         /* The client only can be processed in the main thread, otherwise data
          * race will happen, since we may touch client's data in main thread. */
@@ -713,9 +742,15 @@ int processClientsFromMainThread(IOThread *t) {
         /* Only bind once, we never remove read handler unless freeing client. */
         if (!connHasEventLoop(c->conn)) {
             connRebindEventLoop(c->conn, t->el);
-            if (c->flags & CLIENT_MASTER) t->master = c;
             serverAssert(!connHasReadHandler(c->conn));
             connSetReadHandler(c->conn, readQueryFromClient);
+        }
+
+        /* Cache a pointer to the master so we can quickly check if it needs
+         * to be send to main thread for its replication cron in case it's
+         * waiting for long inside the IO thread */
+        if (c->flags & CLIENT_MASTER) {
+            t->master = c;
         }
 
         /* If the client has pending replies, write replies to client. */
@@ -799,12 +834,14 @@ void IOThreadClientsCron(IOThread *t) {
 }
 
 void IOThreadReplicationCron(IOThread *t) {
+    if (t->master) serverAssert(t->master->tid == t->id);
+
     /* Let main thread handle sending ACK to master.
      * For more info on ACK see replicationCron */
     if (t->master && t->master->running_tid == t->id &&
         !(t->master->flags & CLIENT_PRE_PSYNC))
     {
-        t->master->io_flags |= CLIENT_IO_PENDING_REPL_ACK;
+        t->master->io_flags |= CLIENT_IO_PENDING_REPL_CRON;
         enqueuePendingClientsToMainThread(t->master, 0);
     }
 }
