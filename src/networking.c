@@ -181,15 +181,18 @@ client *createClient(connection *conn) {
     c->slot = -1;
     c->cluster_compatibility_check_slot = -2;
     c->ctime = c->lastinteraction = server.unixtime;
+    c->io_lastinteraction = 0;
     c->duration = 0;
     clientSetDefaultAuth(c);
     c->replstate = REPL_STATE_NONE;
     c->repl_start_cmd_stream_on_ack = 0;
     c->reploff = 0;
     c->read_reploff = 0;
+    c->io_acc_read_reploff = 0;
     c->repl_applied = 0;
     c->repl_ack_off = 0;
     c->repl_ack_time = 0;
+    c->io_last_ack_time = 0;
     c->repl_aof_off = 0;
     c->repl_last_partial_write = 0;
     c->slave_listening_port = 0;
@@ -316,7 +319,7 @@ static inline int _prepareClientToWrite(client *c) {
      * they were in IO thread. Later handleClientsWithPendingReplies will deal
      * with them. */
     int iothread_replica = c->flags & CLIENT_SLAVE && c->tid != IOTHREAD_MAIN_THREAD_ID;
-    if ((!clientHasPendingReplies(c) || iothread_replica) &&
+    if ((iothread_replica || !clientHasPendingReplies(c)) &&
         likely(c->running_tid == IOTHREAD_MAIN_THREAD_ID))
     {
         putClientInPendingWriteQueue(c);
@@ -1322,7 +1325,7 @@ void deferredAfterErrorReply(client *c, list *errors) {
 void copyReplicaOutputBuffer(client *dst, client *src) {
     serverAssert(src->bufpos == 0 && listLength(src->reply) == 0);
 
-    if (src->ref_repl_buf_node == NULL) return;
+    if (src->ref_repl_start_node == NULL) return;
 
     serverAssert(src->ref_repl_start_node == src->ref_repl_buf_node);
 
@@ -2485,8 +2488,12 @@ int processInlineBuffer(client *c) {
     /* Newline from slaves can be used to refresh the last ACK time.
      * This is useful for a slave to ping back while loading a big
      * RDB file. */
-    if (querylen == 0 && clientTypeIsSlave(c))
-        c->repl_ack_time = server.mstime;
+    if (querylen == 0 && clientTypeIsSlave(c)) {
+        if (c->running_tid == IOTHREAD_MAIN_THREAD_ID)
+            c->repl_ack_time = server.unixtime;
+        else
+            c->io_last_ack_time = mstime();
+    }
 
     /* Masters should never send us inline protocol to run actual
      * commands. If this happens, it is likely due to a bug in Redis where
@@ -3175,10 +3182,17 @@ void readQueryFromClient(connection *conn) {
     sdsIncrLen(c->querybuf,nread);
     qblen = sdslen(c->querybuf);
     if (c->querybuf_peak < qblen) c->querybuf_peak = qblen;
+    
+    if (c->running_tid == IOTHREAD_MAIN_THREAD_ID)
+        c->lastinteraction = server.unixtime;
+    else
+        c->io_lastinteraction = server.unixtime;
 
-    c->lastinteraction = server.unixtime;
     if (c->flags & CLIENT_MASTER) {
-        c->read_reploff += nread;
+        if (c->running_tid == IOTHREAD_MAIN_THREAD_ID)
+            c->read_reploff += nread;
+        else
+            c->io_acc_read_reploff += nread;
         atomicIncr(server.stat_net_repl_input_bytes, nread);
     } else {
         atomicIncr(server.stat_net_input_bytes, nread);
@@ -3327,9 +3341,9 @@ sds catClientInfoString(sds s, client *client) {
     size_t obufmem, total_mem = getClientMemoryUsage(client, &obufmem);
 
     size_t used_blocks_of_repl_buf = 0;
-    if (client->ref_repl_buf_node) {
+    if (client->ref_repl_start_node) {
         replBufBlock *last = listNodeValue(listLast(server.repl_buffer_blocks));
-        replBufBlock *cur = listNodeValue(client->ref_repl_buf_node);
+        replBufBlock *cur = listNodeValue(client->ref_repl_start_node);
         used_blocks_of_repl_buf = last->id - cur->id + 1;
     }
 
@@ -4332,9 +4346,9 @@ size_t getClientOutputBufferMemoryUsage(client *c) {
         size_t repl_buf_size = 0;
         size_t repl_node_num = 0;
         size_t repl_node_size = sizeof(listNode) + sizeof(replBufBlock);
-        if (c->ref_repl_buf_node) {
+        if (c->ref_repl_start_node) {
             replBufBlock *last = listNodeValue(listLast(server.repl_buffer_blocks));
-            replBufBlock *cur = listNodeValue(c->ref_repl_buf_node);
+            replBufBlock *cur = listNodeValue(c->ref_repl_start_node);
             repl_buf_size = last->repl_offset + last->size - cur->repl_offset;
             repl_node_num = last->id - cur->id + 1;
         }

@@ -99,7 +99,7 @@ unsigned long replicationLogicalReplicaCount(void) {
 int slaveFromIOThreadNeedsAckRead(client *slave) {
   serverAssert(slave->tid != IOTHREAD_MAIN_THREAD_ID);
 
-  time_t lag = mstime() - slave->repl_ack_time;
+  time_t lag = mstime() - slave->io_last_ack_time;
   return lag >= 1000;
 }
 
@@ -117,6 +117,25 @@ void putSlavesNeedingAckReadInPendingClientsToIOThreads(void) {
             putInPendingClienstForIOThreads(slave);
         }
     }
+}
+
+void runConnectedMasterClientReplicationCron(void) {
+    /* Timed out master when we are an already connected slave? */
+    if (server.masterhost && server.repl_state == REPL_STATE_CONNECTED &&
+        server.master->running_tid == IOTHREAD_MAIN_THREAD_ID &&
+        (time(NULL)-server.master->lastinteraction) > server.repl_timeout)
+    {
+        serverLog(LL_WARNING,"MASTER timeout: no data nor PING received...");
+        freeClient(server.master);
+    }
+
+    /* Send ACK to master from time to time.
+     * Note that we do not send periodic acks to masters that don't
+     * support PSYNC and replication offsets. */
+    if (server.masterhost && server.master &&
+        server.master->running_tid == IOTHREAD_MAIN_THREAD_ID &&
+        !(server.master->flags & CLIENT_PRE_PSYNC))
+        replicationSendAck();
 }
 
 static ConnectionType *connTypeOfReplication(void) {
@@ -487,7 +506,7 @@ void feedReplicationBuffer(char *s, size_t len) {
             if (!canFeedReplicaReplBuffer(slave)) continue;
 
             /* Update shared replication buffer start position. */
-            if (slave->ref_repl_buf_node == NULL) {
+            if (slave->ref_repl_start_node == NULL) {
                 slave->ref_repl_start_node = start_node;
                 slave->ref_repl_buf_node = start_node;
                 slave->ref_block_pos = start_pos;
@@ -913,7 +932,7 @@ int masterTryPartialResynchronization(client *c, long long psync_offset) {
      * 3) Send the backlog data (from the offset to the end) to the slave. */
     c->flags |= CLIENT_SLAVE;
     c->replstate = SLAVE_STATE_ONLINE;
-    c->repl_ack_time = server.mstime;
+    c->repl_ack_time = server.unixtime;
     c->repl_start_cmd_stream_on_ack = 0;
     listAddNodeTail(server.slaves,c);
     /* We can't use the connection buffers since they are used to accumulate
@@ -1158,7 +1177,7 @@ void syncCommand(client *c) {
                  * delivery starts, we'll stream repl data to the main channel.*/
                 c->flags |= CLIENT_SLAVE;
                 c->replstate = SLAVE_STATE_WAIT_RDB_CHANNEL;
-                c->repl_ack_time = server.mstime;
+                c->repl_ack_time = server.unixtime;
                 listAddNodeTail(server.slaves, c);
                 createReplicationBacklogIfNeeded();
 
@@ -1365,7 +1384,9 @@ void replconfCommand(client *c) {
                 if (offset > c->repl_aof_off)
                     c->repl_aof_off = offset;
             }
-            c->repl_ack_time = server.mstime;
+            c->repl_ack_time = server.unixtime;
+            c->io_last_ack_time = mstime();
+
             /* If this was a diskless replication, we need to really put
              * the slave online when the first ACK is received (which
              * confirms slave is online and ready to get more data). This
@@ -1487,7 +1508,7 @@ int replicaPutOnline(client *slave) {
         return 0;
     }
     slave->replstate = SLAVE_STATE_ONLINE;
-    slave->repl_ack_time = server.mstime; /* Prevent false timeout. */
+    slave->repl_ack_time = server.unixtime; /* Prevent false timeout. */
 
     refreshGoodSlavesCount();
     /* Fire the replica change modules event. */
@@ -4220,6 +4241,7 @@ void replicationSendAck(void) {
  */
 void replicationCacheMaster(client *c) {
     serverAssert(server.master != NULL && server.cached_master == NULL);
+    serverAssert(server.master->running_tid == IOTHREAD_MAIN_THREAD_ID);
     serverLog(LL_NOTICE,"Caching the disconnected master state.");
 
     /* Unlink the client from the server structures. */
@@ -4240,18 +4262,18 @@ void replicationCacheMaster(client *c) {
     c->bufpos = 0;
     resetClient(c);
 
-    /* Save the master. Server.master will be set to null later by
-     * replicationHandleMasterDisconnection(). */
-    server.cached_master = server.master;
-
     /* If the master client was handled by an IO thread we make sure to reset
      * it's thread to the main one as later during resurrection/discarding the
      * cached master we want that to be handled in the main thread.
      * This is safe to do as replicationCacheMaster is called by freeClient
      * and we must have already unbound the IO thread event loop. */
-    if (server.cached_master->tid != IOTHREAD_MAIN_THREAD_ID) {
-        server.cached_master->tid = IOTHREAD_MAIN_THREAD_ID;
+    if (server.master->tid != IOTHREAD_MAIN_THREAD_ID) {
+        server.master->tid = IOTHREAD_MAIN_THREAD_ID;
     }
+
+    /* Save the master. Server.master will be set to null later by
+     * replicationHandleMasterDisconnection(). */
+    server.cached_master = server.master;
 
     /* Invalidate the Peer ID cache. */
     if (c->peerid) {
@@ -4376,7 +4398,7 @@ void refreshGoodSlavesCount(void) {
     listRewind(server.slaves,&li);
     while((ln = listNext(&li))) {
         client *slave = ln->value;
-        time_t lag = (server.mstime - slave->repl_ack_time) / 1000;
+        time_t lag = server.unixtime - slave->repl_ack_time;
 
         if (slave->replstate == SLAVE_STATE_ONLINE &&
             lag <= server.repl_min_slaves_max_lag) good++;
@@ -4668,14 +4690,6 @@ void replicationCron(void) {
         cancelReplicationHandshake(1);
     }
 
-    /* Timed out master when we are an already connected slave? */
-    if (server.masterhost && server.repl_state == REPL_STATE_CONNECTED &&
-        (time(NULL)-server.master->lastinteraction) > server.repl_timeout)
-    {
-        serverLog(LL_WARNING,"MASTER timeout: no data nor PING received...");
-        freeClient(server.master);
-    }
-
     /* Check if we should connect to a MASTER */
     if (server.repl_state == REPL_STATE_CONNECT) {
         serverLog(LL_NOTICE,"Connecting to MASTER %s:%d",
@@ -4683,13 +4697,7 @@ void replicationCron(void) {
         connectWithMaster();
     }
 
-    /* Send ACK to master from time to time.
-     * Note that we do not send periodic acks to masters that don't
-     * support PSYNC and replication offsets. */
-    if (server.masterhost && server.master &&
-        server.master->running_tid == IOTHREAD_MAIN_THREAD_ID &&
-        !(server.master->flags & CLIENT_PRE_PSYNC))
-        replicationSendAck();
+    runConnectedMasterClientReplicationCron();
 
     /* If we have attached slaves, PING them from time to time.
      * So slaves can implement an explicit timeout to masters, and will
@@ -4763,7 +4771,7 @@ void replicationCron(void) {
             if (slave->replstate == SLAVE_STATE_ONLINE) {
                 if (slave->flags & CLIENT_PRE_PSYNC)
                     continue;
-                if ((server.mstime - slave->repl_ack_time) / 1000 > server.repl_timeout) {
+                if ((server.unixtime - slave->repl_ack_time) > server.repl_timeout) {
                     serverLog(LL_WARNING, "Disconnecting timedout replica (streaming sync): %s",
                           replicationGetSlaveName(slave));
                     freeClient(slave);
