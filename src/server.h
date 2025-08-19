@@ -451,7 +451,7 @@ extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
 #define CLIENT_IO_REUSABLE_QUERYBUFFER (1ULL<<3) /* The client is using the reusable query buffer. */
 #define CLIENT_IO_CLOSE_ASAP (1ULL<<4) /* Close this client ASAP in IO thread. */
 #define CLIENT_IO_PENDING_CRON (1ULL<<5)  /* The client is pending cron job, to be processed in main thread. */
-#define CLIENT_IO_PENDING_REPL_ACK (1ULL<<6)
+#define CLIENT_IO_PENDING_REPL_CRON (1ULL<<6) /* The master client has pending replication cron */
 
 /* Definitions for client read errors. These error codes are used to indicate
  * various issues that can occur while reading or parsing data from a client. */
@@ -1434,6 +1434,10 @@ typedef struct client {
                                            * any positive number means we found a slot and no violation yet. */
     dictEntry *cur_script;  /* Cached pointer to the dictEntry of the script being executed. */
     time_t lastinteraction; /* Time of the last interaction, used for timeout */
+    time_t io_lastinteraction; /* Time of the last interaction as seen from
+                                * IO thread. When the client is moved to main
+                                * it updates its `lastinteraction` value from
+                                * this. */
     time_t obuf_soft_limit_reached_time;
     mstime_t last_cron_check_time;    /* The last client check time in cron */
     int authenticated;      /* Needed when the default user requires auth. */
@@ -1444,12 +1448,19 @@ typedef struct client {
     off_t repldbsize;       /* Replication DB file size. */
     sds replpreamble;       /* Replication DB preamble. */
     long long read_reploff; /* Read replication offset if this is a master. */
+    long long io_acc_read_reploff; /* Accumulation of read replication offset
+                                    * from last read if this is a master in IO
+                                    * thread. read_reploff is updated with this
+                                    * value when the client is moved to main. */
     long long reploff;      /* Applied replication offset if this is a master. */
     long long reploff_next; /* Next value to set for reploff when a command finishes executing */
     long long repl_applied; /* Applied replication data count in querybuf, if this is a replica. */
     long long repl_ack_off; /* Replication ack offset, if this is a slave. */
     long long repl_aof_off; /* Replication AOF fsync ack offset, if this is a slave. */
-    long long repl_ack_time;/* Replication ack time in ms, if this is a slave. */
+    long long repl_ack_time;/* Replication ack time, if this is a slave. */
+    mstime_t io_last_ack_time; /* Replication ack time, if this is a slave in
+                                * IO thread. Used only to check if slave needs
+                                * to be kept in IO thread for ACK read. */
     long long repl_last_partial_write; /* The last time the server did a partial write from the RDB child pipe to this replica  */
     long long psync_initial_offset; /* FULLRESYNC reply offset other slaves
                                        copying this slave output buffer
@@ -3296,6 +3307,7 @@ void replDataBufReadFromConn(connection *conn, replDataBuf *buf, void (*error_ha
 int replDataBufStreamToDb(replDataBuf *buf, replDataBufToDbCtx *ctx);
 int slaveFromIOThreadNeedsAckRead(client *slave);
 void putSlavesNeedingAckReadInPendingClientsToIOThreads(void);
+void runConnectedMasterClientReplicationCron(void);
 
 /* Generic persistence functions */
 void startLoadingFile(size_t size, char* filename, int rdbflags);

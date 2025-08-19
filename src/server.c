@@ -4813,7 +4813,7 @@ int finishShutdown(void) {
         if (replica->repl_ack_off != server.master_repl_offset) {
             num_lagging_replicas++;
             long lag = replica->replstate == SLAVE_STATE_ONLINE ?
-                (mstime() - replica->repl_ack_time) / 1000 : 0;
+                time(NULL) - replica->repl_ack_time : 0;
             serverLog(LL_NOTICE,
                       "Lagging replica %s reported offset %lld behind master, lag=%ld, state=%s.",
                       replicationGetSlaveName(replica),
@@ -6502,7 +6502,7 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
                 const char *state = replstateToString(slave->replstate);
                 if (state[0] == '\0') continue;
                 if (slave->replstate == SLAVE_STATE_ONLINE)
-                    lag = (mstime() - slave->repl_ack_time) / 1000;
+                    lag = time(NULL) - slave->repl_ack_time;
 
                 info = sdscatprintf(info,
                     "slave%d:ip=%s,port=%d,state=%s,"
