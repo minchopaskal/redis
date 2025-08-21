@@ -515,7 +515,7 @@ int processClientsFromIOThread(IOThread *t) {
         /* Update some client members since using them directly in IO thread
          * would have created contention with main thread. */
         if (c->io_last_ack_time / 1000 > c->repl_ack_time) {
-            c->repl_ack_time = c->io_last_ack_time;
+            c->repl_ack_time = c->io_last_ack_time / 1000;
         }
         if (c->io_lastinteraction != 0) {
             c->lastinteraction = c->io_lastinteraction;
