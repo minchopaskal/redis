@@ -81,7 +81,7 @@ start_server {overrides {save {}}} {
         resume_process [srv -1 pid]
 
         # Execute the failover
-        $node_0 failover to $node_1_host $node_1_port
+        assert_equal "OK" [$node_0 failover to $node_1_host $node_1_port]
 
         # Wait for failover to end
         wait_for_condition 50 100 {

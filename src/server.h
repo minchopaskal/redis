@@ -1472,7 +1472,8 @@ typedef struct client {
                                 * it updates its `lastinteraction` value from
                                 * this. */
     time_t obuf_soft_limit_reached_time;
-    mstime_t last_cron_check_time;    /* The last client check time in cron */
+    mstime_t io_last_client_cron_check_time;    /* The last client cron check time in IO thread */
+    mstime_t io_last_repl_cron_check_time;    /* The last replication cron check time in IO thread */
     int authenticated;      /* Needed when the default user requires auth. */
     int replstate;          /* Replication state if this is a slave. */
     int repl_start_cmd_stream_on_ack; /* Install slave write handler on first ACK. */
@@ -3360,7 +3361,7 @@ void replDataBufReadFromConn(connection *conn, replDataBuf *buf, void (*error_ha
 int replDataBufStreamToDb(replDataBuf *buf, replDataBufToDbCtx *ctx);
 int slaveFromIOThreadNeedsAckRead(client *slave);
 void putSlavesNeedingAckReadInPendingClientsToIOThreads(void);
-void runConnectedMasterClientReplicationCron(void);
+int runConnectedMasterClientReplicationCron(void);
 
 /* Generic persistence functions */
 void startLoadingFile(size_t size, char* filename, int rdbflags);
