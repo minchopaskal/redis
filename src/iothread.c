@@ -567,7 +567,7 @@ int processClientsFromIOThread(IOThread *t) {
             }
         }
 
-        /* Check if we need to run replication fron for master client.
+        /* Check if we need to run replication from for master client.
          * Run cron more frequently during failover - see replicationCron */
         int repl_cron_freq = 1000;
         if (server.failover_state != NO_FAILOVER)
