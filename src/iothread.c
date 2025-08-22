@@ -594,11 +594,15 @@ int processClientsFromIOThread(IOThread *t) {
             }
         }
 
-        if (c->io_last_repl_cron_check_time + 1000 <= server.mstime ||
-            c->io_flags & CLIENT_IO_PENDING_REPL_CRON)
+        /* Check if we need to run replication fron for master client.
+         * Run cron more frequently during failover - see replicationCron */
+        int repl_cron_freq = 1000;
+        if (server.failover_state != NO_FAILOVER)
+            repl_cron_freq = 100;
+        if (c->flags & CLIENT_MASTER &&
+            c->io_last_repl_cron_check_time + repl_cron_freq <= server.mstime)
         {
             c->io_last_repl_cron_check_time = server.mstime;
-            c->io_flags &= ~CLIENT_IO_PENDING_REPL_CRON;
             if (runConnectedMasterClientReplicationCron()) continue;
         }
 
@@ -841,10 +845,9 @@ void IOThreadReplicationCron(IOThread *t) {
         serverAssert(t->master->tid == t->id &&
                      t->master->running_tid == t->master->tid);
 
-    /* Let main thread handle sending ACK to master.
-     * For more info on ACK see replicationCron */
+    /* Send to main thread so that processClientsFromIOThread can check if it
+     * needs to call runConnectedMasterClientReplicationCron */
     if (t->master && !(t->master->flags & CLIENT_PRE_PSYNC)) {
-        t->master->io_flags |= CLIENT_IO_PENDING_REPL_CRON;
         enqueuePendingClientsToMainThread(t->master, 0);
     }
 }
@@ -857,15 +860,7 @@ int IOThreadCron(struct aeEventLoop *eventLoop, long long id, void *clientData) 
     UNUSED(id);
     IOThread *t = clientData;
 
-    /* Run cron tasks for the clients in the IO thread.
-     * Note that we run replication cron before clientsCron as it may send
-     * the master client in main with PENDING_REPL_CRON flag.
-     * If we called clientsCron first and master is the only client we'll never
-     * give chance to replicationCron to process it.
-     * Adding more cron functions here will necessitate a more reobust logic (f.e
-     * cron functions add clients to a list that is enqueued to main thread at
-     * the end of IOThreadCron - that will remove dependancies between cron
-     * function call order). */
+    /* Run cron tasks for the clients in the IO thread. */
     run_with_period_io(t, 1000) IOThreadReplicationCron(t);
 
     IOThreadClientsCron(t);
