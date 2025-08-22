@@ -580,7 +580,7 @@ jobs:
       !contains(github.event.inputs.skipjobs, 'sanitizer')
     timeout-minutes: 14400
     env:
-      CC: clang # MSan work only with clang
+      CC: clang # MSan works only with clang
     steps:
       - name: prep
         if: github.event_name == 'workflow_dispatch'
@@ -664,6 +664,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
       !contains(github.event.inputs.skipjobs, 'sanitizer')
     timeout-minutes: 14400
+    continue-on-error: true # let gcc and clang both run until the end even if one of them fails
     strategy:
       matrix:
         compiler: [ gcc, clang ]
