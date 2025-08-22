@@ -119,7 +119,9 @@ void putSlavesNeedingAckReadInPendingClientsToIOThreads(void) {
     }
 }
 
-void runConnectedMasterClientReplicationCron(void) {
+/* Run some cron tasks for a connected master client. Return 1 when the client
+ * is freed, 0 otherwise. */
+int runConnectedMasterClientReplicationCron(void) {
     /* Timed out master when we are an already connected slave? */
     if (server.masterhost && server.repl_state == REPL_STATE_CONNECTED &&
         server.master->running_tid == IOTHREAD_MAIN_THREAD_ID &&
@@ -127,6 +129,7 @@ void runConnectedMasterClientReplicationCron(void) {
     {
         serverLog(LL_WARNING,"MASTER timeout: no data nor PING received...");
         freeClient(server.master);
+        return 1;
     }
 
     /* Send ACK to master from time to time.
@@ -136,6 +139,8 @@ void runConnectedMasterClientReplicationCron(void) {
         server.master->running_tid == IOTHREAD_MAIN_THREAD_ID &&
         !(server.master->flags & CLIENT_PRE_PSYNC))
         replicationSendAck();
+
+    return 0;
 }
 
 static ConnectionType *connTypeOfReplication(void) {

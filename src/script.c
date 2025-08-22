@@ -38,7 +38,17 @@ static void exitScriptTimedoutMode(scriptRunCtx *run_ctx) {
     run_ctx->flags &= ~SCRIPT_TIMEDOUT;
     blockingOperationEnds();
     /* if we are a replica and we have an active master, set it for continue processing */
-    if (server.masterhost && server.master) queueClientForReprocessing(server.master);
+    if (server.masterhost && server.master) {
+        int paused = 0;
+        if (server.master->running_tid != IOTHREAD_MAIN_THREAD_ID) {
+            paused = 1;
+            pauseIOThread(server.master->tid);
+        }
+
+        queueClientForReprocessing(server.master);
+
+        if (paused) resumeIOThread(server.master->tid);
+    }
 }
 
 static void enterScriptTimedoutMode(scriptRunCtx *run_ctx) {
