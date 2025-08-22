@@ -550,11 +550,11 @@ int processClientsFromIOThread(IOThread *t) {
             incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
         }
 
-        /* Run cron task for the client per second or it is marked as pending cron. */
-        if (c->last_cron_check_time + 1000 <= server.mstime ||
+        /* Run client cron task for the client per second or it is marked as pending cron. */
+        if (c->io_last_client_cron_check_time + 1000 <= server.mstime ||
             c->io_flags & CLIENT_IO_PENDING_CRON)
         {
-            c->last_cron_check_time = server.mstime;
+            c->io_last_client_cron_check_time = server.mstime;
             if (clientsCronRunClient(c)) continue;
         } else {
             /* Update the client in the mem usage if clientsCronRunClient is not
@@ -571,9 +571,12 @@ int processClientsFromIOThread(IOThread *t) {
             }
         }
 
-        if (c->io_flags & CLIENT_IO_PENDING_REPL_CRON) {
+        if (c->io_last_repl_cron_check_time + 1000 <= server.mstime ||
+            c->io_flags & CLIENT_IO_PENDING_REPL_CRON)
+        {
+            c->io_last_repl_cron_check_time = server.mstime;
             c->io_flags &= ~CLIENT_IO_PENDING_REPL_CRON;
-            runConnectedMasterClientReplicationCron();
+            if (runConnectedMasterClientReplicationCron()) continue;
         }
 
         /* We may have pending replies if io thread may not finish writing
@@ -811,13 +814,13 @@ void IOThreadClientsCron(IOThread *t) {
 }
 
 void IOThreadReplicationCron(IOThread *t) {
-    if (t->master) serverAssert(t->master->tid == t->id);
+    if (t->master)
+        serverAssert(t->master->tid == t->id &&
+                     t->master->running_tid == t->master->tid);
 
     /* Let main thread handle sending ACK to master.
      * For more info on ACK see replicationCron */
-    if (t->master && t->master->running_tid == t->id &&
-        !(t->master->flags & CLIENT_PRE_PSYNC))
-    {
+    if (t->master && !(t->master->flags & CLIENT_PRE_PSYNC)) {
         t->master->io_flags |= CLIENT_IO_PENDING_REPL_CRON;
         enqueuePendingClientsToMainThread(t->master, 0);
     }
@@ -831,10 +834,18 @@ int IOThreadCron(struct aeEventLoop *eventLoop, long long id, void *clientData) 
     UNUSED(id);
     IOThread *t = clientData;
 
-    /* Run cron tasks for the clients in the IO thread. */
-    IOThreadClientsCron(t);
-
+    /* Run cron tasks for the clients in the IO thread.
+     * Note that we run replication cron before clientsCron as it may send
+     * the master client in main with PENDING_REPL_CRON flag.
+     * If we called clientsCron first and master is the only client we'll never
+     * give chance to replicationCron to process it.
+     * Adding more cron functions here will necessitate a more reobust logic (f.e
+     * cron functions add clients to a list that is enqueued to main thread at
+     * the end of IOThreadCron - that will remove dependancies between cron
+     * function call order). */
     run_with_period_io(t, 1000) IOThreadReplicationCron(t);
+
+    IOThreadClientsCron(t);
 
     t->cronloops++;
 
