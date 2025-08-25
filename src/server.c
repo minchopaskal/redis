@@ -1937,7 +1937,7 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
      * read the ACK message. Otherwise, they will be disconnected after
      * repl_timeout. The below function only checks for time passed since last
      * ACK read. Replica clients that send REPLCONF GETACK are immediately
-     * put in the pendingClientsToIOThreads queue inside sendGetAckToReplicas */
+     * put in the pendingClientsToIOThreads queue inside sendGetackToReplicas */
     putSlavesNeedingAckReadInPendingClientsToIOThreads();
 
     /* Let io thread to handle its pending clients. */
@@ -6321,10 +6321,11 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
                     server.repl_down_since ?
                     (intmax_t)(server.unixtime-server.repl_down_since) : -1);
             } else {
-                info = sdscatprintf(info,
+                info = sdscatprintf(info, FMTARGS(
                     "master_link_up_since_seconds:%jd\r\n",
                     server.repl_up_since ? /* defensive code, should never be 0 when connected */
-                    (intmax_t)(server.unixtime-server.repl_up_since) : -1);
+                    (intmax_t)(server.unixtime-server.repl_up_since) : -1,
+                    "master_client_io_thread:%d\r\n", server.master->tid));
             }
             info = sdscatprintf(info, "total_disconnect_time_sec:%jd\r\n", (intmax_t)server.repl_total_disconnect_time+(current_disconnect_time));
 
@@ -6379,9 +6380,9 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
 
                 info = sdscatprintf(info,
                     "slave%d:ip=%s,port=%d,state=%s,"
-                    "offset=%lld,lag=%ld\r\n",
+                    "offset=%lld,lag=%ld,io-thread=%d\r\n",
                     slaveid,slaveip,slave->slave_listening_port,state,
-                    slave->repl_ack_off, lag);
+                    slave->repl_ack_off, lag, slave->tid);
                 slaveid++;
             }
         }

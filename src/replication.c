@@ -97,10 +97,10 @@ unsigned long replicationLogicalReplicaCount(void) {
 }
 
 int slaveFromIOThreadNeedsAckRead(client *slave) {
-  serverAssert(slave->tid != IOTHREAD_MAIN_THREAD_ID);
+    serverAssert(slave->tid != IOTHREAD_MAIN_THREAD_ID);
 
-  time_t lag = mstime() - slave->io_last_ack_time;
-  return lag >= 1000;
+    mstime_t ms_since_last_ack = mstime() - slave->io_last_ack_time;
+    return ms_since_last_ack >= 500;
 }
 
 void putSlavesNeedingAckReadInPendingClientsToIOThreads(void) {

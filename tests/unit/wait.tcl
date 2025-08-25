@@ -54,7 +54,7 @@ start_server {} {
         $master incr foo
         assert {[$master wait 1 1000] == 0}
         resume_process $slave_pid
-        assert {[$master wait 1 3000] == 1}
+        assert {[$master wait 1 1000] == 1}
     }
 
     test {WAIT implicitly blocks on client pause since ACKs aren't sent} {
@@ -66,7 +66,7 @@ start_server {} {
         assert {[$master wait 1 1000] == 0}
         $master client unpause
         resume_process $slave_pid
-        assert {[$master wait 1 3000] == 1}
+        assert {[$master wait 1 1000] == 1}
     }
 
     test {WAIT replica multiple clients unblock - reuse last result} {
