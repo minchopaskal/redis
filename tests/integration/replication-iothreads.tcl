@@ -207,7 +207,11 @@ start_server {overrides {io-threads 4 save ""}} {
         }
 
         $master set post_recovery_test recovery_value
-        assert_equal [$slave get post_recovery_test] "recovery_value"
+        wait_for_condition 10 100 {
+          [$slave get post_recovery_test] eq "recovery_value"
+        } else {
+          fail "Slave didn't receive 'set post_recovery_test' command"
+        }
 
         # Check thread assignments after recovery
         wait_for_condition 100 100 {
