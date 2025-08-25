@@ -847,7 +847,7 @@ int IOThreadCron(struct aeEventLoop *eventLoop, long long id, void *clientData) 
     IOThread *t = clientData;
 
     /* Run cron tasks for the clients in the IO thread. */
-    run_with_period_io(t, 1000) IOThreadReplicationCron(t);
+    run_with_period_io(t, 500) IOThreadReplicationCron(t);
 
     IOThreadClientsCron(t);
 
