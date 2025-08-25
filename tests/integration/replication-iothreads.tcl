@@ -119,9 +119,13 @@ start_server {overrides {io-threads 4 save ""}} {
         assert_equal $acks 1
 
         # Verify data reached slave
-        assert_equal [$slave get wait_test_key1] "value1"
-        assert_equal [$slave get wait_test_key2] "value2"
-        assert_equal [$slave get wait_counter] "1"
+        wait_for_condition 10 100 {
+            [$slave get wait_test_key1] eq "value1" &&
+            [$slave get wait_test_key2] eq "value2" &&
+            [$slave get wait_counter] eq "1"
+        } else {
+            fail "commands not propagated to IO thread slave in time"
+        }
     }
 
     test {Replication data integrity with IO threads} {
@@ -169,7 +173,11 @@ start_server {overrides {io-threads 4 save ""}} {
         assert_equal $acks 1
 
         # Verify data reached slave after resume
-        assert_equal [$slave get timeout_test_key] "timeout_value"
+        wait_for_condition 10 100 {
+            [$slave get timeout_test_key] eq "timeout_value"
+        } else {
+            fail "commands not propagated to IO thread slave in time"
+        }
     }
 
     test {Network interruption recovery with IO threads} {
@@ -247,7 +255,11 @@ start_server {overrides {io-threads 4 save ""}} {
         }
 
         # Verify final state
-        assert_equal [$slave get cycle_2_key_19] "value_19"
+        wait_for_condition 10 100 {
+            [$slave get cycle_2_key_19] eq "value_19"
+        } else {
+            fail "last command not propagated to IO thread slave in time"
+        }
     }
 
     test {INFO replication shows correct thread information} {
@@ -343,9 +355,13 @@ start_server {overrides {io-threads 4 save ""}} {
         assert_range $acks 1 3
 
         # Verify all slaves have the data
-        assert_equal [$slave1 get wait_multi_test3] "value3"
-        assert_equal [$slave2 get wait_multi_test3] "value3"
-        assert_equal [$slave3 get wait_multi_test3] "value3"
+        wait_for_condition 10 100 {
+            [$slave1 get wait_multi_test3] eq "value3" &&
+            [$slave2 get wait_multi_test3] eq "value3" &&
+            [$slave3 get wait_multi_test3] eq "value3"
+        } else {
+            fail "commands not propagated to io thread slaves in time"
+        }
     }
 }
 }
