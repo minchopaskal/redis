@@ -2565,6 +2565,15 @@ int processInlineBuffer(client *c, pendingCommand *pcmd) {
         if (c->running_tid == IOTHREAD_MAIN_THREAD_ID)
             c->repl_ack_time = server.unixtime;
         else
+            /* If this is a replica client running in an IO thread we cache the
+             * last ack time in a different member variable for 2 reasons:
+             *   - to avoid contention with main thread. f.e see
+             *     refreshGoodSlavesCount()
+             *   - we need a higher granularity for the check if the replica
+             *     client needs to be send from main to IO thread for ACK read.
+             *     see slaveFromIOThreadNeedsAckRead()
+             * Note c->repl_ack_time will still be updated in
+             * processClientsFromIOThread with the value of c->io_last_ack_time */
             c->io_last_ack_time = mstime();
     }
 
@@ -3354,16 +3363,20 @@ void readQueryFromClient(connection *conn) {
     sdsIncrLen(c->querybuf,nread);
     qblen = sdslen(c->querybuf);
     if (c->querybuf_peak < qblen) c->querybuf_peak = qblen;
-    
-    if (c->running_tid == IOTHREAD_MAIN_THREAD_ID)
+
+    if (!(c->flags & CLIENT_MASTER) || c->running_tid == IOTHREAD_MAIN_THREAD_ID)
         c->lastinteraction = server.unixtime;
     else
+        /* Avoid contention with genRedisInfoString as it can access master
+         * client's data. If this is a master running in IO thread the value of
+         * c->lastinteraction will be updated during processClientsFromIOThread */
         c->io_lastinteraction = server.unixtime;
 
     if (c->flags & CLIENT_MASTER) {
         if (c->running_tid == IOTHREAD_MAIN_THREAD_ID)
             c->read_reploff += nread;
         else
+            /* See comment above c->io_lastinteraction */
             c->io_acc_read_reploff += nread;
         atomicIncr(server.stat_net_repl_input_bytes, nread);
     } else {
