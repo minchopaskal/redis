@@ -162,6 +162,10 @@ void fetchClientFromIOThread(client *c) {
     connUnbindEventLoop(c->conn);
     /* Now main thread can process it. */
     c->running_tid = IOTHREAD_MAIN_THREAD_ID;
+    if (c->flags & CLIENT_MASTER) {
+        IOThread *t = &IOThreads[c->tid];
+        t->master = NULL;
+    }
     resumeIOThread(c->tid);
     freeClientDeferredObjects(c, 1); /* Free deferred objects. */
     freeClientIODeferredObjects(c, 1); /* Free IO deferred objects. */
