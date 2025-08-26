@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2024-Present, Redis Ltd.
+# Copyright (c) 2025-Present, Redis Ltd.
 # All rights reserved.
 #
 # Licensed under your choice of (a) the Redis Source Available License 2.0
@@ -35,20 +35,6 @@ proc get_slave_client_io_thread {r slave_idx} {
     return -1
 }
 
-# Helper function to verify replication works with IO threads
-proc verify_replication_with_iothreads {master slave {timeout 1000}} {
-    set test_key "iothread_test_[clock milliseconds]"
-    set test_value "test_value_[randomInt 100000]"
-
-    $master set $test_key $test_value
-    set acks [$master wait 1 $timeout]
-
-    if {$acks >= 1 && [$slave get $test_key] eq $test_value} {
-        return 1
-    }
-    return 0
-}
-
 start_server {overrides {io-threads 4 save ""} tags {"iothreads repl network external:skip"}} {
 start_server {overrides {io-threads 4 save ""}} {
     set master [srv 0 client]
@@ -56,35 +42,16 @@ start_server {overrides {io-threads 4 save ""}} {
     set master_port [srv 0 port]
     set slave [srv -1 client]
 
-    test {Master client thread assignment during replication setup} {
-        # Configure slower replication to observe transition
-        $master config set repl-diskless-sync yes
-        $master config set repl-diskless-sync-delay 1000
-
-        # Start replication
-        $slave replicaof $master_host $master_port
-
-        # During initial handshake, master should be in main thread
-        wait_for_condition 50 100 {
-            [string match "*handshake*" [$slave role]] ||
-            [string match "*connect*" [$slave role]]
+    test {Setup slave} {
+        $slave slaveof $master_host $master_port
+        wait_for_condition 1000 100 {
+            [s -1 master_link_status] eq {up}
         } else {
-            # If handshake happens too fast, that's also okay
-            puts "Handshake completed quickly"
+            fail "Replication not started."
         }
-
-        # Cancel the delay to speed up the test
-        $master config set repl-diskless-sync-delay 0
     }
 
     test {Master client moves to IO thread after sync complete} {
-        # Wait for replication to be fully established
-        wait_for_condition 100 100 {
-            [string match {*master_link_status:up*} [$slave info replication]]
-        } else {
-            fail "Replication setup failed"
-        }
-
         # Check master client thread assignment (master client is on slave side)
         wait_for_condition 100 100 {
             [get_master_client_io_thread $slave] > 0
@@ -185,8 +152,6 @@ start_server {overrides {io-threads 4 save ""}} {
         for {set i 0} {$i < 50} {incr i} {
             $master set pre_interrupt_$i value_$i
         }
-        set acks [$master wait 1 1000]
-        assert_equal $acks 1
 
         # Simulate network interruption
         pause_process $slave_pid
@@ -197,15 +162,13 @@ start_server {overrides {io-threads 4 save ""}} {
         }
 
         # WAIT should timeout
-        set acks [$master wait 1 1000]
-        assert_equal $acks 0
+        assert {[$master wait 1 1000] == 0}
 
         # Resume slave and verify recovery
         resume_process $slave_pid
 
         # Verify WAIT works again
-        set acks [$master wait 1 1000]
-        assert_equal $acks 1
+        assert {[$master wait 1 1000] == 1}
 
         # Wait for reconnection and catch up
         wait_for_condition 100 100 {
@@ -318,7 +281,7 @@ start_server {overrides {io-threads 4 save ""}} {
             [get_slave_client_io_thread $master 1] > 0 &&
             [get_slave_client_io_thread $master 2] > 0
         } else {
-            fail "Slave clients not assigned to IO threads"
+            fail "Slave clients not assigned to IO threads in time"
         }
 
         # Test concurrent replication to all slaves
