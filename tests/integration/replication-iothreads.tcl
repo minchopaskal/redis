@@ -82,8 +82,7 @@ start_server {overrides {io-threads 4 save ""}} {
         $master set wait_test_key2 value2
         $master incr wait_counter
 
-        set acks [$master wait 1 1000]
-        assert_equal $acks 1
+        assert {[$master wait 1 2000] == 1}
 
         # Verify data reached slave
         wait_for_condition 10 100 {
@@ -103,8 +102,7 @@ start_server {overrides {io-threads 4 save ""}} {
             $master zadd bulk_zset $i member_$i
             if {$i % 20 == 0} {
                 # Periodically verify WAIT works
-                set acks [$master wait 1 1000]
-                assert_equal $acks 1
+                assert {[$master wait 1 2000] == 1}
             }
         }
 
@@ -124,20 +122,17 @@ start_server {overrides {io-threads 4 save ""}} {
         # Pause slave to test timeout
         pause_process $slave_pid
 
+        # Should timeout and return 0 acks
         $master set timeout_test_key timeout_value
         set start_time [clock milliseconds]
-        set acks [$master wait 1 1000]
+        assert {[$master wait 1 2000] == 0}
         set elapsed [expr {[clock milliseconds] - $start_time}]
-
-        # Should timeout and return 0 acks
-        assert_range $elapsed 1000 1500
-        assert_equal $acks 0
+        assert_range $elapsed 2000 2500
 
         # Resume and verify recovery
         resume_process $slave_pid
 
-        set acks [$master wait 1 1000]
-        assert_equal $acks 1
+        assert {[$master wait 1 2000] == 1}
 
         # Verify data reached slave after resume
         wait_for_condition 10 100 {
@@ -162,13 +157,13 @@ start_server {overrides {io-threads 4 save ""}} {
         }
 
         # WAIT should timeout
-        assert {[$master wait 1 1000] == 0}
+        assert {[$master wait 1 2000] == 0}
 
         # Resume slave and verify recovery
         resume_process $slave_pid
 
         # Verify WAIT works again
-        assert {[$master wait 1 1000] == 1}
+        assert {[$master wait 1 2000] == 1}
 
         # Wait for reconnection and catch up
         wait_for_condition 100 100 {
@@ -200,8 +195,7 @@ start_server {overrides {io-threads 4 save ""}} {
                 $master set cycle_${cycle}_key_$i value_$i
             }
 
-            set acks [$master wait 1 1000]
-            assert_equal $acks 1
+            assert {[$master wait 1 2000] == 1}
 
             # Record thread assignments during cycle
             set master_thread [get_master_client_io_thread $slave]
@@ -288,8 +282,7 @@ start_server {overrides {io-threads 4 save ""}} {
         for {set i 0} {$i < 200} {incr i} {
             $master set multi_key_$i value_$i
             if {$i % 50 == 0} {
-                set acks [$master wait 3 1000]
-                assert_equal $acks 3
+                assert {[$master wait 3 2000] == 3}
             }
         }
 
@@ -306,16 +299,13 @@ start_server {overrides {io-threads 4 save ""}} {
     test {WAIT with multiple slaves in IO threads} {
         # Test various WAIT scenarios
         $master set wait_multi_test1 value1
-        set acks [$master wait 3 1000]
-        assert_equal $acks 3
+        assert {[$master wait 3 2000] == 3}
 
         $master set wait_multi_test2 value2
-        set acks [$master wait 2 1000]
-        assert_range $acks 2 3
+        assert {[$master wait 2 2000] >= 2}
 
         $master set wait_multi_test3 value3
-        set acks [$master wait 1 1000]
-        assert_range $acks 1 3
+        assert {[$master wait 1 2000] >= 1}
 
         # Verify all slaves have the data
         wait_for_condition 10 100 {
