@@ -4901,6 +4901,14 @@ int finishShutdown(void) {
         /* Don't count migration destination replicas. */
         if (replica->flags & CLIENT_ASM_MIGRATING) continue;
         num_replicas++;
+
+        /* Fetch the replica clients that are currently running in IO thread.
+         * If shutdown fails, they will be returned back to IO thread in
+         * handleClientsWithPendingWrites after the repl backlog is fed with new
+         * data. */
+        if (replica->running_tid != IOTHREAD_MAIN_THREAD_ID)
+            fetchClientFromIOThread(replica);
+
         if (replica->repl_ack_off != server.master_repl_offset) {
             num_lagging_replicas++;
             long lag = replica->replstate == SLAVE_STATE_ONLINE ?

@@ -2816,8 +2816,6 @@ int handleClientsWithPendingWrites(void) {
          * in feedReplicationBuffer.
          * See replBufBlock for more info. */
         if (c->flags & CLIENT_SLAVE && c->tid != IOTHREAD_MAIN_THREAD_ID) {
-            c->ref_last_node = listLast(server.repl_buffer_blocks);
-            c->ref_last_node_used = ((replBufBlock*)listNodeValue(c->ref_last_node))->used;
             putInPendingClienstForIOThreads(c);
             continue;
         }
@@ -3809,7 +3807,7 @@ void readQueryFromClient(connection *conn) {
         if (c->running_tid == IOTHREAD_MAIN_THREAD_ID)
             c->read_reploff += nread;
         else
-            /* See comment above c->io_lastinteraction */
+            /* Same comment as for c->io_lastinteraction */
             c->io_acc_read_reploff += nread;
         atomicIncr(server.stat_net_repl_input_bytes, nread);
     } else {
