@@ -46,31 +46,27 @@ static inline void sendPendingClientsToMainThreadIfNeeded(IOThread *t, int check
     }
 }
 
-/* When moving a master client from IO thread to main thread we need to update
+/* When moving a client from IO thread to main thread we may need to update
  * some of its variables as they are duplicated to avoid contention with main
- * thread. Also we nullify the cached pointer to the client in the IOThread so
- * that it doesn't try to access it during its IOThreadRepllicationCron.
- * Note that this function expects to be called from the thread the client is in
- * OR that thread must be paused. */
-void updateMasterClientDataFromIOThread(client *c) {
-    serverAssert(c->flags & CLIENT_MASTER && c->tid != IOTHREAD_MAIN_THREAD_ID);
+ * thread.
+ * For now this is valid only for master or slave clients. */
+void updateClientDataFromIOThread(client *c) {
+    serverAssert(c->tid != IOTHREAD_MAIN_THREAD_ID &&
+                 c->running_tid == IOTHREAD_MAIN_THREAD_ID);
 
     if (c->io_last_ack_time / 1000 > c->repl_ack_time) {
+        serverAssert(c->flags & CLIENT_SLAVE);
         c->repl_ack_time = c->io_last_ack_time / 1000;
     }
     if (c->io_lastinteraction != 0) {
+        serverAssert(c->flags & CLIENT_MASTER);
         c->lastinteraction = c->io_lastinteraction;
         c->io_lastinteraction = 0;
     }
     if (c->io_acc_read_reploff != 0) {
+        serverAssert(c->flags & CLIENT_MASTER);
         c->read_reploff += c->io_acc_read_reploff;
         c->io_acc_read_reploff = 0;
-    }
-
-    IOThread *t = &IOThreads[c->tid];
-    if (t->master != NULL) {
-        serverAssert(t->master == c);
-        t->master = NULL;
     }
 }
 
@@ -92,7 +88,10 @@ void enqueuePendingClientsToMainThread(client *c, int unbind) {
         /* Disable read and write to avoid race when main thread processes. */
         c->io_flags &= ~(CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED);
 
-        if (c->flags & CLIENT_MASTER) updateMasterClientDataFromIOThread(c);
+        if (c->flags & CLIENT_MASTER) {
+            serverAssert(t->master == NULL || t->master == c);
+            t->master = NULL;
+        }
 
         /* Remove the client from IO thread, add it to main thread's pending list. */
         listUnlinkNode(t->clients, c->io_thread_client_list_node);
@@ -102,9 +101,16 @@ void enqueuePendingClientsToMainThread(client *c, int unbind) {
 }
 
 void putInPendingClienstForIOThreads(client *c) {
+    serverAssert(c->tid != IOTHREAD_MAIN_THREAD_ID &&
+                 c->running_tid == IOTHREAD_MAIN_THREAD_ID);
+
     if (c->flags & CLIENT_PENDING_WRITE) {
         c->flags &= ~CLIENT_PENDING_WRITE;
         listUnlinkNode(server.clients_pending_write, &c->clients_pending_write_node);
+    }
+    if (c->flags & CLIENT_SLAVE) {
+        c->ref_last_node = listLast(server.repl_buffer_blocks);
+        c->ref_last_node_used = ((replBufBlock*)listNodeValue(c->ref_last_node))->used;
     }
 
     c->running_tid = c->tid;
@@ -124,7 +130,11 @@ void unbindClientFromIOThreadEventLoop(client *c) {
     /* As calling in main thread, we should pause the io thread to make it safe. */
     pauseIOThread(c->tid);
     connUnbindEventLoop(c->conn);
-    if (c->flags & CLIENT_MASTER) updateMasterClientDataFromIOThread(c);
+    updateClientDataFromIOThread(c);
+    if (c->flags & CLIENT_MASTER) {
+        IOThread *t = &IOThreads[c->tid];
+        t->master = NULL;
+    }
     resumeIOThread(c->tid);
 }
 
@@ -181,7 +191,11 @@ void fetchClientFromIOThread(client *c) {
     connUnbindEventLoop(c->conn);
     /* Now main thread can process it. */
     c->running_tid = IOTHREAD_MAIN_THREAD_ID;
-    if (c->flags & CLIENT_MASTER) updateMasterClientDataFromIOThread(c);
+    updateClientDataFromIOThread(c);
+    if (c->flags & CLIENT_MASTER) {
+        IOThread *t = &IOThreads[c->tid];
+        t->master = NULL;
+    }
     resumeIOThread(c->tid);
     freeClientDeferredObjects(c, 1); /* Free deferred objects. */
 }
@@ -225,6 +239,12 @@ int isClientMustHandledByMainThread(client *c) {
     }
 
     if (c->flags & (CLIENT_MASTER | CLIENT_SLAVE)) return 1;
+
+    /* Keep replica clients in main thread during handshake phase.
+     * slave_listening_port is the first indication this client may be slave,
+     * see syncWithMaster and replconfCommand, note CLIENT_SLAVE flag is not
+     * yet raised. */
+    if (c->slave_listening_port != 0) return 1;
 
     return 0;
 }
@@ -539,6 +559,8 @@ int processClientsFromIOThread(IOThread *t) {
             freeClient(c);
             continue;
         }
+
+        updateClientDataFromIOThread(c);
 
         /* IO thread has send all the nodes from [ref_repl_start_node, ref_repl_buf_node)
          * Since it only keeps refcount to the start_node we need to decrement
