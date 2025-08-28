@@ -266,16 +266,25 @@ start_server {overrides {io-threads 4 save ""}} {
         wait_replica_online $master 1
         wait_replica_online $master 2
 
-        # Slave clients are connected - force a write so that they are assigned
-        # to IO threads.
-        assert_equal "OK" [$master set x x]
+        set iterations 5
+        while {$iterations > 0} {
+            # Slave clients are connected - force a write so that they are assigned
+            # to IO threads.
+            assert_equal "OK" [$master set x x]
 
-        wait_for_condition 100 100 {
-            [get_slave_client_io_thread $master 0] > 0 &&
-            [get_slave_client_io_thread $master 1] > 0 &&
-            [get_slave_client_io_thread $master 2] > 0
-        } else {
-            fail "Slave clients not assigned to IO threads in time"
+            wait_for_condition 10 100 {
+                [get_slave_client_io_thread $master 0] > 0 &&
+                [get_slave_client_io_thread $master 1] > 0 &&
+                [get_slave_client_io_thread $master 2] > 0
+            } else {
+                decr iterations
+                continue
+            }
+
+            break
+        }
+        if {$iterations eq 0} {
+            fail "Replicas failed to be assigned to IO threads in time"
         }
 
         # Test concurrent replication to all slaves
