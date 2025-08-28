@@ -277,7 +277,7 @@ start_server {overrides {io-threads 4 save ""}} {
                 [get_slave_client_io_thread $master 1] > 0 &&
                 [get_slave_client_io_thread $master 2] > 0
             } else {
-                decr iterations
+                incr iterations -1
                 continue
             }
 
