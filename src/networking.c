@@ -329,7 +329,7 @@ static inline int _prepareClientToWrite(client *c) {
      * since it checks how far they've read into the replication buffer and may
      * return true without them already being in the pending write queue. That
      * happens when main thread has written into the replication buffer while
-     * they were in IO thread. Later handleClientsWithPendingReplies will deal
+     * they were in IO thread. Later handleClientsWithPendingWrites will deal
      * with them. */
     int iothread_replica = c->flags & CLIENT_SLAVE && c->tid != IOTHREAD_MAIN_THREAD_ID;
     if ((iothread_replica || !clientHasPendingReplies(c)) &&

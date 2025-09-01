@@ -128,11 +128,15 @@ proc waitForBgrewriteaof r {
     }
 }
 
+proc is_tsan {} {
+    return [expr {[info exists ::tsan] && $::tsan}]
+}
+
 proc wait_for_sync r {
     set maxtries 50
     # tsan adds significant overhead to the execution time, so we increase the
     # wait time here JIC
-    if {$::tsan} {
+    if {[is_tsan]} {
         set maxtries 100
     }
 
@@ -146,7 +150,7 @@ proc wait_for_sync r {
 proc wait_replica_online {r {replica_id 0} {maxtries 50} {delay 100}} {
     # tsan adds significant overhead to the execution time, so we increase the
     # wait time here JIC
-    if {$::tsan} {
+    if {[is_tsan]} {
         set maxtries [expr {$maxtries * 2}]
     }
 
@@ -161,7 +165,7 @@ proc wait_for_ofs_sync {r1 r2} {
     set maxtries 50
     # tsan adds significant overhead to the execution time, so we increase the
     # wait time here JIC
-    if {$::tsan} {
+    if {[is_tsan]} {
         set maxtries 100
     }
     wait_for_condition $maxtries 100 {
