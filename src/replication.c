@@ -139,7 +139,9 @@ int runConnectedMasterClientReplicationCron(void) {
     if (server.masterhost && server.master &&
         server.master->running_tid == IOTHREAD_MAIN_THREAD_ID &&
         !(server.master->flags & CLIENT_PRE_PSYNC))
+    {
         replicationSendAck();
+    }
 
     return 0;
 }
