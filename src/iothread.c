@@ -12,7 +12,7 @@
 
 /* Replicates the behaviour of run_with_period used in serverCron but for
  * IO threads. IO threads use default Hz for now. */
-#define run_with_period_io(_t_, _ms_) if (((_ms_) <= 1000/CONFIG_DEFAULT_HZ) || !((_t_)->cronloops%((_ms_)/(1000/CONFIG_DEFAULT_HZ))))
+#define run_with_period_io(_t_, _ms_) _run_with_period((_t_)->cronloops, (_ms_), CONFIG_DEFAULT_HZ)
 
 /* IO threads. */
 static IOThread IOThreads[IO_THREADS_MAX_NUM];
@@ -220,13 +220,15 @@ int isClientMustHandledByMainThread(client *c) {
         return 1;
     }
 
-    /* If RDB replication is done it's save to move the master client to an IO thread */
+    /* If RDB replication is done it's safe to move the master client to an IO thread */
     if (c->flags & CLIENT_MASTER &&
         server.repl_state == REPL_STATE_CONNECTED &&
         server.repl_rdb_ch_state == REPL_RDB_CH_STATE_NONE)
+    {
         return 0;
+    }
 
-    /* If RDB replication is done for this slave it's save to move it to an IO thread
+    /* If RDB replication is done for this slave it's safe to move it to an IO thread
      * Note that we also check if the ref_repl_start_node is initialized in order
      * to prevent race conditions with main thread when it feeds the replication
      * buffer. */
