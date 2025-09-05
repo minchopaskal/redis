@@ -196,6 +196,18 @@ void fetchClientFromIOThread(client *c) {
         IOThread *t = &IOThreads[c->tid];
         t->master = NULL;
     }
+    // A slave client may be fetched to main thread in order to flush its buffer
+    // but in order to send any pending writes we need either a write handler or
+    // a CLIENT_PENDING_WRITE flag. See flushSlavesOutputBuffers
+    if (c->flags & CLIENT_SLAVE && clientHasPendingReplies(c)) {
+        c->flags |= CLIENT_PENDING_WRITE;
+        listLinkNodeHead(server.clients_pending_write, &c->clients_pending_write_node);
+    }
+
+    /* As client may be fetched to main thread but later returned (f.e
+     * flushSlavesOutputBuffers) make sure the flags are properly set. */
+    c->io_flags &= ~(CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED);
+
     resumeIOThread(c->tid);
     freeClientDeferredObjects(c, 1); /* Free deferred objects. */
 }
