@@ -4798,6 +4798,14 @@ void flushSlavesOutputBuffers(void) {
     listRewind(server.slaves,&li);
     while((ln = listNext(&li))) {
         client *slave = listNodeValue(ln);
+
+        /* Fetch the replica clients that are currently running in IO thread.
+         * If shutdown fails, they will be returned back to IO thread in
+         * handleClientsWithPendingWrites after the repl backlog is fed with new
+         * data. */
+        if (slave->running_tid != IOTHREAD_MAIN_THREAD_ID)
+            fetchClientFromIOThread(slave);
+
         int can_receive_writes = connHasWriteHandler(slave->conn) ||
                                  (slave->flags & CLIENT_PENDING_WRITE);
 
