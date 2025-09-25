@@ -11,7 +11,7 @@ on:
     inputs:
       skipjobs:
         description: 'jobs to skip (delete the ones you wanna keep, do not leave empty)'
-        default: 'valgrind,sanitizer,tls,freebsd,macos,alpine,32bit,iothreads,ubuntu,centos,malloc,specific,fortify,reply-schema,oldTC,defrag'
+        default: 'valgrind,sanitizer,tls,freebsd,macos,alpine,32bit,iothreads,ubuntu,centos,malloc,specific,fortify,reply-schema,oldTC,defrag,compression'
       skiptests:
         description: 'tests to skip (delete the ones you wanna keep, do not leave empty)'
         default: 'redis,modules,sentinel,cluster,unittest'
@@ -90,7 +90,7 @@ jobs:
         ref: ${{ env.GITHUB_HEAD_REF }}
     - name: make
       run: |
-        apt-get update && apt-get install -y make gcc g++
+        apt-get update && apt-get install -y make gcc g++ zlib1g-dev
         make CC=gcc REDIS_CFLAGS='-Werror -DREDIS_TEST -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3'
     - name: testprep
       run: sudo apt-get install -y tcl8.6 tclx procps
@@ -130,7 +130,7 @@ jobs:
     - name: make
       run: make MALLOC=libc REDIS_CFLAGS='-Werror'
     - name: testprep
-      run: sudo apt-get install tcl8.6 tclx
+      run: sudo apt-get install tcl8.6 tclx zlib1g-dev
     - name: test
       if: true && !contains(github.event.inputs.skiptests, 'redis')
       run: ./runtest --accurate --verbose --dump-logs ${{github.event.inputs.test_args}}
@@ -197,7 +197,8 @@ jobs:
         ref: ${{ env.GITHUB_HEAD_REF }}
     - name: make
       run: |
-        sudo apt-get update && sudo apt-get install libc6-dev-i386 g++ gcc-multilib g++-multilib
+        sudo dpkg --add-architecture i386
+        sudo apt-get update && sudo apt-get install libc6-dev-i386 g++ gcc-multilib g++-multilib zlib1g-dev:i386
         make 32bit REDIS_CFLAGS='-Werror -DREDIS_TEST'
         make -C tests/modules 32bit # the script below doesn't have an argument, we must build manually ahead of time
     - name: testprep
@@ -240,7 +241,7 @@ jobs:
         make BUILD_TLS=yes REDIS_CFLAGS='-Werror'
     - name: testprep
       run: |
-        sudo apt-get install tcl8.6 tclx tcl-tls
+        sudo apt-get install tcl8.6 tclx tcl-tls zlib1g-dev
         ./utils/gen-test-certs.sh
     - name: test
       if: true && !contains(github.event.inputs.skiptests, 'redis')
@@ -280,7 +281,7 @@ jobs:
         make BUILD_TLS=yes REDIS_CFLAGS='-Werror'
     - name: testprep
       run: |
-        sudo apt-get install tcl8.6 tclx tcl-tls
+        sudo apt-get install tcl8.6 tclx tcl-tls zlib1g-dev
         ./utils/gen-test-certs.sh
     - name: test
       if: true && !contains(github.event.inputs.skiptests, 'redis')
@@ -319,10 +320,42 @@ jobs:
       run: |
         make REDIS_CFLAGS='-Werror'
     - name: testprep
-      run: sudo apt-get install tcl8.6 tclx
+      run: sudo apt-get install tcl8.6 tclx zlib1g-dev
     - name: test
       if: true && !contains(github.event.inputs.skiptests, 'redis')
       run: ./runtest --config io-threads 4 --accurate --verbose --tags "network iothreads psync2 repl" --dump-logs ${{github.event.inputs.test_args}}
+    - name: cluster tests
+      if: true && !contains(github.event.inputs.skiptests, 'cluster')
+      run: ./runtest-cluster --config io-threads 4 ${{github.event.inputs.cluster_test_args}}
+
+  test-ubuntu-client-compression:
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'workflow_dispatch' || (github.event_name != 'workflow_dispatch' && github.repository == 'redis/redis')) &&
+      !contains(github.event.inputs.skipjobs, 'compression')
+    timeout-minutes: 14400
+    steps:
+    - name: prep
+      if: github.event_name == 'workflow_dispatch'
+      run: |
+        echo "GITHUB_REPOSITORY=${{github.event.inputs.use_repo}}" >> $GITHUB_ENV
+        echo "GITHUB_HEAD_REF=${{github.event.inputs.use_git_ref}}" >> $GITHUB_ENV
+        echo "skipjobs: ${{github.event.inputs.skipjobs}}"
+        echo "skiptests: ${{github.event.inputs.skiptests}}"
+        echo "test_args: ${{github.event.inputs.test_args}}"
+        echo "cluster_test_args: ${{github.event.inputs.cluster_test_args}}"
+    - uses: actions/checkout@v4
+      with:
+        repository: ${{ env.GITHUB_REPOSITORY }}
+        ref: ${{ env.GITHUB_HEAD_REF }}
+    - name: make
+      run: |
+        make REDIS_CFLAGS='-Werror'
+    - name: testprep
+      run: sudo apt-get install tcl8.6 tclx
+    - name: test
+      if: true && !contains(github.event.inputs.skiptests, 'redis')
+      run: ./runtest --config io-threads 4 --config repl-compression 6 --compression --accurate --verbose --tags "repl network iothreads psync2" --dump-logs ${{github.event.inputs.test_args}}
     - name: cluster tests
       if: true && !contains(github.event.inputs.skiptests, 'cluster')
       run: ./runtest-cluster --config io-threads 4 ${{github.event.inputs.cluster_test_args}}
@@ -430,7 +463,7 @@ jobs:
     - name: testprep
       run: |
         sudo apt-get update
-        sudo apt-get install tcl8.6 tclx valgrind g++ -y
+        sudo apt-get install tcl8.6 tclx valgrind g++ zlib1g-dev -y
     - name: test
       if: true && !contains(github.event.inputs.skiptests, 'redis')
       # Note that valgrind's overhead doesn't pair well with io-threads so we
@@ -463,7 +496,7 @@ jobs:
     - name: testprep
       run: |
         sudo apt-get update
-        sudo apt-get install tcl8.6 tclx valgrind -y
+        sudo apt-get install tcl8.6 tclx valgrind zlib1g-dev -y
     - name: unittest
       if: true && !contains(github.event.inputs.skiptests, 'unittest')
       run: |
@@ -495,7 +528,7 @@ jobs:
     - name: testprep
       run: |
         sudo apt-get update
-        sudo apt-get install tcl8.6 tclx valgrind g++ -y
+        sudo apt-get install tcl8.6 tclx valgrind g++ zlib1g-dev -y
     - name: test
       if: true && !contains(github.event.inputs.skiptests, 'redis')
       run: ./runtest --valgrind --tags -iothreads --no-latency --verbose --clients 1 --timeout 2400 --dump-logs ${{github.event.inputs.test_args}}
@@ -525,7 +558,7 @@ jobs:
     - name: testprep
       run: |
         sudo apt-get update
-        sudo apt-get install tcl8.6 tclx valgrind -y
+        sudo apt-get install tcl8.6 tclx valgrind zlib1g-dev -y
     - name: unittest
       if: true && !contains(github.event.inputs.skiptests, 'unittest')
       run: |
@@ -562,7 +595,7 @@ jobs:
       - name: testprep
         run: |
           sudo apt-get update
-          sudo apt-get install tcl8.6 tclx -y
+          sudo apt-get install tcl8.6 tclx zlib1g-dev -y
       - name: test
         if: true && !contains(github.event.inputs.skiptests, 'redis')
         run: ./runtest --accurate --verbose --dump-logs ${{github.event.inputs.test_args}}
@@ -603,7 +636,7 @@ jobs:
       - name: testprep
         run: |
           sudo apt-get update
-          sudo apt-get install tcl8.6 tclx -y
+          sudo apt-get install tcl8.6 tclx zlib1g-dev -y
       - name: test
         if: true && !contains(github.event.inputs.skiptests, 'redis')
         run: ./runtest --accurate --verbose --dump-logs ${{github.event.inputs.test_args}}
@@ -647,7 +680,7 @@ jobs:
       - name: testprep
         run: |
           sudo apt-get update
-          sudo apt-get install tcl8.6 tclx -y
+          sudo apt-get install tcl8.6 tclx zlib1g-dev -y
       - name: test
         if: true && !contains(github.event.inputs.skiptests, 'redis')
         run: ./runtest --accurate --verbose --dump-logs ${{github.event.inputs.test_args}}
@@ -694,7 +727,7 @@ jobs:
       - name: testprep
         run: |
           sudo apt-get update
-          sudo apt-get install tcl8.6 tclx -y
+          sudo apt-get install tcl8.6 tclx zlib1g-dev -y
       - name: test
         if: true && !contains(github.event.inputs.skiptests, 'redis')
         run: ./runtest --tsan --clients 1 --config io-threads 4 --accurate --verbose --dump-logs ${{github.event.inputs.test_args}}
@@ -728,7 +761,7 @@ jobs:
         ref: ${{ env.GITHUB_HEAD_REF }}
     - name: make
       run: |
-        dnf -y install which gcc make g++
+        dnf -y install which gcc make g++ zlib-devel
         make REDIS_CFLAGS='-Werror'
     - name: testprep
       run: |
@@ -767,7 +800,7 @@ jobs:
         ref: ${{ env.GITHUB_HEAD_REF }}
     - name: make
       run: |
-        dnf -y install which gcc make openssl-devel openssl g++
+        dnf -y install which gcc make openssl-devel openssl g++ zlib-devel
         make BUILD_TLS=module REDIS_CFLAGS='-Werror'
     - name: testprep
       run: |
@@ -810,7 +843,7 @@ jobs:
         ref: ${{ env.GITHUB_HEAD_REF }}
     - name: make
       run: |
-        dnf -y install which gcc make openssl-devel openssl g++
+        dnf -y install which gcc make openssl-devel openssl g++ zlib-devel
         make BUILD_TLS=module REDIS_CFLAGS='-Werror'
     - name: testprep
       run: |
@@ -990,7 +1023,7 @@ jobs:
         ref: ${{ env.GITHUB_HEAD_REF }}
     - name: make
       run: |
-          apk add build-base
+          apk add build-base zlib-dev
           make REDIS_CFLAGS='-Werror'
     - name: testprep
       run: apk add tcl procps tclx
@@ -1026,7 +1059,7 @@ jobs:
         ref: ${{ env.GITHUB_HEAD_REF }}
     - name: make
       run: |
-          apk add build-base
+          apk add build-base zlib-dev
           make REDIS_CFLAGS='-Werror' USE_JEMALLOC=no CFLAGS=-DUSE_MALLOC_USABLE_SIZE
     - name: testprep
       run: apk add tcl procps tclx
@@ -1063,7 +1096,7 @@ jobs:
     - name: make
       run: make REDIS_CFLAGS='-Werror -DLOG_REQ_RES'
     - name: testprep
-      run: sudo apt-get install tcl8.6 tclx
+      run: sudo apt-get install tcl8.6 tclx zlib1g-dev
     - name: test
       if: true && !contains(github.event.inputs.skiptests, 'redis')
       run: ./runtest --log-req-res --no-latency --dont-clean --force-resp3 --tags -slow --verbose --dump-logs  ${{github.event.inputs.test_args}}
@@ -1110,7 +1143,7 @@ jobs:
         apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 40976EAF437D05B5
         apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3B4FE6ACC0B21F32
         apt-get update
-        apt-get install -y make gcc-4.8 g++-4.8
+        apt-get install -y make gcc-4.8 g++-4.8 zlib1g-dev
         update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.8 100
         update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-4.8 100
         make CC=gcc REDIS_CFLAGS='-Werror'
@@ -1156,7 +1189,7 @@ jobs:
         apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 40976EAF437D05B5
         apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3B4FE6ACC0B21F32
         apt-get update
-        apt-get install -y make gcc-4.8 g++-4.8 openssl libssl-dev
+        apt-get install -y make gcc-4.8 g++-4.8 openssl libssl-dev zlib1g-dev
         update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.8 100
         update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-4.8 100
         make CC=gcc CXX=g++ BUILD_TLS=module REDIS_CFLAGS='-Werror'
@@ -1207,7 +1240,7 @@ jobs:
         apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 40976EAF437D05B5
         apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3B4FE6ACC0B21F32
         apt-get update
-        apt-get install -y make gcc-4.8 g++-4.8 openssl libssl-dev
+        apt-get install -y make gcc-4.8 g++-4.8 openssl libssl-dev zlib1g-dev
         update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.8 100
         update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-4.8 100
         make BUILD_TLS=module CC=gcc REDIS_CFLAGS='-Werror'
@@ -1251,7 +1284,7 @@ jobs:
     - name: make
       run: make SANITIZER=address DEBUG_DEFRAG=force REDIS_CFLAGS='-Werror'
     - name: testprep
-      run: sudo apt-get install tcl8.6 tclx
+      run: sudo apt-get install tcl8.6 tclx zlib1g-dev
     - name: test
       if: true && !contains(github.event.inputs.skiptests, 'redis')
       run: ./runtest --debug-defrag --verbose --clients 1 ${{github.event.inputs.test_args}}

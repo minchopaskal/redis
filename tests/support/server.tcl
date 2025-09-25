@@ -88,6 +88,7 @@ proc kill_server config {
                 tags {"leaks"} {
                     test "Check for memory leaks (pid $pid)" {
                         set output {0 leaks}
+                        set ::env(MallocStackLogging) 1
                         catch {exec leaks $pid} output option
                         # In a few tests we kill the server process, so leaks will not find it.
                         # It'll exits with exit code >1 on error, so we ignore these.

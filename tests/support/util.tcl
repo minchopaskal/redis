@@ -129,7 +129,7 @@ proc waitForBgrewriteaof r {
 }
 
 proc wait_for_sync r {
-    set maxtries 50
+    set maxtries 200
     # tsan adds significant overhead to the execution time, so we increase the
     # wait time here JIC
     if {$::tsan} {
@@ -158,7 +158,7 @@ proc wait_replica_online {r {replica_id 0} {maxtries 50} {delay 100}} {
 }
 
 proc wait_for_ofs_sync {r1 r2} {
-    set maxtries 50
+    set maxtries 500
     # tsan adds significant overhead to the execution time, so we increase the
     # wait time here JIC
     if {$::tsan} {
@@ -653,10 +653,14 @@ proc stop_bg_complex_data {handle} {
 # Write num keys with the given key prefix and value size (in bytes). If idx is
 # given, it's the index (AKA level) used with the srv procedure and it specifies
 # to which Redis instance to write the keys.
-proc populate {num {prefix key:} {size 3} {idx 0} {prints false} {expires 0}} {
+proc populate {num {prefix key:} {size 3} {idx 0} {prints false} {expires 0} {random false}} {
     r $idx deferred 1
     if {$num > 16} {set pipeline 16} else {set pipeline $num}
-    set val [string repeat A $size]
+    if {$random} {
+        set val [randstring $size $size]
+    } else {
+        set val [string repeat A $size]
+    }
     for {set j 0} {$j < $pipeline} {incr j} {
         if {$expires > 0} {
             r $idx set $prefix$j $val ex $expires

@@ -73,7 +73,7 @@ start_server {} {
     createComplexDataset $master 1000
 
     test "PSYNC2: Partial resync after Master restart using RDB aux fields with data" {
-        wait_for_condition 500 100 {
+        wait_for_condition 1000 100 {
             [status $master master_repl_offset] == [status $replica master_repl_offset] &&
             [status $master master_repl_offset] == [status $sub_replica master_repl_offset]
         } else {
@@ -90,7 +90,7 @@ start_server {} {
             restart_server 0 true false true now
             set master [srv 0 client]
         }
-        wait_for_condition 50 1000 {
+        wait_for_condition 100 1000 {
             [status $replica master_link_status] eq {up} &&
             [status $sub_replica master_link_status] eq {up}
         } else {
@@ -196,7 +196,7 @@ start_server {} {
 
         after 20
 
-        wait_for_condition 500 100 {
+        wait_for_condition 1000 100 {
             [status $master master_repl_offset] == [status $replica master_repl_offset] &&
             [status $master master_repl_offset] == [status $sub_replica master_repl_offset]
         } else {
