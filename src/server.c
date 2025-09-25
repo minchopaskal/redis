@@ -2908,6 +2908,8 @@ void initServer(void) {
     server.memory_tracking_per_slot = clusterSlotStatsEnabled();
     resetReplicationBuffer();
 
+    server.repl_master_compression_level = 0;
+
     /* Make sure the locale is set on startup based on the config file. */
     if (setlocale(LC_COLLATE,server.locale_collate) == NULL) {
         serverLog(LL_WARNING, "Failed to configure LOCALE for invalid locale name.");

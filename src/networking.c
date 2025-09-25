@@ -226,6 +226,7 @@ client *createClient(connection *conn) {
     c->sockname = NULL;
     c->client_list_node = NULL;
     c->io_thread_client_list_node = NULL;
+    listInitNode(&c->io_thread_compression_clients_node, c);
     c->postponed_list_node = NULL;
     c->client_tracking_redirection = 0;
     c->client_tracking_prefixes = NULL;
@@ -251,6 +252,8 @@ client *createClient(connection *conn) {
     c->commands_processed = 0;
     c->task = NULL;
     c->node_id = NULL;
+    c->compression_level = 0;
+    c->compression_state = NULL;
     atomicSet(c->pending_read, 0);
     return c;
 }
@@ -2099,7 +2102,8 @@ void freeClient(client *c) {
 
     /* Log link disconnection with slave */
     if (clientTypeIsSlave(c)) {
-        const char *type = c->flags & CLIENT_REPL_RDB_CHANNEL ? " (rdbchannel)" : "";
+        int is_rdb_ch = c->flags & CLIENT_REPL_RDB_CHANNEL;
+        const char *type = is_rdb_ch ? " (rdbchannel)" : "";
         serverLog(LL_NOTICE,"Connection with replica%s %s lost.", type,
             replicationGetSlaveName(c));
     }
@@ -2109,6 +2113,9 @@ void freeClient(client *c) {
         resetReusableQueryBuf(c);
     sdsfree(c->querybuf);
     c->querybuf = NULL;
+
+    /* Disable compression if present */
+    clientDestroyCompressionState(c);
 
     /* Deallocate structures used to block on blocking ops. */
     /* If there is any in-flight command, we don't record their duration. */
@@ -2614,10 +2621,22 @@ static inline int _writeToClientSlave(client *c, ssize_t *nwritten) {
         size_t pos = c->io_curr_repl_node == c->io_bound_repl_node ?
                      c->io_bound_block_pos : o->used;
         if (pos > c->io_curr_block_pos) {
-            *nwritten = connWrite(c->conn, o->buf+c->io_curr_block_pos,
-                                  pos-c->io_curr_block_pos);
-            if (*nwritten <= 0) return C_ERR;
-            c->io_curr_block_pos += *nwritten;
+            int consumed = 0;
+            if (c->compression_state && c->io_flags & CLIENT_IO_COMPRESSION_ENABLED) {
+                consumed = consumeAndTryWriteCompressed(c, o->buf + c->io_curr_block_pos,
+                                                        pos-c->io_curr_block_pos, nwritten);
+            } else {
+                consumed = connWrite(c->conn, o->buf+c->io_curr_block_pos,
+                                    pos-c->io_curr_block_pos);
+                *nwritten += consumed;
+            }
+            if (consumed <= 0) return C_ERR;
+
+            /* Advance the block position with consumed, because that's how much
+             * bytes were read from the repl buffer node. *nwritten stores how
+             * much bytes were written to the socket, which for the compression
+             * case would most certainly be a different number. */
+            c->io_curr_block_pos += consumed;
         }
         /* If we fully sent the object and there are more nodes to send, go to the next one. */
         if (c->io_curr_block_pos == pos && c->io_curr_repl_node != c->io_bound_repl_node) {
@@ -2636,6 +2655,7 @@ static inline int _writeToClientSlave(client *c, ssize_t *nwritten) {
         if (*nwritten <= 0) return C_ERR;
         c->ref_block_pos += *nwritten;
     }
+
     /* If we fully sent the object on head, go to the next one. */
     listNode *next = listNextNode(c->ref_repl_buf_node);
     if (next && c->ref_block_pos == o->used) {
@@ -3685,13 +3705,23 @@ void readQueryFromClient(connection *conn) {
     int nread, big_arg = 0;
     size_t qblen, readlen;
 
-    if (!(c->io_flags & CLIENT_IO_READ_ENABLED)) {
+    /* We have to read compressed data but compression for this client is
+     * currently disabled. This could happend f.e when client was just fetched
+     * to main thread. */
+    int pending_compression_read = c->compression_state &&
+                                   !(c->io_flags & CLIENT_IO_COMPRESSION_ENABLED);
+
+    if (!(c->io_flags & CLIENT_IO_READ_ENABLED) || pending_compression_read) {
         atomicSetWithSync(c->pending_read, 1);
         return;
     } else if (server.io_threads_num > 1) {
         atomicSetWithSync(c->pending_read, 0);
     }
 
+    if (!(c->io_flags & CLIENT_IO_READ_ENABLED)) return;
+    if (pending_compression_read) {
+        return;
+    }
     c->read_error = 0;
 
     /* Update the number of reads of io threads on server */
@@ -3763,19 +3793,46 @@ void readQueryFromClient(connection *conn) {
         /* Read as much as possible from the socket to save read(2) system calls. */
         readlen = sdsavail(c->querybuf);
     }
-    nread = connRead(c->conn, c->querybuf+qblen, readlen);
-    if (nread == -1) {
-        if (connGetState(conn) == CONN_STATE_CONNECTED) {
-            goto done;
-        } else {
-            c->read_error = CLIENT_READ_CONN_DISCONNECTED;
+
+    /* If we enabled client compression for replication make sure to decompress
+     * the data we've read before processing it.
+     * Note that the bytes read from socket will be <= decompressed data.
+     * Decompressed data will be written inside querybuf so in that case nread
+     * will still be the number of bytes written inside querybuf.
+     * network_read is how much we've read from socket and nread is the amount
+     * of decompressed data. For non-compression case these values are the same. */
+    int network_read = 0;
+    if (c->compression_state && c->flags & CLIENT_MASTER) {
+        nread = readFromSocketAndDecompress(c, c->querybuf + qblen, readlen,
+                                            &network_read);
+
+        /* Ignore network_read when only reading decompressed data as we never
+         * read from socket.
+         * We only care if we actually had any decompressed data to read */
+        if (c->io_flags & CLIENT_IO_READ_DECOMPRESSED_CRON) {
+            if (nread <= 0) {
+                goto done;
+            }
+        }
+    } else {
+        nread = connRead(c->conn, c->querybuf+qblen, readlen);
+        network_read = nread;
+    }
+
+    if (nread <= 0) {
+        if (network_read == -1) {
+            if (connGetState(conn) == CONN_STATE_CONNECTED) {
+                goto done;
+            } else {
+                c->read_error = CLIENT_READ_CONN_DISCONNECTED;
+                freeClientAsync(c);
+                goto done;
+            }
+        } else if (network_read == 0) {
+            c->read_error = CLIENT_READ_CONN_CLOSED;
             freeClientAsync(c);
             goto done;
         }
-    } else if (nread == 0) {
-        c->read_error = CLIENT_READ_CONN_CLOSED;
-        freeClientAsync(c);
-        goto done;
     }
 
     sdsIncrLen(c->querybuf,nread);
@@ -3799,9 +3856,9 @@ void readQueryFromClient(connection *conn) {
         }
         atomicIncr(server.stat_net_repl_input_bytes, nread);
     } else {
-        atomicIncr(server.stat_net_input_bytes, nread);
+        atomicIncr(server.stat_net_input_bytes, network_read);
     }
-    c->net_input_bytes += nread;
+    c->net_input_bytes += network_read;
 
     if (!(c->flags & CLIENT_MASTER) &&
         /* The commands cached in the MULTI/EXEC queue have not been executed yet,

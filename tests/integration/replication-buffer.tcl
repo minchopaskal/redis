@@ -76,7 +76,19 @@ start_server {} {
         # replication buffer, so all replicas output memory is not
         # more than double of replication buffer.
         set repl_buf_mem [s mem_total_replication_buffers]
-        set extra_mem [expr {[s used_memory]-$before_used-1024*1024}]
+        set repl_full_sync_buf_mem [s mem_replica_full_sync_buffer]
+
+        set compression_extra_mem 0
+        if {$::compression} {
+            # each replica holds 2 temp user-space buffers of size 16Kb related
+            # to compression also zlib allocates about 268Kb for compressing and
+            # each replica client allocates its own zlib structure so we add
+            # that to the calculation
+            set numreplicas 3
+            set compression_extra_mem [expr {(2 * 16 + 268) * 1024 * $numreplicas}]
+        }
+        set extra_mem [expr {[s used_memory] - $before_used - 1024*1024 - $compression_extra_mem}]
+
         if {$rdbchannel == "yes"} {
             # master's replication buffers should not grow
             assert {$extra_mem < 1024*1024}
@@ -172,7 +184,11 @@ start_server {} {
         }
         # Replication actual backlog grow more than backlog setting since
         # the slow replica2 kept replication buffer.
-        populate 20000 master 10000
+        if {$::compression} {
+            populate 2000 master 64000 0 false 0 true
+        } else {
+            populate 20000 master 10000
+        }
         assert {[s repl_backlog_histlen] > [expr 10000*10000]}
     }
 
