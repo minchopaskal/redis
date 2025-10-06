@@ -9,6 +9,7 @@
 
 #include "server.h"
 #include <math.h> /* isnan(), isinf() */
+#include "xxhash.h"
 
 /* Forward declarations */
 int getGenericCommand(client *c);
@@ -962,3 +963,31 @@ cleanup:
     return;
 }
 
+long long stringDigest(robj *o) {
+    serverAssert(o && o->type == OBJ_STRING);
+
+    XXH64_hash_t hash = 0;
+    if (sdsEncodedObject(o)) {
+        hash = XXH3_64bits(o->ptr, sdslen(o->ptr));
+    } else if (o->encoding == OBJ_ENCODING_INT) {
+        char buf[34];
+        size_t len = ll2string(buf,sizeof(buf),(long long)o->ptr);
+        hash = XXH3_64bits(buf, len);
+    } else {
+        serverPanic("Wrong obj->encoding stringDigest()");
+    }
+
+    return (long long)hash;
+}
+
+void digestCommand(client *c) {
+    kvobj *o;
+
+    if ((o = lookupKeyReadOrReply(c, c->argv[1], shared.null[c->resp])) == NULL)
+        return;
+
+    if (checkType(c,o,OBJ_STRING))
+        return;
+
+    addReplyLongLong(c, stringDigest(o));
+}

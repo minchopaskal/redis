@@ -743,4 +743,128 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
             }
         } {} {needs:debug}
     }
+
+    test {DIGEST basic usage with plain string} {
+        r set mykey "hello world"
+        set digest [r digest mykey]
+        # Ensure we get a numeric hash value (signed 64-bit integer)
+        assert {[string is wideinteger -strict $digest]}
+    }
+
+    test {DIGEST with empty string} {
+        r set mykey ""
+        set digest [r digest mykey]
+        # Ensure we get a numeric hash value
+        assert {[string is wideinteger -strict $digest]}
+    }
+
+    test {DIGEST with integer-encoded value} {
+        r set mykey 12345
+        assert_encoding int mykey
+        set digest [r digest mykey]
+        # Should hash the string representation "12345"
+        assert {[string is wideinteger -strict $digest]}
+    }
+
+    test {DIGEST with negative integer} {
+        r set mykey -999
+        assert_encoding int mykey
+        set digest [r digest mykey]
+        assert {[string is wideinteger -strict $digest]}
+    }
+
+    test {DIGEST returns consistent hash for same value} {
+        r set mykey "test string"
+        set digest1 [r digest mykey]
+        set digest2 [r digest mykey]
+        assert_equal $digest1 $digest2
+    }
+
+    test {DIGEST returns same hash for same content in different keys} {
+        r set key1 "identical"
+        r set key2 "identical"
+        set digest1 [r digest key1]
+        set digest2 [r digest key2]
+        assert_equal $digest1 $digest2
+    }
+
+    test {DIGEST returns different hash for different values} {
+        r set key1 "value1"
+        r set key2 "value2"
+        set digest1 [r digest key1]
+        set digest2 [r digest key2]
+        assert {$digest1 != $digest2}
+    }
+
+    test {DIGEST with binary data} {
+        r set mykey "\x00\x01\x02\x03\xff\xfe"
+        set digest [r digest mykey]
+        assert {[string is wideinteger -strict $digest]}
+    }
+
+    test {DIGEST with unicode characters} {
+        r set mykey "Hello 世界"
+        set digest [r digest mykey]
+        assert {[string is wideinteger -strict $digest]}
+    }
+
+    test {DIGEST with very long string} {
+        set longstring [string repeat "Lorem ipsum dolor sit amet. " 1000]
+        r set mykey $longstring
+        set digest [r digest mykey]
+        assert {[string is wideinteger -strict $digest]}
+    }
+
+    test {DIGEST against non-existing key} {
+        r del nonexistent
+        assert_equal {} [r digest nonexistent]
+    }
+
+    test {DIGEST against wrong type (list)} {
+        r del mylist
+        r lpush mylist "element"
+        assert_error "*WRONGTYPE*" {r digest mylist}
+    }
+
+    test {DIGEST against wrong type (hash)} {
+        r del myhash
+        r hset myhash field value
+        assert_error "*WRONGTYPE*" {r digest myhash}
+    }
+
+    test {DIGEST against wrong type (set)} {
+        r del myset
+        r sadd myset member
+        assert_error "*WRONGTYPE*" {r digest myset}
+    }
+
+    test {DIGEST against wrong type (zset)} {
+        r del myzset
+        r zadd myzset 1 member
+        assert_error "*WRONGTYPE*" {r digest myzset}
+    }
+
+    test {DIGEST wrong number of arguments} {
+        assert_error "*wrong number of arguments*" {r digest}
+        assert_error "*wrong number of arguments*" {r digest key1 key2}
+    }
+
+    test {DIGEST with special characters and whitespace} {
+        r set mykey "  spaces  \t\n\r"
+        set digest [r digest mykey]
+        assert {[string is wideinteger -strict $digest]}
+    }
+
+    test {DIGEST consistency across SET operations} {
+        r set mykey "original"
+        set digest1 [r digest mykey]
+
+        r set mykey "changed"
+        set digest2 [r digest mykey]
+        assert {$digest1 != $digest2}
+
+        r set mykey "original"
+        set digest3 [r digest mykey]
+        assert_equal $digest1 $digest3
+    }
 }

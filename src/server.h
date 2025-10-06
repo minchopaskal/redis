@@ -3881,6 +3881,9 @@ uint64_t redisBuildId(void);
 const char *redisBuildIdRaw(void);
 char *redisBuildIdString(void);
 
+/* XXH3 digest */
+long long stringDigest(robj *o);
+
 /* Commands prototypes */
 void authCommand(client *c);
 void pingCommand(client *c);
@@ -3901,6 +3904,7 @@ void getCommand(client *c);
 void getexCommand(client *c);
 void getdelCommand(client *c);
 void delCommand(client *c);
+void delexCommand(client *c);
 void unlinkCommand(client *c);
 void existsCommand(client *c);
 void setbitCommand(client *c);
@@ -4156,6 +4160,7 @@ void lcsCommand(client *c);
 void quitCommand(client *c);
 void resetCommand(client *c);
 void failoverCommand(client *c);
+void digestCommand(client *c);
 
 #if defined(__GNUC__)
 void *calloc(size_t count, size_t size) __attribute__ ((deprecated));
