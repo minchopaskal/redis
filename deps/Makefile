@@ -104,7 +104,7 @@ fast_float: .make-prerequisites
 XXHASH_CFLAGS = -fPIC $(DEPS_CFLAGS)
 xxhash: .make-prerequisites
 	@printf '%b %b\n' $(MAKECOLOR)MAKE$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR)
-	cd xxhash && $(MAKE) CFLAGS="$(XXHASH_CFLAGS)" LDFLAGS="$(DEPS_LDFLAGS)"
+	cd xxhash && $(MAKE) lib CFLAGS="$(XXHASH_CFLAGS)" LDFLAGS="$(DEPS_LDFLAGS)"
 .PHONY: xxhash
 
 ifeq ($(uname_S),SunOS)
