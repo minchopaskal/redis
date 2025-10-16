@@ -4,7 +4,7 @@
         "complexity": "O(1) for IFEQ/IFNE, O(N) for IFDEQ/IFDNE where N is the length of the string value.",
         "group": "string",
         "since": "8.4.0",
-        "arity": 4,
+        "arity": -2,
         "function": "delexCommand",
         "command_flags": [
             "WRITE",
@@ -58,6 +58,7 @@
             {
                 "name": "condition",
                 "type": "oneof",
+                "optional": true,
                 "arguments": [
                     {
                         "name": "ifeq-value",

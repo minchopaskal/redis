@@ -1198,6 +1198,82 @@ void delCommand(client *c) {
     delGenericCommand(c,server.lazyfree_lazy_user_del);
 }
 
+void delexCommand(client *c) {
+    kvobj *o;
+    int deleted = 0, should_delete = 0;
+
+    robj *key = c->argv[1];
+    o = lookupKeyRead(c->db, c->argv[1]);
+    if (o == NULL) {
+        addReplyLongLong(c, 0);
+        return;
+    }
+
+    /* If there are no conditions specified we just delete the key */
+    if (c->argc == 2) {
+        delGenericCommand(c, server.lazyfree_lazy_server_del);
+        return;
+    }
+
+    /* If any conditions are specified the only supported key type for now is
+     * string */
+    if (o->type != OBJ_STRING) {
+        addReplyError(c, "Key should be of string type if conditions are specified");
+        return;
+    }
+
+    char *condition = c->argv[2]->ptr;
+    if (!strcasecmp("ifeq", condition)) {
+        robj *valueobj = getDecodedObject(o);
+        sds match_value = c->argv[3]->ptr;
+        if (sdscmp(valueobj->ptr, match_value) == 0)
+            should_delete = 1;
+
+        decrRefCount(valueobj);
+    } else if (!strcasecmp("ifne", condition)) {
+        robj *valueobj = getDecodedObject(o);
+        sds match_value = c->argv[3]->ptr;
+        if (sdscmp(valueobj->ptr, match_value) != 0)
+           should_delete = 1;
+
+        decrRefCount(valueobj);
+    } else if (!strcasecmp("ifdeq", condition)) {
+        long long current_digest = stringDigest(o);
+        long long match_digest;
+        if (getLongLongFromObjectOrReply(c, c->argv[3], &match_digest, NULL) != C_OK) {
+            return;
+        }
+        if (current_digest == match_digest)
+            should_delete = 1;
+    } else if (!strcasecmp("ifdne", condition)) {
+        long long current_digest = stringDigest(o);
+        long long match_digest;
+        if (getLongLongFromObjectOrReply(c, c->argv[3], &match_digest, NULL) != C_OK) {
+            return;
+        }
+        if (current_digest != match_digest)
+            should_delete = 1;
+    } else {
+        addReplyError(c, "Invalid condition. Use IFEQ, IFNE, IFDEQ, or IFDNE");
+        return;
+    }
+
+    if (should_delete) {
+        deleted = server.lazyfree_lazy_server_del ?
+                  dbAsyncDelete(c->db, key) :
+                  dbSyncDelete(c->db, key);
+    }
+
+    if (deleted) {
+        rewriteClientCommandVector(c, 2, shared.del, c->argv[1]);
+        signalModifiedKey(c, c->db, c->argv[1]);
+        notifyKeyspaceEvent(NOTIFY_GENERIC, "del", c->argv[1], c->db->id);
+        server.dirty++;
+    }
+
+    addReplyLongLong(c, deleted);
+}
+
 void unlinkCommand(client *c) {
     delGenericCommand(c,1);
 }
