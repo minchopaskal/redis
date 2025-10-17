@@ -1069,7 +1069,7 @@ sds stringDigest(robj *o) {
     }
 
     sds hexhash = sdsempty();
-    hexhash = sdscatprintf(hexhash, "%llx", hash);
+    hexhash = sdscatprintf(hexhash, "%" PRIx64, hash);
     return hexhash;
 }
 
