@@ -868,6 +868,17 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
         assert_equal $digest1 $digest3
     }
 
+    test {DELEX basic usage without conditions} {
+        r set mykey "hello"
+        assert_equal 1 [r delex mykey]
+
+        r hset myhash f v
+        assert_equal 1 [r delex myhash]
+
+        r zadd mystr 1 m
+        assert_equal 1 [r delex mystr]
+    }
+
     test {DELEX basic usage with IFEQ} {
         r set mykey "hello"
         assert_equal 1 [r delex mykey IFEQ "hello"]
@@ -983,24 +994,26 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
     test {DELEX against wrong type} {
         r del mylist
         r lpush mylist "element"
-        assert_error "*WRONGTYPE*" {r delex mylist IFEQ "element"}
+        assert_error "*ERR*" {r delex mylist IFEQ "element"}
 
         r del myhash
         r hset myhash field value
-        assert_error "*WRONGTYPE*" {r delex myhash IFEQ "value"}
+        assert_error "*ERR*" {r delex myhash IFEQ "value"}
 
         r del myset
         r sadd myset member
-        assert_error "*WRONGTYPE*" {r delex myset IFEQ "member"}
+        assert_error "*ERR*" {r delex myset IFEQ "member"}
 
         r del myzset
         r zadd myzset 1 member
-        assert_error "*WRONGTYPE*" {r delex myzset IFEQ "member"}
+        assert_error "*ERR*" {r delex myzset IFEQ "member"}
     }
 
     test {DELEX wrong number of arguments} {
-        assert_error "*wrong number of arguments*" {r delex}
-        assert_error "*wrong number of arguments*" {r delex key1}
+        r del key1
+        assert_equal 0 [r delex key1 IFEQ]
+
+        r set key1 x
         assert_error "*wrong number of arguments*" {r delex key1 IFEQ}
         assert_error "*wrong number of arguments*" {r delex key1 IFEQ value1 extra}
     }

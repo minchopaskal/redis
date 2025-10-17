@@ -1222,6 +1222,13 @@ void delexCommand(client *c) {
         return;
     }
 
+    /* If we have more than two arguments the next two are condition and
+     * match-value */
+    if (c->argc != 4) {
+        addReplyError(c, "wrong number of arguments for 'delex' command");
+        return;
+    }
+
     char *condition = c->argv[2]->ptr;
     if (!strcasecmp("ifeq", condition)) {
         robj *valueobj = getDecodedObject(o);
