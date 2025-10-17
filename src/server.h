@@ -3881,8 +3881,8 @@ uint64_t redisBuildId(void);
 const char *redisBuildIdRaw(void);
 char *redisBuildIdString(void);
 
-/* XXH3 digest */
-long long stringDigest(robj *o);
+/* XXH3 hash of a string as hex string */
+sds stringDigest(robj *o);
 
 /* Commands prototypes */
 void authCommand(client *c);
@@ -4161,7 +4161,6 @@ void quitCommand(client *c);
 void resetCommand(client *c);
 void failoverCommand(client *c);
 void digestCommand(client *c);
-void delexCommand(client *c);
 
 #if defined(__GNUC__)
 void *calloc(size_t count, size_t size) __attribute__ ((deprecated));

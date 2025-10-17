@@ -37,7 +37,7 @@
             "oneOf": [
                 {
                     "description": "The XXH3 64-bit hash of the string value as a signed integer.",
-                    "type": "integer"
+                    "type": "string"
                 },
                 {
                     "description": "Key does not exist",

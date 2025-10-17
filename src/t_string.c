@@ -114,9 +114,12 @@ void setGenericCommand(client *c, int flags, robj *key, robj **valref, robj *exp
             return;
         }
 
-        if (flags & OBJ_SET_IFEQ) {
+        if (flags & OBJ_SET_IFEQ || flags & OBJ_SET_IFNE) {
             robj *current_decoded = getDecodedObject(current);
-            if (sdscmp(current_decoded->ptr, match_value->ptr) != 0) {
+            int condition = flags & OBJ_SET_IFEQ ?
+                            sdscmp(current_decoded->ptr, match_value->ptr) == 0 :
+                            sdscmp(current_decoded->ptr, match_value->ptr) != 0;
+            if (!condition) {
                 decrRefCount(current_decoded);
                 if (!(flags & OBJ_SET_GET)) {
                     addReply(c, abort_reply ? abort_reply : shared.null[c->resp]);
@@ -124,35 +127,13 @@ void setGenericCommand(client *c, int flags, robj *key, robj **valref, robj *exp
                 return;
             }
             decrRefCount(current_decoded);
-        } else if (flags & OBJ_SET_IFNE) {
-            robj *current_decoded = getDecodedObject(current);
-            if (sdscmp(current_decoded->ptr, match_value->ptr) == 0) {
-                decrRefCount(current_decoded);
-                if (!(flags & OBJ_SET_GET)) {
-                    addReply(c, abort_reply ? abort_reply : shared.null[c->resp]);
-                }
-                return;
-            }
-            decrRefCount(current_decoded);
-        } else if (flags & OBJ_SET_IFDEQ) {
-            long long current_digest = stringDigest(current);
-            long long match_digest;
-            if (getLongLongFromObjectOrReply(c, match_value, &match_digest, NULL) != C_OK) {
-                return;
-            }
-            if (current_digest != match_digest) {
-                if (!(flags & OBJ_SET_GET)) {
-                    addReply(c, abort_reply ? abort_reply : shared.null[c->resp]);
-                }
-                return;
-            }
-        } else if (flags & OBJ_SET_IFDNE) {
-            long long current_digest = stringDigest(current);
-            long long match_digest;
-            if (getLongLongFromObjectOrReply(c, match_value, &match_digest, NULL) != C_OK) {
-                return;
-            }
-            if (current_digest == match_digest) {
+        } else if (flags & OBJ_SET_IFDEQ || flags & OBJ_SET_IFDNE) {
+            sds current_digest = stringDigest(current);
+            int condition = flags & OBJ_SET_IFDEQ ?
+                            sdscmp(current_digest, match_value->ptr) == 0 :
+                            sdscmp(current_digest, match_value->ptr) != 0;
+            sdsfree(current_digest);
+            if (!condition) {
                 if (!(flags & OBJ_SET_GET)) {
                     addReply(c, abort_reply ? abort_reply : shared.null[c->resp]);
                 }
@@ -1071,7 +1052,9 @@ cleanup:
     return;
 }
 
-long long stringDigest(robj *o) {
+/* Return the xxh3 hash of a string object as a hex string stored in an sds.
+ * The user is responsible for freeing the sds. */
+sds stringDigest(robj *o) {
     serverAssert(o && o->type == OBJ_STRING);
 
     XXH64_hash_t hash = 0;
@@ -1085,7 +1068,9 @@ long long stringDigest(robj *o) {
         serverPanic("Wrong obj->encoding stringDigest()");
     }
 
-    return (long long)hash;
+    sds hexhash = sdsempty();
+    hexhash = sdscatprintf(hexhash, "%llx", hash);
+    return hexhash;
 }
 
 void digestCommand(client *c) {
@@ -1097,6 +1082,6 @@ void digestCommand(client *c) {
     if (checkType(c,o,OBJ_STRING))
         return;
 
-    addReplyLongLong(c, stringDigest(o));
+    addReplyBulkSds(c, stringDigest(o));
 }
 

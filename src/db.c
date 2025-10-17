@@ -1245,21 +1245,17 @@ void delexCommand(client *c) {
 
         decrRefCount(valueobj);
     } else if (!strcasecmp("ifdeq", condition)) {
-        long long current_digest = stringDigest(o);
-        long long match_digest;
-        if (getLongLongFromObjectOrReply(c, c->argv[3], &match_digest, NULL) != C_OK) {
-            return;
-        }
-        if (current_digest == match_digest)
+        sds current_digest = stringDigest(o);
+        if (sdscmp(current_digest, c->argv[3]->ptr) == 0)
             should_delete = 1;
+
+        sdsfree(current_digest);
     } else if (!strcasecmp("ifdne", condition)) {
-        long long current_digest = stringDigest(o);
-        long long match_digest;
-        if (getLongLongFromObjectOrReply(c, c->argv[3], &match_digest, NULL) != C_OK) {
-            return;
-        }
-        if (current_digest != match_digest)
+        sds current_digest = stringDigest(o);
+        if (sdscmp(current_digest, c->argv[3]->ptr) != 0)
             should_delete = 1;
+
+        sdsfree(current_digest);
     } else {
         addReplyError(c, "Invalid condition. Use IFEQ, IFNE, IFDEQ, or IFDNE");
         return;
@@ -1272,9 +1268,9 @@ void delexCommand(client *c) {
     }
 
     if (deleted) {
-        rewriteClientCommandVector(c, 2, shared.del, c->argv[1]);
-        signalModifiedKey(c, c->db, c->argv[1]);
-        notifyKeyspaceEvent(NOTIFY_GENERIC, "del", c->argv[1], c->db->id);
+        rewriteClientCommandVector(c, 2, shared.del, key);
+        signalModifiedKey(c, c->db, key);
+        notifyKeyspaceEvent(NOTIFY_GENERIC, "del", key, c->db->id);
         server.dirty++;
     }
 

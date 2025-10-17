@@ -23,6 +23,10 @@
             [
                 "7.0.0",
                 "Allowed the `NX` and `GET` options to be used together."
+            ],
+            [
+                "8.4.0",
+                "Added 'IFEQ', 'IFNE', 'IFDEQ', 'IFDNE' options."
             ]
         ],
         "command_flags": [
