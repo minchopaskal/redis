@@ -116,7 +116,7 @@ void setGenericCommand(client *c, int flags, robj *key, robj **valref, robj *exp
 
         if (flags & OBJ_SET_IFEQ || flags & OBJ_SET_IFNE) {
             robj *current_decoded = getDecodedObject(current);
-            int condition = flags & OBJ_SET_IFEQ ?
+            int condition = (flags & OBJ_SET_IFEQ) ?
                             sdscmp(current_decoded->ptr, match_value->ptr) == 0 :
                             sdscmp(current_decoded->ptr, match_value->ptr) != 0;
             if (!condition) {
