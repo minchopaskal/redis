@@ -8,8 +8,8 @@
  */
 
 #include "server.h"
-#include <math.h> /* isnan(), isinf() */
 #include "xxhash.h"
+#include <math.h> /* isnan(), isinf() */
 
 /* Forward declarations */
 int getGenericCommand(client *c);
