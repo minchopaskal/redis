@@ -1061,7 +1061,7 @@ sds stringDigest(robj *o) {
     if (sdsEncodedObject(o)) {
         hash = XXH3_64bits(o->ptr, sdslen(o->ptr));
     } else if (o->encoding == OBJ_ENCODING_INT) {
-        char buf[34];
+        char buf[LONG_STR_SIZE];
         size_t len = ll2string(buf,sizeof(buf),(long)o->ptr);
         hash = XXH3_64bits(buf, len);
     } else {
