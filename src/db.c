@@ -1234,7 +1234,7 @@ void delexCommand(client *c) {
     /* If we have more than two arguments the next two are condition and
      * match-value */
     if (c->argc != 4) {
-        addReplyError(c, "wrong number of arguments for 'delex' command");
+        addReplyErrorArity(c);
         return;
     }
 
