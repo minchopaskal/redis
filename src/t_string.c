@@ -119,14 +119,13 @@ void setGenericCommand(client *c, int flags, robj *key, robj **valref, robj *exp
             int condition = (flags & OBJ_SET_IFEQ) ?
                             sdscmp(current_decoded->ptr, match_value->ptr) == 0 :
                             sdscmp(current_decoded->ptr, match_value->ptr) != 0;
+            decrRefCount(current_decoded);
             if (!condition) {
-                decrRefCount(current_decoded);
                 if (!(flags & OBJ_SET_GET)) {
                     addReply(c, abort_reply ? abort_reply : shared.null[c->resp]);
                 }
                 return;
             }
-            decrRefCount(current_decoded);
         } else if (flags & OBJ_SET_IFDEQ || flags & OBJ_SET_IFDNE) {
             sds current_digest = stringDigest(current);
             int condition = flags & OBJ_SET_IFDEQ ?
