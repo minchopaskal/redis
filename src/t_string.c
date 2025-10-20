@@ -1072,6 +1072,10 @@ sds stringDigest(robj *o) {
     return hexhash;
 }
 
+/* DIGEST key
+ *
+ * Return digest of the key's value computed via XXH3 hash. The key must be a
+ * STRING object. */
 void digestCommand(client *c) {
     kvobj *o;
 
