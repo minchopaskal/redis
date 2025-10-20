@@ -1198,6 +1198,15 @@ void delCommand(client *c) {
     delGenericCommand(c,server.lazyfree_lazy_user_del);
 }
 
+/* DELEX key [IFEQ match-value|IFNE match-value|IFDEQ match-digest|IFDNE match-digest]
+ *
+ * Conditionally removes the specified key. A key is ignored if it does not
+ * exist.
+ * If no condition is specified the behavior is the same as DEL command.
+ * If condition is specified the key must be of STRING type.
+ *
+ * IFEQ/IFNE conditions check the match-value against the value of the key
+ * IFDEQ/IFDNE conditions check the match-digest against the digest of the key's value.*/
 void delexCommand(client *c) {
     kvobj *o;
     int deleted = 0, should_delete = 0;
