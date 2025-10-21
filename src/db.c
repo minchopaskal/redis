@@ -1212,7 +1212,7 @@ void delexCommand(client *c) {
     int deleted = 0, should_delete = 0;
 
     robj *key = c->argv[1];
-    o = lookupKeyRead(c->db, c->argv[1]);
+    o = lookupKeyRead(c->db, key);
     if (o == NULL) {
         addReplyLongLong(c, 0);
         return;
