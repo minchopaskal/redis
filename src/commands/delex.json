@@ -16,7 +16,7 @@
         "key_specs": [
             {
                 "flags": [
-                    "RM",
+                    "RW",
                     "DELETE"
                 ],
                 "begin_search": {
