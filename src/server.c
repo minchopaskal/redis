@@ -4815,8 +4815,11 @@ int finishShutdown(void) {
          * If shutdown fails, they will be returned back to IO thread in
          * handleClientsWithPendingWrites after the repl backlog is fed with new
          * data. */
-        if (replica->running_tid != IOTHREAD_MAIN_THREAD_ID)
-            fetchClientFromIOThread(replica);
+        int paused = 0;
+        if (replica->running_tid != IOTHREAD_MAIN_THREAD_ID) {
+            pauseIOThread(replica->tid);
+            paused = 1;
+        }
 
         if (replica->repl_ack_off != server.master_repl_offset) {
             num_lagging_replicas++;
@@ -4829,6 +4832,8 @@ int finishShutdown(void) {
                       lag,
                       replstateToString(replica->replstate));
         }
+
+        if (paused) resumeIOThread(replica->tid);
     }
     if (num_replicas > 0) {
         serverLog(LL_NOTICE,
