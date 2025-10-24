@@ -64,10 +64,9 @@ void updateClientDataFromIOThread(client *c) {
         c->lastinteraction = c->io_lastinteraction;
         c->io_lastinteraction = 0;
     }
-    if (c->io_acc_read_reploff != 0) {
+    if (c->io_read_reploff > c->read_reploff) {
         serverAssert(c->flags & CLIENT_MASTER);
-        c->read_reploff += c->io_acc_read_reploff;
-        c->io_acc_read_reploff = 0;
+        c->read_reploff = c->io_read_reploff;
     }
 
     /* IO thread has send all the nodes from [ref_repl_start_node, ref_repl_buf_node)
