@@ -292,11 +292,12 @@ extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
  * distinctly deletion, overwrite or read-only would be marked as RW. */
 #define CMD_KEY_RO (1ULL<<0)     /* Read-Only - Reads the value of the key, but
                                   * doesn't necessarily returns it. */
-#define CMD_KEY_RW (1ULL<<1)     /* Read-Write - Modifies the data stored in the
-                                  * value of the key or its metadata. */
+#define CMD_KEY_RW (1ULL<<1)     /* Read-Write - Reads and modifies/deletes
+                                  * the data stored in the value of the key or
+                                  * its metadata. */
 #define CMD_KEY_OW (1ULL<<2)     /* Overwrite - Overwrites the data stored in
                                   * the value of the key. */
-#define CMD_KEY_RM (1ULL<<3)     /* Deletes the key. */
+#define CMD_KEY_RM (1ULL<<3)     /* Deletes the key without reading it's value. */
 /* The following refer to user data inside the value of the key, not the metadata
  * like LRU, type, cardinality. It refers to the logical operation on the user's
  * data (actual input strings / TTL), being used / returned / copied / changed,
