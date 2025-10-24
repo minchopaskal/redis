@@ -488,7 +488,6 @@ void feedReplicationBuffer(char *s, size_t len) {
             size_t copy = (tail->size >= len) ? len : tail->size;
             tail->used = copy;
             tail->refcount = 0;
-
             tail->repl_offset = server.master_repl_offset + 1;
             tail->id = repl_block_id++;
             memcpy(tail->buf, s, copy);

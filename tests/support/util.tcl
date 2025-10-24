@@ -128,15 +128,11 @@ proc waitForBgrewriteaof r {
     }
 }
 
-proc is_tsan {} {
-    return [expr {[info exists ::tsan] && $::tsan}]
-}
-
 proc wait_for_sync r {
     set maxtries 50
     # tsan adds significant overhead to the execution time, so we increase the
     # wait time here JIC
-    if {[is_tsan]} {
+    if {$::tsan} {
         set maxtries 100
     }
 
@@ -150,7 +146,7 @@ proc wait_for_sync r {
 proc wait_replica_online {r {replica_id 0} {maxtries 50} {delay 100}} {
     # tsan adds significant overhead to the execution time, so we increase the
     # wait time here JIC
-    if {[is_tsan]} {
+    if {$::tsan} {
         set maxtries [expr {$maxtries * 2}]
     }
 
@@ -165,7 +161,7 @@ proc wait_for_ofs_sync {r1 r2} {
     set maxtries 50
     # tsan adds significant overhead to the execution time, so we increase the
     # wait time here JIC
-    if {[is_tsan]} {
+    if {$::tsan} {
         set maxtries 100
     }
     wait_for_condition $maxtries 100 {
@@ -725,7 +721,23 @@ proc resume_process pid {
         puts [exec ps j $pid]
         fail "process was not stopped"
     }
-    exec kill -SIGCONT $pid
+
+    set max_attempts 10
+    set attempt 0
+    while {($attempt < $max_attempts) && [string match "T*" [exec ps -o state= -p $pid]]} {
+        exec kill -SIGCONT $pid
+
+        incr attempt
+        after 100
+    }
+
+    wait_for_condition 50 1000 {
+        [string match "R*" [exec ps -o state= -p $pid]] ||
+        [string match "S*" [exec ps -o state= -p $pid]]
+    } else {
+        puts [exec ps j $pid]
+        fail "process was not resumed"
+    }
 }
 
 proc cmdrstat {cmd r} {

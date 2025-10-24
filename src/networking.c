@@ -2499,7 +2499,8 @@ int processInlineBuffer(client *c) {
              *     client needs to be send from main to IO thread for ACK read.
              *     see slaveFromIOThreadNeedsAckRead()
              * Note c->repl_ack_time will still be updated in
-             * processClientsFromIOThread with the value of c->io_last_ack_time */
+             * updateClientDataFromIOThread with the value of c->io_last_ack_time
+             * when the client moves from IO to main thread. */
             c->io_last_ack_time = mstime();
     }
 
@@ -4550,6 +4551,7 @@ int closeClientOnOutputBufferLimitReached(client *c, int async) {
 void flushSlavesOutputBuffers(void) {
     listIter li;
     listNode *ln;
+    int revert_flags = 0;
 
     listRewind(server.slaves,&li);
     while((ln = listNext(&li))) {
@@ -4559,8 +4561,20 @@ void flushSlavesOutputBuffers(void) {
          * If shutdown fails, they will be returned back to IO thread in
          * handleClientsWithPendingWrites after the repl backlog is fed with new
          * data. */
-        if (slave->running_tid != IOTHREAD_MAIN_THREAD_ID)
+        revert_flags = 0;
+        if (slave->running_tid != IOTHREAD_MAIN_THREAD_ID) {
             fetchClientFromIOThread(slave);
+            if (!clientHasPendingReplies(slave)) {
+                continue;
+            }
+
+            putClientInPendingWriteQueue(slave);
+
+            if (!(slave->io_flags & CLIENT_IO_WRITE_ENABLED)) {
+                slave->io_flags |= CLIENT_IO_WRITE_ENABLED;
+                revert_flags |= CLIENT_IO_WRITE_ENABLED;
+            }
+        }
 
         int can_receive_writes = connHasWriteHandler(slave->conn) ||
                                  (slave->flags & CLIENT_PENDING_WRITE);
@@ -4586,6 +4600,10 @@ void flushSlavesOutputBuffers(void) {
             clientHasPendingReplies(slave))
         {
             writeToClient(slave,0);
+        }
+
+        if (revert_flags) {
+            slave->io_flags &= ~revert_flags;
         }
     }
 }

@@ -57,6 +57,7 @@ void updateClientDataFromIOThread(client *c) {
     if (c->io_last_ack_time / 1000 > c->repl_ack_time) {
         serverAssert(c->flags & CLIENT_SLAVE);
         c->repl_ack_time = c->io_last_ack_time / 1000;
+        c->io_last_ack_time = 0;
     }
     if (c->io_lastinteraction != 0) {
         serverAssert(c->flags & CLIENT_MASTER);
@@ -67,6 +68,25 @@ void updateClientDataFromIOThread(client *c) {
         serverAssert(c->flags & CLIENT_MASTER);
         c->read_reploff += c->io_acc_read_reploff;
         c->io_acc_read_reploff = 0;
+    }
+
+    /* IO thread has send all the nodes from [ref_repl_start_node, ref_repl_buf_node)
+     * Since it only keeps refcount to the start_node we need to decrement
+     * it and increment the refcount of the lastly processed buf_node which
+     * will become the new start node for the next IO thread iteration. */
+    if (c->flags & CLIENT_SLAVE && c->ref_repl_start_node != NULL &&
+        c->ref_repl_start_node != c->ref_repl_buf_node)
+    {
+        serverAssert(c->ref_repl_buf_node);
+
+        ((replBufBlock*)listNodeValue(c->ref_repl_start_node))->refcount--;
+        ((replBufBlock*)listNodeValue(c->ref_repl_buf_node))->refcount++;
+
+        /* Forget about nodes before ref_repl_buf_node as we already
+            * processed them */
+        c->ref_repl_start_node = c->ref_repl_buf_node;
+
+        incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
     }
 }
 
@@ -189,19 +209,10 @@ void fetchClientFromIOThread(client *c) {
     }
     /* Unbind connection of client from io thread event loop. */
     connUnbindEventLoop(c->conn);
-    /* Now main thread can process it. */
-    c->running_tid = IOTHREAD_MAIN_THREAD_ID;
-    updateClientDataFromIOThread(c);
+   
     if (c->flags & CLIENT_MASTER) {
         IOThread *t = &IOThreads[c->tid];
         t->master = NULL;
-    }
-    // A slave client may be fetched to main thread in order to flush its buffer
-    // but in order to send any pending writes we need either a write handler or
-    // a CLIENT_PENDING_WRITE flag. See flushSlavesOutputBuffers
-    if (c->flags & CLIENT_SLAVE && clientHasPendingReplies(c)) {
-        c->flags |= CLIENT_PENDING_WRITE;
-        listLinkNodeHead(server.clients_pending_write, &c->clients_pending_write_node);
     }
 
     /* As client may be fetched to main thread but later returned (f.e
@@ -209,6 +220,10 @@ void fetchClientFromIOThread(client *c) {
     c->io_flags &= ~(CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED);
 
     resumeIOThread(c->tid);
+
+    /* Now main thread can process it. */
+    c->running_tid = IOTHREAD_MAIN_THREAD_ID;
+    updateClientDataFromIOThread(c);
     freeClientDeferredObjects(c, 1); /* Free deferred objects. */
 }
 
@@ -571,25 +586,6 @@ int processClientsFromIOThread(IOThread *t) {
         }
 
         updateClientDataFromIOThread(c);
-
-        /* IO thread has send all the nodes from [ref_repl_start_node, ref_repl_buf_node)
-         * Since it only keeps refcount to the start_node we need to decrement
-         * it and increment the refcount of the lastly processed buf_node which
-         * will become the new start node for the next IO thread iteration. */
-        if (c->flags & CLIENT_SLAVE && c->ref_repl_start_node != NULL &&
-            c->ref_repl_start_node != c->ref_repl_buf_node)
-        {
-            serverAssert(c->ref_repl_buf_node);
-
-            ((replBufBlock*)listNodeValue(c->ref_repl_start_node))->refcount--;
-            ((replBufBlock*)listNodeValue(c->ref_repl_buf_node))->refcount++;
-
-            /* Forget about nodes before ref_repl_buf_node as we already
-             * processed them */
-            c->ref_repl_start_node = c->ref_repl_buf_node;
-
-            incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
-        }
 
         /* Run client cron task for the client per second or it is marked as pending cron. */
         if (c->io_last_client_cron_check_time + 1000 <= server.mstime ||
