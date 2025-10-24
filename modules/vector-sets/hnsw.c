@@ -118,8 +118,6 @@ void hnsw_set_allocator(void (*free_ptr)(void*), void *(*malloc_ptr)(size_t),
 
 /* ============================== Prototypes ================================ */
 void hnsw_cursor_element_deleted(HNSW *index, hnswNode *deleted);
-float vectors_distance_float_avx512(const float *x, const float *y, uint32_t dim);
-float vectors_distance_float_avx2(const float *x, const float *y, uint32_t dim);
 
 /* ============================ Priority queue ================================
  * We need a priority queue to take an ordered list of candidates. Right now
@@ -294,13 +292,17 @@ float vectors_distance_float_avx2(const float *x, const float *y, uint32_t dim) 
  * Dot product: our vectors are already normalized.
  * Version for not quantized vectors of floats. */
 float vectors_distance_float(const float *x, const float *y, uint32_t dim) {
+#if defined(HAVE_AVX512)
     if (dim >= 16 && VSET_USE_AVX512) {
         return vectors_distance_float_avx512(x, y, dim);
     }
+#endif
 
+#if defined(HAVE_AVX2)
     if (VSET_USE_AVX2 && dim >= 16) {
         return vectors_distance_float_avx2(x, y, dim);
     }
+#endif
 
     /* Fallback to original scalar implementation */
     float dot0 = 0.0f, dot1 = 0.0f;
