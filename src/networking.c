@@ -197,7 +197,7 @@ client *createClient(connection *conn) {
     c->reploff = 0;
     c->reploff_next = 0;
     c->read_reploff = 0;
-    c->io_acc_read_reploff = 0;
+    c->io_read_reploff = 0;
     c->repl_applied = 0;
     c->repl_ack_off = 0;
     c->repl_ack_time = 0;
@@ -3599,7 +3599,11 @@ int processInputBuffer(client *c) {
             if (unlikely(pcmd->read_error || (pcmd->flags & PENDING_CMD_FLAG_INCOMPLETE)))
                 break;
 
-            pcmd->reploff = c->read_reploff - sdslen(c->querybuf) + c->qb_pos;
+            if (c->running_tid == IOTHREAD_MAIN_THREAD_ID)
+                pcmd->reploff = c->read_reploff - sdslen(c->querybuf) + c->qb_pos;
+            else
+                pcmd->reploff = c->io_read_reploff - sdslen(c->querybuf) + c->qb_pos;
+
             preprocessCommand(c, pcmd);
             pcmd->flags |= PENDING_CMD_FLAG_PREPROCESSED;
             resetClientQbufState(c);
@@ -3805,11 +3809,13 @@ void readQueryFromClient(connection *conn) {
         c->io_lastinteraction = server.unixtime;
 
     if (c->flags & CLIENT_MASTER) {
-        if (c->running_tid == IOTHREAD_MAIN_THREAD_ID)
+        if (c->running_tid == IOTHREAD_MAIN_THREAD_ID) {
             c->read_reploff += nread;
-        else
+            c->io_read_reploff += nread;
+        } else {
             /* Same comment as for c->io_lastinteraction */
-            c->io_acc_read_reploff += nread;
+            c->io_read_reploff += nread;
+        }
         atomicIncr(server.stat_net_repl_input_bytes, nread);
     } else {
         atomicIncr(server.stat_net_input_bytes, nread);

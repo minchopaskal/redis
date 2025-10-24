@@ -2113,6 +2113,7 @@ void replicationCreateMasterClient(connection *conn, int dbid) {
     server.master->authenticated = 1;
     server.master->reploff = server.master_initial_offset;
     server.master->read_reploff = server.master->reploff;
+    server.master->io_read_reploff = server.master->reploff;
     server.master->user = NULL; /* This client can do everything. */
     memcpy(server.master->replid, server.master_replid,
         sizeof(server.master_replid));
@@ -4045,6 +4046,7 @@ int replDataBufStreamToDb(replDataBuf *buf, replDataBufToDbCtx *ctx) {
             size_t bytes = min(PROTO_IOBUF_LEN, o->used - processed);
             c->querybuf = sdscatlen(c->querybuf, &o->buf[processed], bytes);
             c->read_reploff += (long long int) bytes;
+            c->io_read_reploff += (long long int) bytes;
             c->lastinteraction = server.unixtime;
 
             /* We don't expect error return value but just in case. */
@@ -4437,6 +4439,7 @@ void replicationCacheMaster(client *c) {
     server.master->qb_pos = 0;
     server.master->repl_applied = 0;
     server.master->read_reploff = server.master->reploff;
+    server.master->io_read_reploff = server.master->reploff;
     server.master->reploff_next = 0;
     if (c->flags & CLIENT_MULTI) discardTransaction(c);
     listEmpty(c->reply);
