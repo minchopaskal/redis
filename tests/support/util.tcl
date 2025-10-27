@@ -136,7 +136,7 @@ proc wait_for_sync r {
         set maxtries 100
     }
 
-    wait_for_condition 50 100 {
+    wait_for_condition $maxtries 100 {
         [status $r master_link_status] eq "up"
     } else {
         fail "replica didn't sync in time"

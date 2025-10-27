@@ -243,7 +243,8 @@ int isClientMustHandledByMainThread(client *c) {
     if (c->flags & (CLIENT_CLOSE_ASAP |
                     CLIENT_PUBSUB | CLIENT_MONITOR | CLIENT_BLOCKED |
                     CLIENT_UNBLOCKED | CLIENT_TRACKING | CLIENT_LUA_DEBUG |
-                    CLIENT_LUA_DEBUG_SYNC))
+                    CLIENT_LUA_DEBUG_SYNC | CLIENT_ASM_MIGRATING |
+                    CLIENT_ASM_IMPORTING))
     {
         return 1;
     }
@@ -261,7 +262,8 @@ int isClientMustHandledByMainThread(client *c) {
      * to prevent race conditions with main thread when it feeds the replication
      * buffer. */
     if (c->flags & CLIENT_SLAVE &&
-        c->replstate == SLAVE_STATE_ONLINE &&
+        (c->replstate == SLAVE_STATE_ONLINE ||
+         c->replstate == SLAVE_STATE_SEND_BULK_AND_STREAM) &&
         c->repl_start_cmd_stream_on_ack == 0 &&
         c->ref_repl_start_node != NULL)
     {

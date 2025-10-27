@@ -180,10 +180,19 @@ start_server {overrides {save {}}} {
 
         assert_equal [count_log_message -2 "time out exceeded, failing over."] 1
 
-        # We should accept both psyncs, although this is the condition we might not
-        # since we didn't catch up.
-        assert_equal [expr [s 0 sync_partial_ok] - $initial_psyncs] 2
-        assert_equal [expr [s 0 sync_full] - $initial_syncs] 0
+        # We should accept both psyncs, although this is the condition we might
+        # not meet since we didn't catch up. This happens often if TSan is
+        # enabled as it slows down the execution time significantly.
+        set psyncs [expr [s 0 sync_partial_ok] - $initial_psyncs]
+        set full_syncs [expr [s 0 sync_full] - $initial_syncs]
+        if {$::tsan} {
+            assert_lessthan_equal $psyncs 2
+            assert_morethan_equal $full_syncs 0
+            assert_equal [expr $psyncs + $full_syncs] 2
+        } else {
+            assert_equal $psyncs 2
+            assert_equal $full_syncs 0
+        }
         assert_digests_match $node_0 $node_1 $node_2
     }
 
