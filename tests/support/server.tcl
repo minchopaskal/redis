@@ -37,7 +37,9 @@ proc check_sanitizer_errors stderr {
     set res [sanitizer_errors_from_file $stderr]
     if {$res != ""} {
         send_data_packet $::test_server_fd err "Sanitizer error: $res\n"
+        return 0
     }
+    return 1
 }
 
 proc clean_persistence config {
@@ -73,7 +75,10 @@ proc kill_server config {
             check_valgrind_errors [dict get $config stderr]
         }
 
-        check_sanitizer_errors [dict get $config stderr]
+        set asanres [check_sanitizer_errors [dict get $config stderr]]
+        if {!$asanres} {
+            dump_server_log $config
+        }
 
         # Remove this pid from the set of active pids in the test server.
         send_data_packet $::test_server_fd server-killed $pid
@@ -138,7 +143,10 @@ proc kill_server config {
         check_valgrind_errors [dict get $config stderr]
     }
 
-    check_sanitizer_errors [dict get $config stderr]
+    set asanres [check_sanitizer_errors [dict get $config stderr]]
+    if {!$asanres} {
+        dump_server_log $config
+    }
 
     # Remove this pid from the set of active pids in the test server.
     send_data_packet $::test_server_fd server-killed $pid
