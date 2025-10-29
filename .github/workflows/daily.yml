@@ -536,6 +536,7 @@ jobs:
       !contains(github.event.inputs.skipjobs, 'sanitizer')
     timeout-minutes: 14400
     strategy:
+      fail-fast: false
       matrix:
         compiler: [ gcc, clang ]
     env:
