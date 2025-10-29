@@ -560,6 +560,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install tcl8.6 tclx -y
+          gcc --version
       - name: test
         if: true && !contains(github.event.inputs.skiptests, 'redis')
         run: ./runtest --loops 20 --accurate --verbose --dump-logs ${{github.event.inputs.test_args}}
