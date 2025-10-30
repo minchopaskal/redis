@@ -161,9 +161,20 @@ proc search_pattern_list {value pattern_list {glob_pattern false}} {
     return 0
 }
 
+proc search_glob_in_list {glob_pattern value_list} {
+    foreach el $value_list {
+        if {[string length $el] == 0} { continue }
+
+        if {[string match $glob_pattern $el]} {
+            return 1
+        }
+    }
+    return 0
+}
+
 proc test {name code {okpattern undefined} {tags {}}} {
     # abort if test name in skiptests
-    if {[search_pattern_list $name $::skiptests]} {
+    if {[search_glob_in_list "*$name*" $::skiptests]} {
         incr ::num_skipped
         send_data_packet $::test_server_fd skip $name
         return
