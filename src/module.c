@@ -13002,11 +13002,14 @@ int moduleUnload(sds name, const char **errmsg, int forced_unload) {
     /* Remove from list of modules. */
     serverLog(LL_NOTICE,"Module %s unloaded",module->name);
     dictDelete(modules,module->name);
+    serverLog(LL_NOTICE,"dict delete");
     module->name = NULL; /* The name was already freed by dictDelete(). */
     moduleFreeModuleStructure(module);
+    serverLog(LL_NOTICE,"freemodulestructure finish");
 
     /* Recompute command bits for all users once the modules has been completely unloaded. */
     ACLRecomputeCommandBitsFromCommandRulesAllUsers();
+    serverLog(LL_NOTICE,"aclrecompute finish");
     return C_OK;
 }
 

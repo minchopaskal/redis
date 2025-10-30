@@ -556,10 +556,7 @@ jobs:
           repository: ${{ env.GITHUB_REPOSITORY }}
           ref: ${{ env.GITHUB_HEAD_REF }}
       - name: make
-        run: |
-          make noopt SANITIZER=address REDIS_CFLAGS='-DREDIS_TEST -Werror -DDEBUG_ASSERTIONS'
-          make clean -C tests/modules
-          make -C tests/modules # compile modules without ASan
+        run: make noopt SANITIZER=address REDIS_CFLAGS='-DREDIS_TEST -Werror -DDEBUG_ASSERTIONS'
       - name: testprep
         run: |
           sudo apt-get update
