@@ -3237,9 +3237,11 @@ static void internalAuth(client *c) {
  * When the user is omitted it means that we are trying to authenticate
  * against the default user. */
 void authCommand(client *c) {
+    serverLog(LL_NOTICE, "AUTH COMMAND...");
     /* Only two or three argument forms are allowed. */
     if (c->argc > 3) {
         addReplyErrorObject(c,shared.syntaxerr);
+        serverLog(LL_NOTICE, "AUTH COMMAND syntaxerr...");
         return;
     }
     /* Always redact the second argument */
@@ -3255,6 +3257,7 @@ void authCommand(client *c) {
             addReplyError(c,"AUTH <password> called without any password "
                             "configured for the default user. Are you sure "
                             "your configuration is correct?");
+            serverLog(LL_NOTICE, "AUTH COMMAND no pass...");
             return;
         }
 
@@ -3269,6 +3272,7 @@ void authCommand(client *c) {
          * Note: No user-defined ACL user can have this username (no spaces
          * allowed), thus no conflicts with ACL possible. */
         if (!strcmp(username->ptr, "internal connection")) {
+            serverLog(LL_NOTICE, "AUTH COMMAND internal connection...");
             internalAuth(c);
             return;
         }
@@ -3282,6 +3286,8 @@ void authCommand(client *c) {
         addAuthErrReply(c, err);
     }
     if (err) decrRefCount(err);
+
+    serverLog(LL_NOTICE, "AUTH COMMAND FINISH...");
 }
 
 /* Set the password for the "default" ACL user. This implements supports for
