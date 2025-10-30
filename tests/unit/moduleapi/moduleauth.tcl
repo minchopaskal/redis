@@ -405,6 +405,6 @@ start_server {tags {"modules external:skip"}} {
         # Delay the end of the test so that TCL doesn't send SIGTERM during the
         # fast memory test. Since the memory test tries to kill the threads this
         # prevents ASan complaining that the threads are already killed.
-        after 1000
+        after 10000
     }
 }
