@@ -400,7 +400,14 @@ start_server {tags {"modules external:skip"}} {
         assert_error {*WRONGPASS*} {r AUTH foo block_allow}
         assert_error {*WRONGPASS*} {r AUTH foo allow_two}
         assert_error {*WRONGPASS*} {r AUTH foo allow}
-        assert_match {*calls=5,*,rejected_calls=0,failed_calls=3} [cmdstat auth]
+
+        puts "calling INFO cmdstat"
+        set cmdstats [cmdstat auth]
+        puts "INFO success..."
+
+        assert_match {*calls=5,*,rejected_calls=0,failed_calls=3} $cmdstats
+
+        puts "Assert matched..."
     }
 
     test {delay...} {
