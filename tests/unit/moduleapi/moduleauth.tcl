@@ -401,10 +401,10 @@ start_server {tags {"modules external:skip"}} {
         assert_error {*WRONGPASS*} {r AUTH foo allow_two}
         assert_error {*WRONGPASS*} {r AUTH foo allow}
         assert_match {*calls=5,*,rejected_calls=0,failed_calls=3} [cmdstat auth]
+    }
 
-        # Delay the end of the test so that TCL doesn't send SIGTERM during the
-        # fast memory test. Since the memory test tries to kill the threads this
-        # prevents ASan complaining that the threads are already killed.
+    test {delay...} {
         after 10000
+        assert_equal 1 1
     }
 }
