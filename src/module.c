@@ -12987,7 +12987,7 @@ int moduleUnload(sds name, const char **errmsg, int forced_unload) {
     moduleUnregisterCleanup(module);
 
     /* Unload the dynamic library. */
-    if (dlclose(module->handle) == -1) {
+    if (dlclose(module->handle) != 0) {
         char *error = dlerror();
         if (error == NULL) error = "Unknown error";
         serverLog(LL_WARNING,"Error when trying to close the %s module: %s",
