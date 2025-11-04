@@ -117,7 +117,7 @@ int test_rm_register_auth_cb(RedisModuleCtx *ctx, RedisModuleString **argv, int 
  * `arg` is expected to contain the RedisModuleBlockedClient, username, and password.
  */
 void *AuthBlock_ThreadMain(void *arg) {
-    serverLog(LL_NOTICE, "AUTH BLOCK THREAD");
+    printf("AUTH BLOCK THREAD");
     sleep(5);
     void **targ = arg;
     RedisModuleBlockedClient *bc = targ[0];
@@ -126,14 +126,14 @@ void *AuthBlock_ThreadMain(void *arg) {
     const char *pwd = RedisModule_StringPtrLen(targ[2], NULL);
     if (!strcmp(user,"foo") && !strcmp(pwd,"block_allow")) {
         result = 1;
-        serverLog(LL_NOTICE, "AUTH BLOCK THREAD 1");
+        printf("AUTH BLOCK THREAD 1");
     }
     else if (!strcmp(user,"foo") && !strcmp(pwd,"block_deny")) {
-        serverLog(LL_NOTICE, "AUTH BLOCK THREAD 0");
+        printf("AUTH BLOCK THREAD 0");
         result = 0;
     }
     else if (!strcmp(user,"foo") && !strcmp(pwd,"block_abort")) {
-        serverLog(LL_NOTICE, "AUTH BLOCK THREAD ABORT");
+        printf("AUTH BLOCK THREAD ABORT");
         RedisModule_BlockedClientMeasureTimeEnd(bc);
         RedisModule_AbortBlock(bc);
         goto cleanup;
@@ -143,7 +143,7 @@ void *AuthBlock_ThreadMain(void *arg) {
     replyarg[0] = (void *) (uintptr_t) result;
     RedisModule_BlockedClientMeasureTimeEnd(bc);
     RedisModule_UnblockClient(bc, replyarg);
-    serverLog(LL_NOTICE, "AUTH BLOCK THREAD ABORT unblocked!!!!");
+    printf("AUTH BLOCK THREAD ABORT unblocked!!!!");
 cleanup:
     /* Free the username and password and thread / arg data. */
     RedisModule_FreeString(NULL, targ[1]);
@@ -192,7 +192,7 @@ void AuthBlock_FreeData(RedisModuleCtx *ctx, void *privdata) {
  * of blocking module auth.
  */
 int blocking_auth_cb(RedisModuleCtx *ctx, RedisModuleString *username, RedisModuleString *password, RedisModuleString **err) {
-    serverLog(LL_NOTICE, "BLOCKING AUTH CB");
+    printf("BLOCKING AUTH CB");
     REDISMODULE_NOT_USED(username);
     REDISMODULE_NOT_USED(password);
     REDISMODULE_NOT_USED(err);
