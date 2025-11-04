@@ -8192,7 +8192,7 @@ int attemptNextAuthCb(client *c, robj *username, robj *password, robj **err) {
         ctx.client = c;
         *err = NULL;
         c->module_auth_ctx = cur_auth_ctx;
-        serverLog(LL_NOTICE, "Attemting to call %p", (void*)cur_auth_ctx->auth_cb);
+        serverLog(LL_NOTICE, "Attemting to call %p", *(void **)(&cur_auth_ctx->auth_cb));
         result = cur_auth_ctx->auth_cb(&ctx, username, password, err);
         moduleFreeContext(&ctx);
         if (result == REDISMODULE_AUTH_HANDLED) break;
