@@ -117,7 +117,7 @@ int test_rm_register_auth_cb(RedisModuleCtx *ctx, RedisModuleString **argv, int 
  * `arg` is expected to contain the RedisModuleBlockedClient, username, and password.
  */
 void *AuthBlock_ThreadMain(void *arg) {
-    usleep(2000000);
+    usleep(10000);
     void **targ = arg;
     RedisModuleBlockedClient *bc = targ[0];
     int result = 2;
