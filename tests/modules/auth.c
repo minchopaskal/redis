@@ -118,7 +118,7 @@ int test_rm_register_auth_cb(RedisModuleCtx *ctx, RedisModuleString **argv, int 
  */
 void *AuthBlock_ThreadMain(void *arg) {
     printf("AUTH BLOCK THREAD");
-    sleep(5);
+    usleep(50000);
     void **targ = arg;
     RedisModuleBlockedClient *bc = targ[0];
     int result = 2;

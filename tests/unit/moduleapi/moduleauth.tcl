@@ -394,7 +394,7 @@ start_server {tags {"modules external:skip"}} {
         assert_equal {OK} [r AUTH foo allow]
 
         # Validate that the testacl module can be unloaded since blocking module auth is done.
-        r module unload testacl
+        assert_equal "OK" [r module unload testacl]
 
         # Validate that since all module auth cbs are unregistered, module auth attempts fail.
         assert_error {*WRONGPASS*} {r AUTH foo block_allow}
