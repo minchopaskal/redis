@@ -117,7 +117,13 @@ int test_rm_register_auth_cb(RedisModuleCtx *ctx, RedisModuleString **argv, int 
  * `arg` is expected to contain the RedisModuleBlockedClient, username, and password.
  */
 void *AuthBlock_ThreadMain(void *arg) {
-    printf("AUTH BLOCK THREAD");
+    char buf[64];
+    gettimeofday(&tv,NULL);
+    struct tm tm;
+    atomicGet(server.daylight_active, daylight_active);
+    nolocks_localtime(&tm,tv.tv_sec,server.timezone,daylight_active);
+    strftime(buf,sizeof(buf),"%d %b %Y %H:%M:%S.",&tm);
+    printf("%s: AUTH BLOCK THREAD\n", buf);
     usleep(500000);
     void **targ = arg;
     RedisModuleBlockedClient *bc = targ[0];
@@ -126,14 +132,14 @@ void *AuthBlock_ThreadMain(void *arg) {
     const char *pwd = RedisModule_StringPtrLen(targ[2], NULL);
     if (!strcmp(user,"foo") && !strcmp(pwd,"block_allow")) {
         result = 1;
-        printf("AUTH BLOCK THREAD 1");
+        printf("AUTH BLOCK THREAD 1\n");
     }
     else if (!strcmp(user,"foo") && !strcmp(pwd,"block_deny")) {
-        printf("AUTH BLOCK THREAD 0");
+        printf("AUTH BLOCK THREAD 0\n");
         result = 0;
     }
     else if (!strcmp(user,"foo") && !strcmp(pwd,"block_abort")) {
-        printf("AUTH BLOCK THREAD ABORT");
+        printf("AUTH BLOCK THREAD ABORT\n");
         RedisModule_BlockedClientMeasureTimeEnd(bc);
         RedisModule_AbortBlock(bc);
         goto cleanup;
@@ -143,7 +149,12 @@ void *AuthBlock_ThreadMain(void *arg) {
     replyarg[0] = (void *) (uintptr_t) result;
     RedisModule_BlockedClientMeasureTimeEnd(bc);
     RedisModule_UnblockClient(bc, replyarg);
-    printf("AUTH BLOCK THREAD ABORT unblocked!!!!");
+
+    gettimeofday(&tv,NULL);
+    atomicGet(server.daylight_active, daylight_active);
+    nolocks_localtime(&tm,tv.tv_sec,server.timezone,daylight_active);
+    strftime(buf,sizeof(buf),"%d %b %Y %H:%M:%S.",&tm);
+    printf("%s: AUTH BLOCK THREAD ABORT unblocked!!!!\n", buf);
 cleanup:
     /* Free the username and password and thread / arg data. */
     RedisModule_FreeString(NULL, targ[1]);
