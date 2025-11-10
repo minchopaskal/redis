@@ -285,7 +285,15 @@ void AuthBlock_FreeData(RedisModuleCtx *ctx, void *privdata) {
  * of blocking module auth.
  */
 int blocking_auth_cb(RedisModuleCtx *ctx, RedisModuleString *username, RedisModuleString *password, RedisModuleString **err) {
-    printf("BLOCKING AUTH CB");
+    char buf[64];
+    struct timeval tv;
+    gettimeofday(&tv,NULL);
+    struct tm tm;
+    nolocks_localtime(&tm,tv.tv_sec,getTimeZone(),1);
+    int off = strftime(buf,sizeof(buf),"%d %b %Y %H:%M:%S.",&tm);
+    snprintf(buf+off,sizeof(buf)-off,"%03d",(int)tv.tv_usec/1000);
+
+    printf("%s: BLOCKING AUTH CB\n", buf);
     REDISMODULE_NOT_USED(username);
     REDISMODULE_NOT_USED(password);
     REDISMODULE_NOT_USED(err);

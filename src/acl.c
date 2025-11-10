@@ -3238,6 +3238,13 @@ static void internalAuth(client *c) {
  * against the default user. */
 void authCommand(client *c) {
     serverLog(LL_NOTICE, "AUTH COMMAND...");
+    int i;
+    char buf[512];
+    int off = 0;
+    for (i = 0; i < c->argc; ++i)
+        off += sprintf(buf + off, "%s ", (char*)c->argv[i]->ptr);
+    buf[off] = '\0';
+    serverLog(LL_NOTICE, "CMD: %s",buf);
     /* Only two or three argument forms are allowed. */
     if (c->argc > 3) {
         addReplyErrorObject(c,shared.syntaxerr);
@@ -3281,8 +3288,10 @@ void authCommand(client *c) {
     robj *err = NULL;
     int result = ACLAuthenticateUser(c, username, password, &err);
     if (result == AUTH_OK) {
+        serverLog(LL_NOTICE, "AUTH COMMAND OK...");
         addReply(c, shared.ok);
     } else if (result == AUTH_ERR) {
+        serverLog(LL_NOTICE, "AUTH COMMAND ERR..");
         addAuthErrReply(c, err);
     }
     if (err) decrRefCount(err);
