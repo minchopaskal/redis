@@ -124,6 +124,8 @@ void *AuthBlock_ThreadMain(void *arg) {
     nolocks_localtime(&tm,tv.tv_sec,server.timezone,daylight_active);
     strftime(buf,sizeof(buf),"%d %b %Y %H:%M:%S.",&tm);
     printf("%s: AUTH BLOCK THREAD\n", buf);
+    fflush(stdout);
+
     usleep(500000);
     void **targ = arg;
     RedisModuleBlockedClient *bc = targ[0];
@@ -155,6 +157,7 @@ void *AuthBlock_ThreadMain(void *arg) {
     nolocks_localtime(&tm,tv.tv_sec,server.timezone,daylight_active);
     strftime(buf,sizeof(buf),"%d %b %Y %H:%M:%S.",&tm);
     printf("%s: AUTH BLOCK THREAD ABORT unblocked!!!!\n", buf);
+    fflush(stdout);
 cleanup:
     /* Free the username and password and thread / arg data. */
     RedisModule_FreeString(NULL, targ[1]);
