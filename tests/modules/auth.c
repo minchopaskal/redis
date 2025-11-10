@@ -190,7 +190,8 @@ void *AuthBlock_ThreadMain(void *arg) {
     gettimeofday(&tv,NULL);
     struct tm tm;
     nolocks_localtime(&tm,tv.tv_sec,getTimeZone(),1);
-    strftime(buf,sizeof(buf),"%d %b %Y %H:%M:%S.",&tm);
+    int off = strftime(buf,sizeof(buf),"%d %b %Y %H:%M:%S.",&tm);
+    snprintf(buf+off,sizeof(buf)-off,"%03d",(int)tv.tv_usec/1000);
     printf("%s: AUTH BLOCK THREAD\n", buf);
     fflush(stdout);
 
@@ -201,15 +202,25 @@ void *AuthBlock_ThreadMain(void *arg) {
     const char *user = RedisModule_StringPtrLen(targ[1], NULL);
     const char *pwd = RedisModule_StringPtrLen(targ[2], NULL);
     if (!strcmp(user,"foo") && !strcmp(pwd,"block_allow")) {
+        gettimeofday(&tv,NULL);
+        nolocks_localtime(&tm,tv.tv_sec,getTimeZone(),1);
+        off = strftime(buf,sizeof(buf),"%d %b %Y %H:%M:%S.",&tm);
+        snprintf(buf+off,sizeof(buf)-off,"%03d",(int)tv.tv_usec/1000);
+
         result = 1;
-        printf("AUTH BLOCK THREAD 1\n");
+        printf("%s: AUTH BLOCK THREAD 1\n", buf);
     }
     else if (!strcmp(user,"foo") && !strcmp(pwd,"block_deny")) {
         printf("AUTH BLOCK THREAD 0\n");
         result = 0;
     }
     else if (!strcmp(user,"foo") && !strcmp(pwd,"block_abort")) {
-        printf("AUTH BLOCK THREAD ABORT\n");
+        gettimeofday(&tv,NULL);
+        nolocks_localtime(&tm,tv.tv_sec,getTimeZone(),1);
+        off = strftime(buf,sizeof(buf),"%d %b %Y %H:%M:%S.",&tm);
+        snprintf(buf+off,sizeof(buf)-off,"%03d",(int)tv.tv_usec/1000);
+
+        printf("%s: AUTH BLOCK THREAD ABORT\n", buf);
         RedisModule_BlockedClientMeasureTimeEnd(bc);
         RedisModule_AbortBlock(bc);
         goto cleanup;
@@ -222,7 +233,8 @@ void *AuthBlock_ThreadMain(void *arg) {
 
     gettimeofday(&tv,NULL);
     nolocks_localtime(&tm,tv.tv_sec,getTimeZone(),1);
-    strftime(buf,sizeof(buf),"%d %b %Y %H:%M:%S.",&tm);
+    off = strftime(buf,sizeof(buf),"%d %b %Y %H:%M:%S.",&tm);
+    snprintf(buf+off,sizeof(buf)-off,"%03d",(int)tv.tv_usec/1000);
     printf("%s: AUTH BLOCK THREAD ABORT unblocked!!!!\n", buf);
     fflush(stdout);
 cleanup:
