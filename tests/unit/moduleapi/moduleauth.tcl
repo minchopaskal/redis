@@ -372,10 +372,11 @@ start_server {tags {"modules external:skip"}} {
         $rd AUTH foo block_allow
         wait_for_blocked_clients_count 1
 
-        # moduleone and moduletwo have module auth cbs registered. Because blocking module auth is
-        # ongoing, they cannot be unloaded.
+        # testacl module has module auth cbs registered. Because blocking module auth is
+        # ongoing, it cannot be unloaded.
         catch {r module unload testacl} e
         assert_match {*the module has blocked clients*} $e
+
         # The moduleauthtwo module can be unregistered because no client is blocked on it.
         assert_equal "OK" [r module unload moduleauthtwo]
 
@@ -393,10 +394,17 @@ start_server {tags {"modules external:skip"}} {
         # of the testacl module. Module based auth should succeed.
         assert_equal {OK} [r AUTH foo allow]
 
+        # The above `r AUTH foo allow` may have called the blocking auth function
+        # Since it starts a thread which sleeps for half a second (see auth.c)
+        # the call to `r module unload testacl` will cause the testacl module
+        # to be unloaded and after the sleep inside the started thread the
+        # runtime will try to execute non-existing code.
+        # This `after 1000` makes sure the thread spawned by the blocking auth cb
+        # has finished.
+        after 1000
+
         # Validate that the testacl module can be unloaded since blocking module auth is done.
         assert_equal "OK" [r module unload testacl]
-
-        after 1000
 
         # Validate that since all module auth cbs are unregistered, module auth attempts fail.
         assert_error {*WRONGPASS*} {r AUTH foo block_allow}
