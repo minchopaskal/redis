@@ -3242,7 +3242,7 @@ void authCommand(client *c) {
     char buf[512];
     int off = 0;
     for (i = 0; i < c->argc; ++i)
-        off += sprintf(buf + off, "%s ", (char*)c->argv[i]->ptr);
+        off += snprintf(buf + off, 512 - off, "%s ", (char*)c->argv[i]->ptr);
     buf[off] = '\0';
     serverLog(LL_NOTICE, "CMD: %s",buf);
     /* Only two or three argument forms are allowed. */
