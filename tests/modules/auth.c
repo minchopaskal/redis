@@ -186,6 +186,7 @@ long getTimeZone(void) {
 
 void *AuthBlock_ThreadMain(void *arg) {
     char buf[64];
+    struct timeval tv;
     gettimeofday(&tv,NULL);
     struct tm tm;
     nolocks_localtime(&tm,tv.tv_sec,getTimeZone(),1);
