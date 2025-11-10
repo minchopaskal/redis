@@ -220,8 +220,7 @@ void *AuthBlock_ThreadMain(void *arg) {
     RedisModule_UnblockClient(bc, replyarg);
 
     gettimeofday(&tv,NULL);
-    atomicGet(server.daylight_active, daylight_active);
-    nolocks_localtime(&tm,tv.tv_sec,getTimeZone(),daylight_active);
+    nolocks_localtime(&tm,tv.tv_sec,getTimeZone(),1);
     strftime(buf,sizeof(buf),"%d %b %Y %H:%M:%S.",&tm);
     printf("%s: AUTH BLOCK THREAD ABORT unblocked!!!!\n", buf);
     fflush(stdout);
