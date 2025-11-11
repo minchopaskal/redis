@@ -13,6 +13,7 @@
 // A simple global user
 static RedisModuleUser *global = NULL;
 static long long client_change_delta = 0;
+static pthread_t tid = NULL;
 
 void UserChangedCallback(uint64_t client_id, void *privdata) {
     REDISMODULE_NOT_USED(privdata);
@@ -199,17 +200,19 @@ int blocking_auth_cb(RedisModuleCtx *ctx, RedisModuleString *username, RedisModu
         return REDISMODULE_AUTH_HANDLED;
     }
     RedisModule_BlockedClientMeasureTimeStart(bc);
-    pthread_t tid;
     /* Allocate memory for information needed. */
     void **targ = RedisModule_Alloc(sizeof(void*)*3);
     targ[0] = bc;
     targ[1] = RedisModule_CreateStringFromString(NULL, username);
     targ[2] = RedisModule_CreateStringFromString(NULL, password);
     /* Create bg thread and pass the blockedclient, username and password to it. */
+    if (tid) pthread_join(tid, NULL);
     if (pthread_create(&tid, NULL, AuthBlock_ThreadMain, targ) != 0) {
         RedisModule_AbortBlock(bc);
+        RedisModule_FreeString(NULL, targ[1]);
+        RedisModule_FreeString(NULL, targ[2]);
+        RedisModule_Free(targ);
     }
-    pthread_detach(tid);
     return REDISMODULE_AUTH_HANDLED;
 }
 
@@ -263,6 +266,8 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
 
 int RedisModule_OnUnload(RedisModuleCtx *ctx) {
     UNUSED(ctx);
+
+    if (tid) pthread_join(tid, NULL);
 
     if (global)
         RedisModule_FreeModuleUser(global);
