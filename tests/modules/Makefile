@@ -24,12 +24,6 @@ else
 endif
 endif
 
-ifeq ($(SANITIZER),address)
-	MALLOC=libc
-	CFLAGS+=-fsanitize=address -fno-sanitize-recover=all -fno-omit-frame-pointer
-	LDFLAGS+=-fsanitize=address
-endif
-
 # This is a hack to override the default CC. When running with SANITIZER=memory
 # tough we want to keep the compiler as clang as MSan is not supported for gcc
 ifeq ($(uname_S),Linux)
