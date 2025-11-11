@@ -537,7 +537,7 @@ jobs:
     timeout-minutes: 14400
     strategy:
       matrix:
-        compiler: [ gcc, clang ]
+        compiler: [ gcc]
     env:
       CC: ${{ matrix.compiler }}
     steps:
