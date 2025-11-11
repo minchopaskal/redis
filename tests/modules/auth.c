@@ -320,6 +320,9 @@ int blocking_auth_cb(RedisModuleCtx *ctx, RedisModuleString *username, RedisModu
     /* Create bg thread and pass the blockedclient, username and password to it. */
     if (pthread_create(&tid, NULL, AuthBlock_ThreadMain, targ) != 0) {
         RedisModule_AbortBlock(bc);
+        RedisModule_Free(targ[1]);
+        RedisModule_Free(targ[2]);
+        RedisModule_Free(targ);
     }
     return REDISMODULE_AUTH_HANDLED;
 }
