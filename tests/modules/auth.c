@@ -13,7 +13,7 @@
 // A simple global user
 static RedisModuleUser *global = NULL;
 static long long client_change_delta = 0;
-static pthread_t tid = NULL;
+static pthread_t tid;
 
 void UserChangedCallback(uint64_t client_id, void *privdata) {
     REDISMODULE_NOT_USED(privdata);
