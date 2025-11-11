@@ -378,7 +378,7 @@ int RedisModule_OnUnload(RedisModuleCtx *ctx) {
     if (global)
         RedisModule_FreeModuleUser(global);
 
-    pthread_join(tid, NULL);
+    if (tid && pthread_cancel(tid) == 0) pthread_join(tid, NULL);
 
     return REDISMODULE_OK;
 }
