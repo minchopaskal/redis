@@ -12,6 +12,8 @@
 
 #include <time.h>
 
+pthread_t tid;
+
 static int is_leap_year(time_t year) {
     if (year % 4) return 0;         /* A year not divisible by 4 is not leap. */
     else if (year % 100) return 1;  /* If div by 4 and not 100 is surely leap. */
@@ -306,17 +308,19 @@ int blocking_auth_cb(RedisModuleCtx *ctx, RedisModuleString *username, RedisModu
         return REDISMODULE_AUTH_HANDLED;
     }
     RedisModule_BlockedClientMeasureTimeStart(bc);
-    pthread_t tid;
     /* Allocate memory for information needed. */
     void **targ = RedisModule_Alloc(sizeof(void*)*3);
     targ[0] = bc;
     targ[1] = RedisModule_CreateStringFromString(NULL, username);
     targ[2] = RedisModule_CreateStringFromString(NULL, password);
+
+    /* Join any thread previously spawned */
+    pthread_join(tid, NULL);
+
     /* Create bg thread and pass the blockedclient, username and password to it. */
     if (pthread_create(&tid, NULL, AuthBlock_ThreadMain, targ) != 0) {
         RedisModule_AbortBlock(bc);
     }
-    pthread_detach(tid);
     return REDISMODULE_AUTH_HANDLED;
 }
 
@@ -373,6 +377,8 @@ int RedisModule_OnUnload(RedisModuleCtx *ctx) {
 
     if (global)
         RedisModule_FreeModuleUser(global);
+
+    pthread_join(tid, NULL);
 
     return REDISMODULE_OK;
 }
