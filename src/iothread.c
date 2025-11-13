@@ -262,12 +262,20 @@ int isClientMustHandledByMainThread(client *c) {
      * to prevent race conditions with main thread when it feeds the replication
      * buffer. */
     if (c->flags & CLIENT_SLAVE &&
-        c->replstate == SLAVE_STATE_ONLINE &&
+        (c->replstate == SLAVE_STATE_ONLINE ||
+         c->replstate == SLAVE_STATE_SEND_BULK_AND_STREAM) &&
         c->repl_start_cmd_stream_on_ack == 0 &&
         c->ref_repl_start_node != NULL)
     {
         return 0;
     }
+    // if (c->flags & CLIENT_SLAVE &&
+    //     c->replstate == SLAVE_STATE_ONLINE &&
+    //     c->repl_start_cmd_stream_on_ack == 0 &&
+    //     c->ref_repl_start_node != NULL)
+    // {
+    //     return 0;
+    // }
 
     if (c->flags & (CLIENT_MASTER | CLIENT_SLAVE)) return 1;
 

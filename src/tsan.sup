@@ -20,8 +20,7 @@ race:malloc_mutex_trylock_final
 # - the race happens rarely
 race:connSocketAddr
 
-# Race between resetClientInternal in IO thread and replication buffer feeding
-# in main thread on client->flags. Since main thread only reads the flags
-# (not the same ones) it's safe to just ignore.
-race:replicationCheckHasMainChannel
-race:canFeedReplicaReplBuffer
+# Race between resetClientInternal in IO thread and reads in main thread on
+# client->flags. Since main thread only reads the flags (not the same ones)
+# it's safe to just ignore.
+race:resetClientInternal
