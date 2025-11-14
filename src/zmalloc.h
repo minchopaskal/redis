@@ -15,7 +15,11 @@
 #define __xstr(s) __str(s)
 #define __str(s) #s
 
-#if defined(USE_TCMALLOC)
+#if defined(USE_MIMALLOC)
+
+#include <mimalloc.h>
+
+#elif defined(USE_TCMALLOC)
 #define ZMALLOC_LIB ("tcmalloc-" __xstr(TC_VERSION_MAJOR) "." __xstr(TC_VERSION_MINOR))
 #include <google/tcmalloc.h>
 #if (TC_VERSION_MAJOR == 1 && TC_VERSION_MINOR >= 6) || (TC_VERSION_MAJOR > 1)
