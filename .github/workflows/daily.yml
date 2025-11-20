@@ -323,6 +323,10 @@ jobs:
     - name: test
       if: true && !contains(github.event.inputs.skiptests, 'redis')
       run: ./runtest --clients 1 --config io-threads 4 --accurate --verbose --tags "network iothreads psync2 repl" --dump-logs ${{github.event.inputs.test_args}}
+    - name: sentinel tests
+      if: true && !contains(github.event.inputs.skiptests, 'sentinel')
+      run: |
+        ./runtest-sentinel --config io-threads 2 ${{github.event.inputs.cluster_test_args}}
     - name: cluster tests
       if: true && !contains(github.event.inputs.skiptests, 'cluster')
       run: ./runtest-cluster --config io-threads 4 ${{github.event.inputs.cluster_test_args}}
