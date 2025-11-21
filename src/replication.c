@@ -98,14 +98,22 @@ unsigned long replicationLogicalReplicaCount(void) {
     return count;
 }
 
-int slaveFromIOThreadNeedsAckRead(client *slave) {
+int replicaFromIOThreadNeedsAckRead(client *slave) {
     serverAssert(slave->tid != IOTHREAD_MAIN_THREAD_ID);
 
     mstime_t ms_since_last_ack = mstime() - slave->io_last_ack_time;
     return ms_since_last_ack >= 500;
 }
 
-void putSlavesNeedingAckReadInPendingClientsToIOThreads(void) {
+/* Send IO thread replicas to their respective threads if any is currently in
+ * main thread.
+ * If the flag `check_ack` is raised - only send the replica to IO thread if 
+ * it needs to read ACK. */
+void sendReplicasToIOThread(int check_ack) {
+    if (server.io_threads_num <= 1) return;
+
+    serverAssert(pthread_equal(pthread_self(), server.main_thread_id));
+
     listIter li;
     listNode *ln;
     listRewind(server.slaves,&li);
@@ -114,7 +122,7 @@ void putSlavesNeedingAckReadInPendingClientsToIOThreads(void) {
 
         if (slave->tid != IOTHREAD_MAIN_THREAD_ID &&
             slave->running_tid == IOTHREAD_MAIN_THREAD_ID &&
-            slaveFromIOThreadNeedsAckRead(slave))
+            (!check_ack || replicaFromIOThreadNeedsAckRead(slave)))
         {
             putInPendingClienstForIOThreads(slave);
         }

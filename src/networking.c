@@ -2340,7 +2340,7 @@ int writeToClient(client *c, int handler_installed) {
          * If some time has passed since we received ACK from replica we keep it
          * in IO thread so it has the chance to read it. */
         if (c->flags & CLIENT_SLAVE && c->running_tid != IOTHREAD_MAIN_THREAD_ID &&
-            !slaveFromIOThreadNeedsAckRead(c))
+            !replicaFromIOThreadNeedsAckRead(c))
         {
             enqueuePendingClientsToMainThread(c, 0);
         }
@@ -2569,7 +2569,7 @@ int processInlineBuffer(client *c, pendingCommand *pcmd) {
              *     refreshGoodSlavesCount()
              *   - we need a higher granularity for the check if the replica
              *     client needs to be send from main to IO thread for ACK read.
-             *     see slaveFromIOThreadNeedsAckRead()
+             *     see replicaFromIOThreadNeedsAckRead()
              * Note c->repl_ack_time will still be updated in
              * updateClientDataFromIOThread with the value of c->io_last_ack_time
              * when the client moves from IO to main thread. */

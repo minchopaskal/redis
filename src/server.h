@@ -3305,8 +3305,8 @@ void replDataBufInit(replDataBuf *buf);
 void replDataBufClear(replDataBuf *buf);
 void replDataBufReadFromConn(connection *conn, replDataBuf *buf, void (*error_handler)(connection *conn));
 int replDataBufStreamToDb(replDataBuf *buf, replDataBufToDbCtx *ctx);
-int slaveFromIOThreadNeedsAckRead(client *slave);
-void putSlavesNeedingAckReadInPendingClientsToIOThreads(void);
+int replicaFromIOThreadNeedsAckRead(client *slave);
+void sendReplicasToIOThread(int check_ack);
 int runConnectedMasterClientReplicationCron(void);
 
 /* Generic persistence functions */
