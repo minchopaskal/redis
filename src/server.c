@@ -1827,18 +1827,7 @@ static void sendGetackToReplicas(void) {
 
     /* Since we want to read the ACK ASAP we make sure to return any replicas
      * in main thread to IO thread ASAP. */
-    listIter li;
-    listNode *ln;
-    listRewind(server.slaves,&li);
-    while((ln = listNext(&li))) {
-        client *slave = ln->value;
-
-        if (slave->tid != IOTHREAD_MAIN_THREAD_ID &&
-            slave->running_tid == IOTHREAD_MAIN_THREAD_ID)
-        {
-            putInPendingClienstForIOThreads(slave);
-        }
-    }
+    sendReplicasToIOThread(0);
 }
 
 extern int ProcessingEventsWhileBlocked;
@@ -2007,7 +1996,7 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
      * repl_timeout. The below function only checks for time passed since last
      * ACK read. Replica clients that send REPLCONF GETACK are immediately
      * put in the pendingClientsToIOThreads queue inside sendGetackToReplicas */
-    putSlavesNeedingAckReadInPendingClientsToIOThreads();
+    sendReplicasToIOThread(1);
 
     /* Let io thread to handle its pending clients. */
     sendPendingClientsToIOThreads();
