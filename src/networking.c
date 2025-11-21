@@ -2873,7 +2873,8 @@ static inline void resetClientInternal(client *c, int num_pcmds_to_free) {
     c->cur_script = NULL;
     c->slot = -1;
     c->cluster_compatibility_check_slot = -2;
-    c->flags &= ~CLIENT_EXECUTING_COMMAND;
+    if (c->flags & CLIENT_EXECUTING_COMMAND)
+        c->flags &= ~CLIENT_EXECUTING_COMMAND;
 
     /* Make sure the duration has been recorded to some command. */
     serverAssert(c->duration == 0);
@@ -2887,19 +2888,27 @@ static inline void resetClientInternal(client *c, int num_pcmds_to_free) {
 
     /* We clear the ASKING flag as well if we are not inside a MULTI, and
      * if what we just executed is not the ASKING command itself. */
-    if (!(c->flags & CLIENT_MULTI) && prevcmd != askingCommand)
+    if (c->flags & CLIENT_ASKING && !(c->flags & CLIENT_MULTI) &&
+        prevcmd != askingCommand)
+    {
         c->flags &= ~CLIENT_ASKING;
+    }
 
     /* We do the same for the CACHING command as well. It also affects
      * the next command or transaction executed, in a way very similar
      * to ASKING. */
-    if (!(c->flags & CLIENT_MULTI) && prevcmd != clientCommand)
+    if (c->flags & CLIENT_TRACKING_CACHING && !(c->flags & CLIENT_MULTI) &&
+        prevcmd != clientCommand)
+    {
         c->flags &= ~CLIENT_TRACKING_CACHING;
+    }
 
     /* Remove the CLIENT_REPLY_SKIP flag if any so that the reply
      * to the next command will be sent, but set the flag if the command
      * we just processed was "CLIENT REPLY SKIP". */
-    c->flags &= ~CLIENT_REPLY_SKIP;
+    if (c->flags & CLIENT_REPLY_SKIP)
+        c->flags &= ~CLIENT_REPLY_SKIP;
+
     if (c->flags & CLIENT_REPLY_SKIP_NEXT) {
         c->flags |= CLIENT_REPLY_SKIP;
         c->flags &= ~CLIENT_REPLY_SKIP_NEXT;
