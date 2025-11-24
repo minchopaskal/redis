@@ -1626,10 +1626,28 @@ int loadSingleAppendOnlyFile(char *filename) {
                 else
                     goto fmterr;
             }
-            len = strtol(buf+1,NULL,10);
+            len = strtoul(buf+1,NULL,10);
+            if (unlikely(len > LONG_MAX)) {
+                serverLog(LL_WARNING,
+                    "Error reading AOF %s - invalid argument length",
+                    filename);
+                fakeClient->argc = j; /* Free up to j-1. */
+                freeClientArgv(fakeClient);
+                ret = AOF_FAILED;
+                goto cleanup;
+            }
 
             /* Read it into a string object. */
-            argsds = sdsnewlen(SDS_NOINIT,len);
+            argsds = sdstrynewlen(SDS_NOINIT,len);
+            if (unlikely(!argsds)) {
+                serverLog(LL_WARNING,
+                    "Error reading AOF %s - could not restore big argument",
+                    filename);
+                fakeClient->argc = j; /* Free up to j-1. */
+                freeClientArgv(fakeClient);
+                ret = AOF_FAILED;
+                goto cleanup;
+            }
             if (len && fread(argsds,len,1,fp) == 0) {
                 sdsfree(argsds);
                 fakeClient->argc = j; /* Free up to j-1. */
