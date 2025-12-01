@@ -1840,6 +1840,14 @@ typedef enum childInfoType {
     CHILD_INFO_TYPE_MODULE_COW_SIZE
 } childInfoType;
 
+/* Forward declaration of topK structure used for hotkeys detection */
+struct topK;
+
+typedef struct hotkeysStats {
+    struct topK *cpu;
+    struct topK *net;
+} hotkeysStats;
+
 struct redisServer {
     /* General */
     pid_t pid;                  /* Main process pid. */
@@ -2038,6 +2046,8 @@ struct redisServer {
        but excluding read, write and AOF, which are counted by other sets of metrics. */
     monotime el_cron_duration;
     durationStats duration_stats[EL_DURATION_TYPE_NUM];
+
+    hotkeysStats hotkeys;
 
     /* Configuration */
     int verbosity;                  /* Loglevel in redis.conf */

@@ -31,6 +31,7 @@
 #include "cluster_asm.h"
 #include "fwtree.h"
 #include "estore.h"
+#include "topk.h"
 
 #include <time.h>
 #include <signal.h>
@@ -3063,6 +3064,9 @@ void initServer(void) {
         initServerClientMemUsageBuckets();
 
     prefetchCommandsBatchInit();
+
+    server.hotkeys.cpu = topKCreate(100, 460, 5, 0.9);
+    server.hotkeys.net = topKCreate(100, 460, 5, 0.9);
 }
 
 void initListeners(void) {
@@ -3908,20 +3912,57 @@ void call(client *c, int flags) {
         replicationFeedMonitors(c,server.monitors,c->db->id,argv,argc);
     }
 
-    /* Clear the original argv.
-     * If the client is blocked we will handle slowlog when it is unblocked. */
-    if (!(c->flags & CLIENT_BLOCKED))
-        freeClientOriginalArgv(c);
-
     /* Populate the per-command and per-slot statistics that we show in INFO commandstats and CLUSTER SLOT-STATS,
      * respectively. If the client is blocked we will handle latency stats and duration when it is unblocked. */
     if (update_command_stats && !(c->flags & CLIENT_BLOCKED)) {
+        robj **argv = c->original_argv ? c->original_argv : c->argv;
+        int argc = c->original_argv ? c->original_argc : c->argc;
+
         real_cmd->calls++;
         real_cmd->microseconds += c->duration;
         if (server.latency_tracking_enabled && !(c->flags & CLIENT_BLOCKED))
             updateCommandLatencyHistogram(&(real_cmd->latency_histogram), c->duration*1000);
         clusterSlotStatsAddCpuDuration(c, c->duration);
+
+        /* Behind a guard of course */
+        getKeysResult keys_result = GETKEYS_RESULT_INIT;
+        if (getKeysFromCommandWithSpecs(c->realcmd, argv, argc, GET_KEYSPEC_DEFAULT, &keys_result) != 0)
+        {
+            int numkeys = keys_result.numkeys;
+            uint64_t bytes = (c->net_input_bytes_curr_cmd + c->net_output_bytes_curr_cmd) / numkeys;
+            for (int i = 0; i < numkeys; ++i) {
+                int pos = keys_result.keys[i].pos;
+
+                char *ret = topKInsert(server.hotkeys.cpu, argv[pos]->ptr, sdslen(argv[pos]->ptr), max(duration / numkeys, 1));
+                if (ret) zfree(ret);
+
+                ret = topKInsert(server.hotkeys.net, argv[pos]->ptr, sdslen(argv[pos]->ptr), max(bytes, 1));
+                if (ret) zfree(ret);
+            }
+        }
+        getKeysFreeResult(&keys_result);
+
+        // printf("\nTOPK BY CPU LIST BEGIN\n");
+        // topKHeapBucket *list = topKList(server.hotkeys.cpu);
+        // for (int i = 0; i < 5; ++i) {
+        //     printf("%d) %s score: %llu\n", i, list[i].item, list[i].count);
+        // }
+        // zfree(list);
+        // printf("\nTOPK LIST END\n");
+        //
+        // printf("\nTOPK BY NET LIST BEGIN\n");
+        // list = topKList(server.hotkeys.net);
+        // for (int i = 0; i < 5; ++i) {
+        //     printf("%d) %s score: %llu\n", i, list[i].item, list[i].count);
+        // }
+        // zfree(list);
+        // printf("\nTOPK LIST END\n");
     }
+
+    /* Clear the original argv.
+     * If the client is blocked we will handle slowlog when it is unblocked. */
+    if (!(c->flags & CLIENT_BLOCKED))
+        freeClientOriginalArgv(c);
 
     /* The duration needs to be reset after each call except for a blocked command,
      * which is expected to record and reset the duration after unblocking. */
