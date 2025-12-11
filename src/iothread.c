@@ -10,10 +10,6 @@
 
 #include "server.h"
 
-/* Replicates the behaviour of run_with_period used in serverCron but for
- * IO threads. IO threads use default Hz for now. */
-#define run_with_period_io(_t_, _ms_) _run_with_period((_t_)->cronloops, (_ms_), CONFIG_DEFAULT_HZ)
-
 /* IO threads. */
 static IOThread IOThreads[IO_THREADS_MAX_NUM];
 
@@ -865,23 +861,9 @@ void IOThreadClientsCron(IOThread *t) {
     listRewind(t->clients, &li);
     while ((ln = listNext(&li)) && iterations--) {
         client *c = listNodeValue(ln);
-        /* Master clients are handled by IOThreadReplicationCron */
-        if (c->flags & CLIENT_MASTER) continue;
         /* Mark the client as pending cron, main thread will process it. */
         c->io_flags |= CLIENT_IO_PENDING_CRON;
         enqueuePendingClientsToMainThread(c, 0);
-    }
-}
-
-void IOThreadReplicationCron(IOThread *t) {
-    if (t->master)
-        serverAssert(t->master->tid == t->id &&
-                     t->master->running_tid == t->master->tid);
-
-    /* Send to main thread so that processClientsFromIOThread can check if it
-     * needs to call runConnectedMasterClientReplicationCron */
-    if (t->master && !(t->master->flags & CLIENT_PRE_PSYNC)) {
-        enqueuePendingClientsToMainThread(t->master, 0);
     }
 }
 
@@ -892,9 +874,6 @@ int IOThreadCron(struct aeEventLoop *eventLoop, long long id, void *clientData) 
     UNUSED(eventLoop);
     UNUSED(id);
     IOThread *t = clientData;
-
-    /* Run cron tasks for the clients in the IO thread. */
-    run_with_period_io(t, 500) IOThreadReplicationCron(t);
 
     IOThreadClientsCron(t);
 
