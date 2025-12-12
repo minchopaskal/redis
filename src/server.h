@@ -1593,6 +1593,10 @@ typedef struct client {
     unsigned long long commands_processed; /* Total count of commands this client executed. */
     struct asmTask *task;       /* Atomic slot migration task */
     char *node_id;              /* Node ID to connect to for atomic slot migration */
+
+    redisAtomic int pending_ack; /* Flag indicating a replica residing in main
+                                  * thread needs to return back to IO thread
+                                  * to read ACK message. */
 } client;
 
 typedef struct __attribute__((aligned(CACHE_LINE_SIZE))) {
@@ -3358,7 +3362,7 @@ void replDataBufInit(replDataBuf *buf);
 void replDataBufClear(replDataBuf *buf);
 void replDataBufReadFromConn(connection *conn, replDataBuf *buf, void (*error_handler)(connection *conn));
 int replDataBufStreamToDb(replDataBuf *buf, replDataBufToDbCtx *ctx);
-int replicaFromIOThreadNeedsAckRead(client *slave);
+int replicaFromIOThreadHasPendingAck(client *c);
 void sendReplicasToIOThread(int check_ack);
 int runConnectedMasterClientReplicationCron(void);
 
