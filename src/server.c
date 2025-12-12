@@ -31,7 +31,7 @@
 #include "cluster_asm.h"
 #include "fwtree.h"
 #include "estore.h"
-#include "topk.h"
+#include "chk.h"
 
 #include <time.h>
 #include <signal.h>
@@ -3065,8 +3065,8 @@ void initServer(void) {
 
     prefetchCommandsBatchInit();
 
-    server.hotkeys.cpu = topKCreate(100, 460, 5, 0.9);
-    server.hotkeys.net = topKCreate(100, 460, 5, 0.9);
+    server.hotkeys.cpu = chkTopKCreate(10, 1024, 1.08);
+    server.hotkeys.net = chkTopKCreate(10, 256, 1.08);
 }
 
 void initListeners(void) {
@@ -3933,17 +3933,17 @@ void call(client *c, int flags) {
             for (int i = 0; i < numkeys; ++i) {
                 int pos = keys_result.keys[i].pos;
 
-                char *ret = topKInsert(server.hotkeys.cpu, argv[pos]->ptr, sdslen(argv[pos]->ptr), max(duration / numkeys, 1));
+                char *ret = chkTopKUpdate(server.hotkeys.cpu, argv[pos]->ptr, sdslen(argv[pos]->ptr), max(duration / numkeys, 1));
                 if (ret) zfree(ret);
 
-                ret = topKInsert(server.hotkeys.net, argv[pos]->ptr, sdslen(argv[pos]->ptr), max(bytes, 1));
+                ret = chkTopKUpdate(server.hotkeys.net, argv[pos]->ptr, sdslen(argv[pos]->ptr), max(bytes, 1));
                 if (ret) zfree(ret);
             }
         }
         getKeysFreeResult(&keys_result);
 
         // printf("\nTOPK BY CPU LIST BEGIN\n");
-        // topKHeapBucket *list = topKList(server.hotkeys.cpu);
+        // chkHeapBucket *list = chkTopKList(server.hotkeys.cpu);
         // for (int i = 0; i < 5; ++i) {
         //     printf("%d) %s score: %llu\n", i, list[i].item, list[i].count);
         // }
@@ -3951,7 +3951,7 @@ void call(client *c, int flags) {
         // printf("\nTOPK LIST END\n");
         //
         // printf("\nTOPK BY NET LIST BEGIN\n");
-        // list = topKList(server.hotkeys.net);
+        // list = chkTopKList(server.hotkeys.net);
         // for (int i = 0; i < 5; ++i) {
         //     printf("%d) %s score: %llu\n", i, list[i].item, list[i].count);
         // }

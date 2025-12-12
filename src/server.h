@@ -1841,11 +1841,11 @@ typedef enum childInfoType {
 } childInfoType;
 
 /* Forward declaration of topK structure used for hotkeys detection */
-struct topK;
+struct chkTopK;
 
 typedef struct hotkeysStats {
-    struct topK *cpu;
-    struct topK *net;
+    struct chkTopK *cpu;
+    struct chkTopK *net;
 } hotkeysStats;
 
 struct redisServer {
