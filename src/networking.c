@@ -2336,13 +2336,10 @@ int writeToClient(client *c, int handler_installed) {
 
         /* If replica client has send all the replication data it knows about
          * we send it to main thread so it can receive new repl data ASAP.
-         *
-         * If some time has passed since we received ACK from replica we keep it
-         * in IO thread so it has the chance to read it. */
-        if (c->flags & CLIENT_SLAVE && c->running_tid != IOTHREAD_MAIN_THREAD_ID &&
-            !replicaFromIOThreadNeedsAckRead(c))
-        {
-            enqueuePendingClientsToMainThread(c, 0);
+         * Note, that we keep it in IO thread in case we have a pending ACK read. */
+        if (c->flags & CLIENT_SLAVE && c->running_tid != IOTHREAD_MAIN_THREAD_ID) {
+            if (!replicaFromIOThreadHasPendingAck(c))
+                enqueuePendingClientsToMainThread(c, 0);
         }
     }
     /* Update client's memory usage after writing.
@@ -3232,6 +3229,10 @@ int processInputBuffer(client *c) {
              * execute the command here. All we can do is to flag the client
              * as one that needs to process the command. */
             if (c->running_tid != IOTHREAD_MAIN_THREAD_ID) {
+                /* Clear the pending flag as we read the ACK */
+                if (c->flags & CLIENT_SLAVE)
+                    atomicSetWithSync(c->pending_ack, 0);
+
                 c->io_flags |= CLIENT_IO_PENDING_COMMAND;
                 enqueuePendingClientsToMainThread(c, 0);
                 break;
@@ -3285,7 +3286,18 @@ void readQueryFromClient(connection *conn) {
     client *c = connGetPrivateData(conn);
     int nread, big_arg = 0;
     size_t qblen, readlen;
-    if (!(c->io_flags & CLIENT_IO_READ_ENABLED)) return;
+
+    if (!(c->io_flags & CLIENT_IO_READ_ENABLED)) {
+        /* Replica client can only receive ACK messages. Make sure to notify
+         * the main thread that it needs to return back to IO thread to read
+         * the message.
+         * Note this is not an active notification - main thread checks if the
+         * flag is raised during beforeSleep - see sendReplicasToIOThread */
+        if (c->flags & CLIENT_SLAVE && c->running_tid == IOTHREAD_MAIN_THREAD_ID)
+            atomicSetWithSync(c->pending_ack, 1);
+        return;
+    }
+
     c->read_error = 0;
 
     /* Update the number of reads of io threads on server */

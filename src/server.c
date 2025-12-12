@@ -1944,11 +1944,12 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
 
     /* IO thread replica clients that are waiting for new replication data will
      * stay indefinitely in main thread if there is no new data. We must make
-     * sure to send them to IO thread from time to time to give them chance to
+     * sure to send them to IO thread so as to give them chance to
      * read the ACK message. Otherwise, they will be disconnected after
-     * repl_timeout. The below function only checks for time passed since last
-     * ACK read. Replica clients that send REPLCONF GETACK are immediately
-     * put in the pendingClientsToIOThreads queue inside sendGetackToReplicas */
+     * repl_timeout. The below function only checks if IO thread has raised the
+     * flag that there is pending ACK message. Replica clients that send
+     * REPLCONF GETACK are immediately put in the pendingClientsToIOThreads
+     * queue inside sendGetackToReplicas */
     sendReplicasToIOThread(1);
 
     /* Let io thread to handle its pending clients. */
