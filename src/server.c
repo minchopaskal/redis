@@ -3925,22 +3925,25 @@ void call(client *c, int flags) {
         clusterSlotStatsAddCpuDuration(c, c->duration);
 
         /* Behind a guard of course */
-        getKeysResult keys_result = GETKEYS_RESULT_INIT;
-        if (getKeysFromCommandWithSpecs(c->realcmd, argv, argc, GET_KEYSPEC_DEFAULT, &keys_result) != 0)
-        {
-            int numkeys = keys_result.numkeys;
-            uint64_t bytes = (c->net_input_bytes_curr_cmd + c->net_output_bytes_curr_cmd) / numkeys;
-            for (int i = 0; i < numkeys; ++i) {
-                int pos = keys_result.keys[i].pos;
+        double sample_ratio = 100.;
+        if (rand() / (double)RAND_MAX < 1./sample_ratio) {
+            getKeysResult keys_result = GETKEYS_RESULT_INIT;
+            if (getKeysFromCommandWithSpecs(c->realcmd, argv, argc, GET_KEYSPEC_DEFAULT, &keys_result) != 0)
+            {
+                int numkeys = keys_result.numkeys;
+                uint64_t bytes = (c->net_input_bytes_curr_cmd + c->net_output_bytes_curr_cmd) / numkeys;
+                for (int i = 0; i < numkeys; ++i) {
+                    int pos = keys_result.keys[i].pos;
 
-                char *ret = chkTopKUpdate(server.hotkeys.cpu, argv[pos]->ptr, sdslen(argv[pos]->ptr), max(duration / numkeys, 1));
-                if (ret) zfree(ret);
+                    char *ret = chkTopKUpdate(server.hotkeys.cpu, argv[pos]->ptr, sdslen(argv[pos]->ptr), max(duration / numkeys, 1));
+                    if (ret) zfree(ret);
 
-                ret = chkTopKUpdate(server.hotkeys.net, argv[pos]->ptr, sdslen(argv[pos]->ptr), max(bytes, 1));
-                if (ret) zfree(ret);
+                    ret = chkTopKUpdate(server.hotkeys.net, argv[pos]->ptr, sdslen(argv[pos]->ptr), max(bytes, 1));
+                    if (ret) zfree(ret);
+                }
             }
+            getKeysFreeResult(&keys_result);
         }
-        getKeysFreeResult(&keys_result);
 
         // printf("\nTOPK BY CPU LIST BEGIN\n");
         // chkHeapBucket *list = chkTopKList(server.hotkeys.cpu);
