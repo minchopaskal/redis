@@ -780,12 +780,8 @@ int processClientsFromMainThread(IOThread *t) {
             connSetReadHandler(c->conn, readQueryFromClient);
         }
 
-        /* Cache a pointer to the master so we can quickly check if it needs
-         * to be send to main thread for its replication cron in case it's
-         * waiting for long inside the IO thread */
-        if (c->flags & CLIENT_MASTER) {
-            t->master = c;
-        }
+        /* Cache the master client. */
+        if (c->flags & CLIENT_MASTER) t->master = c;
 
         /* If the client has pending replies, write replies to client. */
         if (clientHasPendingReplies(c)) {
