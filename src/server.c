@@ -1822,12 +1822,6 @@ static void sendGetackToReplicas(void) {
     argv[1] = shared.getack;
     argv[2] = shared.special_asterick; /* Not used argument. */
     replicationFeedSlaves(server.slaves, -1, argv, 3);
-
-    if (server.io_threads_num == 1) return;
-
-    /* Since we want to read the ACK ASAP we make sure to return any replicas
-     * in main thread to IO thread ASAP. */
-    sendReplicasToIOThread(0);
 }
 
 extern int ProcessingEventsWhileBlocked;
@@ -1989,15 +1983,9 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
     /* Handle writes with pending output buffers. */
     handleClientsWithPendingWrites();
 
-    /* IO thread replica clients that are waiting for new replication data will
-     * stay indefinitely in main thread if there is no new data. We must make
-     * sure to send them to IO thread so as to give them chance to
-     * read the ACK message. Otherwise, they will be disconnected after
-     * repl_timeout. The below function only checks if IO thread has raised the
-     * flag that there is pending ACK message. Replica clients that send
-     * REPLCONF GETACK are immediately put in the pendingClientsToIOThreads
-     * queue inside sendGetackToReplicas */
-    sendReplicasToIOThread(1);
+    /* Check if IO thread replicas have any pending read or writes and send them
+     * back to their threads if so. */
+    putReplicasInPendingClientsToIOThreads();
 
     /* Let io thread to handle its pending clients. */
     sendPendingClientsToIOThreads();

@@ -2764,7 +2764,7 @@ int writeToClient(client *c, int handler_installed) {
             tryUnlinkClientFromPendingRefReply(c, 1);
 
         /* If replica client has send all the replication data it knows about
-         * we send it to main thread so it can receive new repl data ASAP.
+         * we send it to main thread so it can pick up new repl data ASAP.
          * Note, that we keep it in IO thread in case we have a pending ACK read. */
         if (c->flags & CLIENT_SLAVE && c->running_tid != IOTHREAD_MAIN_THREAD_ID) {
             if (!replicaFromIOThreadHasPendingAck(c))
@@ -2797,6 +2797,11 @@ int handleClientsWithPendingWrites(void) {
     listRewind(server.clients_pending_write,&li);
     while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
+
+        /* We handle IO thread replicas in putReplicasInPendingClientsToIOThreads */
+        if (c->flags & CLIENT_SLAVE && c->tid != IOTHREAD_MAIN_THREAD_ID)
+            continue;
+
         c->flags &= ~CLIENT_PENDING_WRITE;
         listUnlinkNode(server.clients_pending_write,ln);
 
@@ -2806,16 +2811,6 @@ int handleClientsWithPendingWrites(void) {
 
         /* Don't write to clients that are going to be closed anyway. */
         if (c->flags & CLIENT_CLOSE_ASAP) continue;
-
-        /* We update the cached values of last repl buffer node and its used
-         * count for IO thread replicas so that we avoid contention on said
-         * last node when IO thread reads from it and main thread writes to it
-         * in feedReplicationBuffer.
-         * See replBufBlock for more info. */
-        if (c->flags & CLIENT_SLAVE && c->tid != IOTHREAD_MAIN_THREAD_ID) {
-            putInPendingClienstForIOThreads(c);
-            continue;
-        }
 
         /* Let IO thread handle the client if possible. */
         if (server.io_threads_num > 1 &&
@@ -3662,10 +3657,6 @@ int processInputBuffer(client *c) {
              * execute the command here. All we can do is to flag the client
              * as one that needs to process the command. */
             if (c->running_tid != IOTHREAD_MAIN_THREAD_ID) {
-                /* Clear the pending flag as we read the ACK */
-                if (c->flags & CLIENT_SLAVE)
-                    atomicSetWithSync(c->pending_ack, 0);
-
                 c->io_flags |= CLIENT_IO_PENDING_COMMAND;
                 enqueuePendingClientsToMainThread(c, 0);
                 break;
@@ -3721,14 +3712,10 @@ void readQueryFromClient(connection *conn) {
     size_t qblen, readlen;
 
     if (!(c->io_flags & CLIENT_IO_READ_ENABLED)) {
-        /* Replica client can only receive ACK messages. Make sure to notify
-         * the main thread that it needs to return back to IO thread to read
-         * the message.
-         * Note this is not an active notification - main thread checks if the
-         * flag is raised during beforeSleep - see sendReplicasToIOThread */
-        if (c->flags & CLIENT_SLAVE && c->running_tid == IOTHREAD_MAIN_THREAD_ID)
-            atomicSetWithSync(c->pending_ack, 1);
+        atomicSetWithSync(c->pending_read, 1);
         return;
+    } else if (server.io_threads_num > 1) {
+        atomicSetWithSync(c->pending_read, 0);
     }
 
     c->read_error = 0;
