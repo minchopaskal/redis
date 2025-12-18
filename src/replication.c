@@ -101,16 +101,15 @@ unsigned long replicationLogicalReplicaCount(void) {
 int replicaFromIOThreadHasPendingAck(client *c) {
     serverAssert(c->tid != IOTHREAD_MAIN_THREAD_ID);
 
-    int pending_ack;
-    atomicGetWithSync(c->pending_ack, pending_ack);
-    return pending_ack;
+    int pending_read;
+    atomicGetWithSync(c->pending_read, pending_read);
+    return pending_read;
 }
 
-/* Send IO thread replicas to their respective threads if any is currently in
- * main thread.
- * If the flag `check_ack` is raised - only send the replica to IO thread if 
- * it needs to read ACK. */
-void sendReplicasToIOThread(int check_ack) {
+/* Send replicas to their respective IO threads if it has pending reads or
+ * writes. Otherwise it remains in main thread so it can check for new data in
+ * the replication buffer ASAP. */
+void putReplicasInPendingClientsToIOThreads(void) {
     if (server.io_threads_num <= 1) return;
 
     serverAssert(pthread_equal(pthread_self(), server.main_thread_id));
@@ -126,20 +125,24 @@ void sendReplicasToIOThread(int check_ack) {
         {
             continue;
         }
-
-        if (check_ack && !replicaFromIOThreadHasPendingAck(slave))
-            continue;
-
-        putInPendingClienstForIOThreads(slave);
+ 
+        if (slave->flags & CLIENT_PENDING_WRITE ||
+            replicaFromIOThreadHasPendingAck(slave))
+        {
+            putInPendingClienstForIOThreads(slave);
+        }
     }
 }
 
 /* Run some cron tasks for a connected master client. Return 1 when the client
  * is freed, 0 otherwise. */
-int runConnectedMasterClientReplicationCron(void) {
+int replicationCronRunMasterClient(void) {
+    if (!server.masterhost || !server.master) return 0;
+
+    if (server.master->running_tid != IOTHREAD_MAIN_THREAD_ID) return 0;
+
     /* Timed out master when we are an already connected slave? */
-    if (server.masterhost && server.repl_state == REPL_STATE_CONNECTED &&
-        server.master->running_tid == IOTHREAD_MAIN_THREAD_ID &&
+    if (server.repl_state == REPL_STATE_CONNECTED &&
         (time(NULL)-server.master->lastinteraction) > server.repl_timeout)
     {
         serverLog(LL_WARNING,"MASTER timeout: no data nor PING received...");
@@ -150,12 +153,8 @@ int runConnectedMasterClientReplicationCron(void) {
     /* Send ACK to master from time to time.
      * Note that we do not send periodic acks to masters that don't
      * support PSYNC and replication offsets. */
-    if (server.masterhost && server.master &&
-        server.master->running_tid == IOTHREAD_MAIN_THREAD_ID &&
-        !(server.master->flags & CLIENT_PRE_PSYNC))
-    {
+    if (!(server.master->flags & CLIENT_PRE_PSYNC))
         replicationSendAck();
-    }
 
     return 0;
 }
@@ -4853,7 +4852,7 @@ void replicationCron(void) {
         connectWithMaster();
     }
 
-    runConnectedMasterClientReplicationCron();
+    replicationCronRunMasterClient();
 
     /* If we have attached slaves, PING them from time to time.
      * So slaves can implement an explicit timeout to masters, and will

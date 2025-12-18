@@ -78,11 +78,39 @@ void updateClientDataFromIOThread(client *c) {
         ((replBufBlock*)listNodeValue(c->ref_repl_buf_node))->refcount++;
 
         /* Forget about nodes before ref_repl_buf_node as we already
-            * processed them */
+         * processed them */
         c->ref_repl_start_node = c->ref_repl_buf_node;
 
         incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
     }
+}
+
+/* Check to see if the client needs any cron jobs run for them. Return 1 if the
+ * client should be terminated */
+int runClientCron(client *c) {
+    /* Check if we need to run replication for master client.
+     * Run cron more frequently during failover - see replicationCron */
+    int repl_cron_freq = 1000;
+    if (c->flags & CLIENT_MASTER &&
+        c->io_last_repl_cron_check_time + repl_cron_freq <= server.mstime)
+    {
+        c->io_last_repl_cron_check_time = server.mstime;
+        if (replicationCronRunMasterClient()) return 1;
+    }
+
+    /* Run client cron task for the client per second or it is marked as pending cron. */
+    if (c->io_last_client_cron_check_time + 1000 <= server.mstime ||
+        c->io_flags & CLIENT_IO_PENDING_CRON)
+    {
+        c->io_last_client_cron_check_time = server.mstime;
+        if (clientsCronRunClient(c)) return 1;
+    } else {
+        /* Update the client in the mem usage if clientsCronRunClient is not
+         * being called, since that function already performs the update. */
+        updateClientMemUsageAndBucket(c);
+    }
+
+    return 0;
 }
 
 /* When IO threads read a complete query of clients or want to free clients, it
@@ -245,10 +273,14 @@ int isClientMustHandledByMainThread(client *c) {
         return 1;
     }
 
-    /* If RDB replication is done it's safe to move the master client to an IO thread */
+    /* If RDB replication is done it's safe to move the master client to an IO thread.
+     * Note that we keep the master client in main thread during failover so as
+     * not to slow down the failover process by waiting the master replication
+     * cron in IO thread. */
     if (c->flags & CLIENT_MASTER &&
         server.repl_state == REPL_STATE_CONNECTED &&
-        server.repl_rdb_ch_state == REPL_RDB_CH_STATE_NONE)
+        server.repl_rdb_ch_state == REPL_RDB_CH_STATE_NONE &&
+        server.failover_state == NO_FAILOVER)
     {
         return 0;
     }
@@ -588,19 +620,12 @@ int processClientsFromIOThread(IOThread *t) {
             continue;
         }
 
+        /* Update some client's members while we are in main thread so we avoid
+         * data races. */
         updateClientDataFromIOThread(c);
 
-        /* Run client cron task for the client per second or it is marked as pending cron. */
-        if (c->io_last_client_cron_check_time + 1000 <= server.mstime ||
-            c->io_flags & CLIENT_IO_PENDING_CRON)
-        {
-            c->io_last_client_cron_check_time = server.mstime;
-            if (clientsCronRunClient(c)) continue;
-        } else {
-            /* Update the client in the mem usage if clientsCronRunClient is not
-             * being called, since that function already performs the update. */
-            updateClientMemUsageAndBucket(c);
-        }
+        /* Check if we need to run a cron job for the client */
+        if (runClientCron(c)) continue;
 
         /* Process the pending command and input buffer. */
         if (!isClientReadErrorFatal(c) && c->io_flags & CLIENT_IO_PENDING_COMMAND) {
@@ -609,18 +634,6 @@ int processClientsFromIOThread(IOThread *t) {
                 /* If the client is no longer valid, it must be freed safely. */
                 continue;
             }
-        }
-
-        /* Check if we need to run replication for master client.
-         * Run cron more frequently during failover - see replicationCron */
-        int repl_cron_freq = 1000;
-        if (server.failover_state != NO_FAILOVER)
-            repl_cron_freq = 100;
-        if (c->flags & CLIENT_MASTER &&
-            c->io_last_repl_cron_check_time + repl_cron_freq <= server.mstime)
-        {
-            c->io_last_repl_cron_check_time = server.mstime;
-            if (runConnectedMasterClientReplicationCron()) continue;
         }
 
         /* We may have pending replies if io thread may not finish writing
@@ -804,10 +817,6 @@ void IOThreadBeforeSleep(struct aeEventLoop *el) {
 
     /* If any connection type(typical TLS) still has pending unread data don't sleep at all. */
     int dont_sleep = connTypeHasPendingData(el);
-
-    /* Previous loop may have enqueued clients to main thread, send them before
-     * processing clients from main thread */
-    sendPendingClientsToMainThreadIfNeeded(t, 0);
 
     /* Process clients from main thread, since the main thread may deliver clients
      * without notification during IO thread processing events. */
