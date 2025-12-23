@@ -1158,6 +1158,40 @@ int clientsCronRunClient(client *c) {
     return 0;
 }
 
+void updateHotkeyStats(client *c) {
+    if (!server.hotkeys.active) return;
+
+    /* Only add a key to the hotkey structure based on probability. If
+     * sample_ratio was 1 we add all keys.
+     * Note, for multi-key commands we use the same probability for all the keys. */
+    if (server.hotkeys.sample_ratio > 1 &&
+        (double)rand() / RAND_MAX >= 1. / server.hotkeys.sample_ratio)
+    {
+        return;
+    }
+
+    robj **argv = c->original_argv ? c->original_argv : c->argv;
+    int argc = c->original_argv ? c->original_argc : c->argc;
+
+    getKeysResult keys_result = GETKEYS_RESULT_INIT;
+    if (getKeysFromCommandWithSpecs(c->realcmd, argv, argc, GET_KEYSPEC_DEFAULT, &keys_result) == 0)
+        return;
+
+    int numkeys = keys_result.numkeys;
+    uint64_t bytes = (c->net_input_bytes_curr_cmd + c->net_output_bytes_curr_cmd) / numkeys;
+    for (int i = 0; i < numkeys; ++i) {
+        int pos = keys_result.keys[i].pos;
+
+        char *ret = chkTopKUpdate(server.hotkeys.cpu, argv[pos]->ptr, sdslen(argv[pos]->ptr), max(c->duration / numkeys, 1));
+        if (ret) zfree(ret);
+
+        ret = chkTopKUpdate(server.hotkeys.net, argv[pos]->ptr, sdslen(argv[pos]->ptr), max(bytes, 1));
+        if (ret) zfree(ret);
+    }
+
+    getKeysFreeResult(&keys_result);
+}
+
 /* Periodic maintenance for the pending command pool.
  * This function should be called from serverCron to manage pool size based on utilization patterns. */
 void pendingCommandPoolCron(void) {
@@ -3064,9 +3098,6 @@ void initServer(void) {
         initServerClientMemUsageBuckets();
 
     prefetchCommandsBatchInit();
-
-    server.hotkeys.cpu = chkTopKCreate(10, 1024, 1.08);
-    server.hotkeys.net = chkTopKCreate(10, 256, 1.08);
 }
 
 void initListeners(void) {
@@ -3915,52 +3946,16 @@ void call(client *c, int flags) {
     /* Populate the per-command and per-slot statistics that we show in INFO commandstats and CLUSTER SLOT-STATS,
      * respectively. If the client is blocked we will handle latency stats and duration when it is unblocked. */
     if (update_command_stats && !(c->flags & CLIENT_BLOCKED)) {
-        robj **argv = c->original_argv ? c->original_argv : c->argv;
-        int argc = c->original_argv ? c->original_argc : c->argc;
-
         real_cmd->calls++;
         real_cmd->microseconds += c->duration;
         if (server.latency_tracking_enabled && !(c->flags & CLIENT_BLOCKED))
             updateCommandLatencyHistogram(&(real_cmd->latency_histogram), c->duration*1000);
         clusterSlotStatsAddCpuDuration(c, c->duration);
-
-        /* Behind a guard of course */
-        double sample_ratio = 100.;
-        if (rand() / (double)RAND_MAX < 1./sample_ratio) {
-            getKeysResult keys_result = GETKEYS_RESULT_INIT;
-            if (getKeysFromCommandWithSpecs(c->realcmd, argv, argc, GET_KEYSPEC_DEFAULT, &keys_result) != 0)
-            {
-                int numkeys = keys_result.numkeys;
-                uint64_t bytes = (c->net_input_bytes_curr_cmd + c->net_output_bytes_curr_cmd) / numkeys;
-                for (int i = 0; i < numkeys; ++i) {
-                    int pos = keys_result.keys[i].pos;
-
-                    char *ret = chkTopKUpdate(server.hotkeys.cpu, argv[pos]->ptr, sdslen(argv[pos]->ptr), max(duration / numkeys, 1));
-                    if (ret) zfree(ret);
-
-                    ret = chkTopKUpdate(server.hotkeys.net, argv[pos]->ptr, sdslen(argv[pos]->ptr), max(bytes, 1));
-                    if (ret) zfree(ret);
-                }
-            }
-            getKeysFreeResult(&keys_result);
-        }
-
-        // printf("\nTOPK BY CPU LIST BEGIN\n");
-        // chkHeapBucket *list = chkTopKList(server.hotkeys.cpu);
-        // for (int i = 0; i < 5; ++i) {
-        //     printf("%d) %s score: %llu\n", i, list[i].item, list[i].count);
-        // }
-        // zfree(list);
-        // printf("\nTOPK LIST END\n");
-        //
-        // printf("\nTOPK BY NET LIST BEGIN\n");
-        // list = chkTopKList(server.hotkeys.net);
-        // for (int i = 0; i < 5; ++i) {
-        //     printf("%d) %s score: %llu\n", i, list[i].item, list[i].count);
-        // }
-        // zfree(list);
-        // printf("\nTOPK LIST END\n");
     }
+
+    /* Populate the per-key hotkey stats */
+    if (update_command_stats && !(c->flags & CLIENT_BLOCKED))
+        updateHotkeyStats(c);
 
     /* Clear the original argv.
      * If the client is blocked we will handle slowlog when it is unblocked. */
@@ -5091,6 +5086,239 @@ void timeCommand(client *c) {
     addReplyArrayLen(c,2);
     addReplyBulkLongLong(c, server.unixtime);
     addReplyBulkLongLong(c, server.ustime-((long long)server.unixtime)*1000000);
+}
+
+int nearestNextPowerOf2(unsigned int count) {
+    return count == 0 ? 1 : (1 << __builtin_clz(count));
+}
+
+void hotkeyStatsRelease(void) {
+    chkTopKDestroy(server.hotkeys.cpu);
+    chkTopKDestroy(server.hotkeys.net);
+    if (server.hotkeys.slots)
+        zfree(server.hotkeys.slots);
+}
+
+void hotkeyStatsInit(int count, int duration, int sample_ratio, int *slots,
+                     int slots_count)
+{
+    if (server.hotkeys.active) hotkeyStatsRelease();
+
+    /* We track count * 10 keys for better accuracy. Numbuckets is roughly 10
+     * times the elements we track (actually num_buckets == 7-8 * count is
+     * enough) but the implementation uses a power of 2 numbuckets for better
+     * cache locality. */
+    server.hotkeys.cpu = chkTopKCreate(count * 10, nearestNextPowerOf2((unsigned)count * 100), 1.08);
+    server.hotkeys.net = chkTopKCreate(count * 10, nearestNextPowerOf2((unsigned)count * 100), 1.08);
+    server.hotkeys.k = count;
+    server.hotkeys.duration = duration;
+    server.hotkeys.sample_ratio = sample_ratio;
+    server.hotkeys.slots = slots;
+    server.hotkeys.numslots = slots_count;
+    server.hotkeys.active = 1;
+
+    server.hotkeys.start = mstime();
+}
+
+/* HOTKEYS command implementation
+ * 
+ * HOTKEYS START [COUNT k] [DURATION seconds] [SAMPLE ratio] [SLOTS count slot…]
+ * HOTKEYS STOP
+ * HOTKEYS GET [MINCPU mincpu] [MINNET minnet]
+ */
+void hotkeysCommand(client *c) {
+    if (c->argc < 2) {
+        addReplyError(c, "HOTKEYS subcommand required");
+        return;
+    }
+
+    char *sub = c->argv[1]->ptr;
+
+    if (!strcasecmp(sub, "START")) {
+        /* HOTKEYS START [COUNT k] [DURATION seconds] [SAMPLE ratio] [SLOTS count slot…] */
+        int count = 10;  /* default */
+        long duration = 0;  /* default: no auto-stop */
+        int sample_ratio = 1;  /* default: track every key */
+        int slots_count = 0;
+        int *slots = NULL;
+
+        int j = 2;
+        while (j < c->argc) {
+            if (j + 1 < c->argc && !strcasecmp(c->argv[j]->ptr, "COUNT")) {
+                long count_val;
+                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 10, 64, &count_val,
+                    "COUNT must be between 10 and 64") != C_OK) {
+                    return;
+                }
+                count = (int)count_val;
+                j += 2;
+            } else if (j + 1 < c->argc && !strcasecmp(c->argv[j]->ptr, "DURATION")) {
+                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 0, LONG_MAX, &duration,
+                    "DURATION must be non-negative") != C_OK) {
+                    return;
+                }
+                j += 2;
+            } else if (j + 1 < c->argc && !strcasecmp(c->argv[j]->ptr, "SAMPLE")) {
+                long ratio_val;
+                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 1, 100, &ratio_val,
+                    "SAMPLE ratio must be between 1 and 100") != C_OK) {
+                    return;
+                }
+                sample_ratio = (int)ratio_val;
+                j += 2;
+            } else if (j + 1 < c->argc && !strcasecmp(c->argv[j]->ptr, "SLOTS")) {
+                long slots_count_val;
+                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 1, CLUSTER_SLOTS, &slots_count_val,
+                    "SLOTS count must be between 1 and CLUSTER_SLOTS") != C_OK) {
+                    return;
+                }
+                slots_count = (int)slots_count_val;
+
+                /* Parse slot numbers */
+                if (j + 1 + slots_count >= c->argc) {
+                    addReplyError(c, "not enough slot numbers provided");
+                    return;
+                }
+                slots = zmalloc(sizeof(int) * slots_count);
+                dict *seen_slots = dictCreate(&hashDictType);
+                for (int i = 0; i < slots_count; i++) {
+                    long slot_val;
+                    if (getRangeLongFromObjectOrReply(c, c->argv[j+2+i], 0, CLUSTER_SLOTS - 1, &slot_val,
+                        "slot number out of range") != C_OK) {
+                        zfree(slots);
+                        dictRelease(seen_slots);
+                        return;
+                    }
+                    /* Check for duplicate slot indices using dictionary */
+                    sds slot_key = sdsfromlonglong(slot_val);
+                    if (dictAdd(seen_slots, slot_key, NULL) != DICT_OK) {
+                        addReplyError(c, "duplicate slot number");
+                        sdsfree(slot_key);
+                        zfree(slots);
+                        dictRelease(seen_slots);
+                        return;
+                    }
+                    slots[i] = (int)slot_val;
+                }
+                dictRelease(seen_slots);
+                j += 2 + slots_count;
+            } else {
+                addReplyError(c, "syntax error");
+                if (slots) zfree(slots);
+                return;
+            }
+        }
+
+        hotkeyStatsInit(count, duration, sample_ratio, slots, slots_count);
+
+        addReply(c, shared.ok);
+
+    } else if (!strcasecmp(sub, "STOP")) {
+        /* HOTKEYS STOP */
+        if (c->argc != 2) {
+            addReplyError(c, "wrong number of arguments for 'hotkeys|stop' command");
+            return;
+        }
+
+        if (server.hotkeys.active) {
+            server.hotkeys.active = 0;
+            server.hotkeys.duration = (mstime() - server.hotkeys.start) / 1000;
+        }
+
+        addReply(c, shared.ok);
+
+    } else if (!strcasecmp(sub, "GET")) {
+        /* HOTKEYS GET [MINCPU mincpu] [MINNET minnet] */
+        long mincpu = 0;
+        long minnet = 0;
+
+        /* If there is no hotkeys collection in progress and none was started
+         * there is nothing to show */
+        if (!server.hotkeys.active && server.hotkeys.start == 0) {
+            addReplyNull(c);
+            return;
+        }
+
+        int j = 2;
+        while (j < c->argc) {
+            if (j + 1 < c->argc && !strcasecmp(c->argv[j]->ptr, "MINCPU")) {
+                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 0, 100, &mincpu,
+                    "MINCPU must be between 0 and 100") != C_OK) {
+                    return;
+                }
+                j += 2;
+            } else if (j + 1 < c->argc && !strcasecmp(c->argv[j]->ptr, "MINNET")) {
+                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 0, 100, &minnet,
+                    "MINNET must be between 0 and 100") != C_OK) {
+                    return;
+                }
+                j += 2;
+            } else {
+                addReplyError(c, "syntax error");
+                return;
+            }
+        }
+
+        int duration = 0;
+        if (!server.hotkeys.active) {
+            serverAssert(server.hotkeys.duration != 0);
+            duration = server.hotkeys.duration;
+        } else {
+            duration = (mstime() - server.hotkeys.start) / 1000;
+        }
+
+        addReplyMapLen(c, 4);
+
+        addReplyBulkCString(c, "collection-start-time");
+        addReplyLongLong(c, server.hotkeys.start / 1000);
+
+        addReplyBulkCString(c, "collection-duration");
+        addReplyLongLong(c, duration);
+
+        addReplyBulkCString(c, "by-cpu-time");
+        /* Sorted list of top K elements in the chkTopK structure */
+        chkHeapBucket *cpu = chkTopKList(server.hotkeys.cpu);
+        uint64_t total = server.hotkeys.cpu->total;
+        int cpu_toshow = 0;
+        void *replylen = addReplyDeferredLen(c);
+        char dbuf[64];
+        for (int i = 0; i < server.hotkeys.k; ++i, ++cpu_toshow) {
+            double ratio = (cpu[i].count*100) / (double)total;
+            /* If the item has no count or it's ratio of cpu time doesnt cross
+             * the threshold we break the loop as all elements after that will
+             * satisfy this condition also. */
+            if (cpu[i].count == 0 || (mincpu > 0 && ratio < (double)mincpu))
+                break;
+
+            addReplyBulkCBuffer(c, cpu[i].item, cpu[i].itemlen);
+
+            /* Since ratio is a percentage value we don't need the high accuracy
+             * of addReplyDouble. So for clients that display the value 2 digits
+             * after the floating point is a nice representation */
+            const int dlen = fixedpoint_d2string(dbuf, sizeof(dbuf), ratio, 2);
+            addReplyBulkCBuffer(c, dbuf, dlen);
+        }
+        setDeferredMapLen(c, replylen, cpu_toshow);
+
+        addReplyBulkCString(c, "by-net-bytes");
+        chkHeapBucket *net = chkTopKList(server.hotkeys.net);
+        total = server.hotkeys.net->total;
+        int net_toshow = 0;
+        replylen = addReplyDeferredLen(c);
+        for (int i = 0; i < server.hotkeys.k; ++i, ++net_toshow) {
+            double ratio = (net[i].count*100) / (double)total;
+            if (net[i].count == 0 || (minnet > 0 && ratio < (double)minnet))
+                break;
+
+            addReplyBulkCBuffer(c, net[i].item, net[i].itemlen);
+            const int dlen = fixedpoint_d2string(dbuf, sizeof(dbuf), ratio, 2);
+            addReplyBulkCBuffer(c, dbuf, dlen);
+        }
+        setDeferredMapLen(c, replylen, net_toshow);
+
+    } else {
+        addReplyError(c, "unknown subcommand or wrong number of arguments");
+    }
 }
 
 typedef struct replyFlagNames {

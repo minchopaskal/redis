@@ -1846,7 +1846,14 @@ struct chkTopK;
 typedef struct hotkeysStats {
     struct chkTopK *cpu;
     struct chkTopK *net;
-} hotkeysStats;
+    mstime_t start;
+    int *slots;
+    int numslots;
+    int k;
+    int duration;
+    int sample_ratio;
+    int active;
+} hotkeyStats;
 
 struct redisServer {
     /* General */
@@ -2047,7 +2054,7 @@ struct redisServer {
     monotime el_cron_duration;
     durationStats duration_stats[EL_DURATION_TYPE_NUM];
 
-    hotkeysStats hotkeys;
+    hotkeyStats hotkeys;
 
     /* Configuration */
     int verbosity;                  /* Loglevel in redis.conf */
@@ -3575,6 +3582,7 @@ void dismissSds(sds s);
 void dismissMemory(void* ptr, size_t size_hint);
 void dismissMemoryInChild(void);
 int clientsCronRunClient(client *c);
+void updateHotkeyStats(client *c);
 
 #define RESTART_SERVER_NONE 0
 #define RESTART_SERVER_GRACEFULLY (1<<0)     /* Do proper shutdown. */
@@ -4329,6 +4337,7 @@ void xdelexCommand(client *c);
 void xtrimCommand(client *c);
 void lolwutCommand(client *c);
 void aclCommand(client *c);
+void hotkeysCommand(client *c);
 void lcsCommand(client *c);
 void quitCommand(client *c);
 void resetCommand(client *c);

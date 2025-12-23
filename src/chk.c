@@ -87,7 +87,9 @@ void chkHeapifyDown(chkHeapBucket *array, size_t len, size_t start) {
 /* chkTopK operations */
 
 chkTopK *chkTopKCreate(int k, int numbuckets, double decay) {
-    /* Number of buckets need to be a power of 2 for better performance */
+    /* Number of buckets need to be a power of 2 for better performance - we
+     * have better cache locality of the tables and faster table indices
+     * calculations. */
     if ((numbuckets & (numbuckets - 1)) != 0) {
         return NULL;
     }
@@ -146,9 +148,9 @@ fpAndIdx generateItemFpAndIdxs(chkTopK *topk, char *item, int itemlen) {
 
     fpAndIdx res;
     res.fp = (hash & 0xFFFF); /* Only use 16 bits for fingerprint */
-    res.idx[0] = (hash >> 32) % topk->numbuckets;
+    res.idx[0] = (hash >> 32) & (topk->numbuckets - 1);
     for (int i = 1; i < CHK_NUM_TABLES; ++i) {
-        res.idx[i] = (res.idx[i - 1] ^ (0x5bd1e995 * res.fp)) % topk->numbuckets;
+        res.idx[i] = (res.idx[i - 1] ^ (0x5bd1e995 * res.fp)) & (topk->numbuckets - 1);
     }
 
     return res;
