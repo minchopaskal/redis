@@ -5099,6 +5099,10 @@ void hotkeyStatsRelease(void) {
         zfree(server.hotkeys.slots);
 }
 
+/* Initialize the hotkeys structure. If tracking keys in specific slots is
+ * desired the user should pass along an already allocated and populated slots
+ * array. The hotkeys structure takes ownership of the array and will free it
+ * upon release. */
 void hotkeyStatsInit(int count, int duration, int sample_ratio, int *slots,
                      int slots_count)
 {
@@ -5106,8 +5110,8 @@ void hotkeyStatsInit(int count, int duration, int sample_ratio, int *slots,
 
     /* We track count * 10 keys for better accuracy. Numbuckets is roughly 10
      * times the elements we track (actually num_buckets == 7-8 * count is
-     * enough) but the implementation uses a power of 2 numbuckets for better
-     * cache locality. */
+     * enough) again for better accuracy. Note the CHK implementation uses a
+     * power of 2 numbuckets for better cache locality. */
     server.hotkeys.cpu = chkTopKCreate(count * 10, nearestNextPowerOf2((unsigned)count * 100), 1.08);
     server.hotkeys.net = chkTopKCreate(count * 10, nearestNextPowerOf2((unsigned)count * 100), 1.08);
     server.hotkeys.k = count;
@@ -5316,6 +5320,9 @@ void hotkeysCommand(client *c) {
         }
         setDeferredMapLen(c, replylen, net_toshow);
 
+        /* We have ownership over the temporary topk lists */
+        zfree(cpu);
+        zfree(net);
     } else {
         addReplyError(c, "unknown subcommand or wrong number of arguments");
     }
