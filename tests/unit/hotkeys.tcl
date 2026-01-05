@@ -22,7 +22,7 @@ start_server {tags {"hotkeys"}} {
             lappend all_keys "key_[format %03d $i]"
         }
 
-        # Choose 20 keys to bias towards. Theese will be out hot keys
+        # Choose 20 keys to bias towards. These will be out hot keys
         set hot_keys {}
         for {set i 0} {$i < 20} {incr i} {
             lappend hot_keys [lindex $all_keys $i]

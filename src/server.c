@@ -5288,9 +5288,9 @@ void hotkeysCommand(client *c) {
         char dbuf[64];
         for (int i = 0; i < server.hotkeys.k; ++i, ++cpu_toshow) {
             double ratio = (cpu[i].count*100) / (double)total;
-            /* If the item has no count or it's ratio of cpu time doesnt cross
+            /* If the item has no count or its ratio of cpu time doesn't cross
              * the threshold we break the loop as all elements after that will
-             * satisfy this condition also. */
+             * also satisfy this condition. */
             if (cpu[i].count == 0 || (mincpu > 0 && ratio < (double)mincpu))
                 break;
 

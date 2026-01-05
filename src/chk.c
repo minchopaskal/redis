@@ -374,9 +374,9 @@ lobby_counter_t chkDecayCounter(chkTopK *topk, lobby_counter_t cnt, counter_t we
      * We binary search for such count C that
      * lut_decay_exp[C] >= lut_decay_exp[cnt] - weight.
      *
-     * Note that since cnt is a lobby counter it will necesarily be less or equal
-     * than LOBBY_PROMOTION_THRESHOLD, so although we binary search this is a
-     * constant operation */
+     * Note that since cnt is a lobby counter it will necessarily be less or
+     * equal than LOBBY_PROMOTION_THRESHOLD, so although we binary search this
+     * is a O(1) operation */
     int left = 0;
     int right = cnt;
     while (left < right) {
