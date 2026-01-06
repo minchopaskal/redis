@@ -128,7 +128,7 @@ void putReplicasInPendingClientsToIOThreads(void) {
 
         /* The call to clientHasPendingReplies may seem redundant but in the
          * case of replica being in IO thread we can have the following case:
-         * replica get's back to main thread after sending the repl buffer it
+         * replica gets back to main thread after sending the repl buffer it
          * knows about. In the mean time main thread has accumulated new repl
          * data. In that case the replica's client wouldn't have been put in
          * the pending write queue but will still have new repl data it needs to
