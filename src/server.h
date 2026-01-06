@@ -787,12 +787,10 @@ typedef enum {
 #define NOTIFY_KEY_TRIMMED (1<<17)     /* module only key space notification, indicates a key trimmed during slot migration */
 #define NOTIFY_ALL (NOTIFY_GENERIC | NOTIFY_STRING | NOTIFY_LIST | NOTIFY_SET | NOTIFY_HASH | NOTIFY_ZSET | NOTIFY_EXPIRED | NOTIFY_EVICTED | NOTIFY_STREAM | NOTIFY_MODULE) /* A flag */
 
-#define _run_with_period(_cronloops_, _ms_, _hz_) if (((_ms_) <= 1000/(_hz_)) || !((_cronloops_)%((_ms_)/(1000/(_hz_)))))
-
 /* Using the following macro you can run code inside serverCron() with the
  * specified period, specified in milliseconds.
  * The actual resolution depends on server.hz. */
-#define run_with_period(_ms_) _run_with_period(server.cronloops, (_ms_), server.hz)
+#define run_with_period(_ms_) if (((_ms_) <= 1000/server.hz) || !(server.cronloops%((_ms_)/(1000/server.hz))))
 
 /* We can print the stacktrace, so our assert is defined this way: */
 #define serverAssertWithInfo(_c,_o,_e) (likely(_e)?(void)0 : (_serverAssertWithInfo(_c,_o,#_e,__FILE__,__LINE__),redis_unreachable()))
@@ -1139,7 +1137,7 @@ typedef struct clientReplyBlock {
  * there will be a data race on the last node when main thread write to it
  * during `feedReplicationBuffer`. `ref_repl_last_node` is cached in the client
  * together with its used size just before sending the client to IO thread
- * in `handleClientsWithPendingWrites`. */
+ * in `enqueuePendingClienstToIOThreads`. */
 
 /* Similar with 'clientReplyBlock', it is used for shared buffers between
  * all replica clients and replication backlog. */
@@ -1473,8 +1471,10 @@ typedef struct client {
                                 * it updates its `lastinteraction` value from
                                 * this. */
     time_t obuf_soft_limit_reached_time;
-    mstime_t io_last_client_cron_check_time;    /* The last client cron check time in IO thread */
-    mstime_t io_last_repl_cron_check_time;    /* The last replication cron check time in IO thread */
+    mstime_t io_last_client_cron;  /* Timestamp of last invocation of client
+                                    * cron in IO thread */
+    mstime_t io_last_repl_cron;    /* Timestamp of last invocation of
+                                    * replication cron in IO thread. */
     int authenticated;      /* Needed when the default user requires auth. */
     int replstate;          /* Replication state if this is a slave. */
     int repl_start_cmd_stream_on_ack; /* Install slave write handler on first ACK. */
@@ -1492,9 +1492,11 @@ typedef struct client {
     long long repl_ack_off; /* Replication ack offset, if this is a slave. */
     long long repl_aof_off; /* Replication AOF fsync ack offset, if this is a slave. */
     long long repl_ack_time;/* Replication ack time, if this is a slave. */
-    mstime_t io_last_ack_time; /* Replication ack time, if this is a slave in
-                                * IO thread. Used only to check if slave needs
-                                * to be kept in IO thread for ACK read. */
+    mstime_t io_repl_ack_time; /* Replication ack time, if this is a replica in
+                                * IO thread. Keeps track of repl_ack_time while
+                                * replica is in IO thread to avoid data races
+                                * with main. repl_ack_time is updated with this
+                                * value when replica returns to main thread. */
     long long repl_last_partial_write; /* The last time the server did a partial write from the RDB child pipe to this replica  */
     long long psync_initial_offset; /* FULLRESYNC reply offset other slaves
                                        copying this slave output buffer
@@ -1611,8 +1613,6 @@ typedef struct __attribute__((aligned(CACHE_LINE_SIZE))) {
     pthread_mutex_t pending_clients_mutex;      /* Mutex for pending write list */
     list *pending_clients_to_main_thread;       /* Clients that are waiting to be executed by the main thread. */
     list *clients;                              /* IO thread managed clients. */
-    size_t cronloops;
-    client *master;
 } IOThread;
 
 /* Context for streaming replDataBuf to database */
@@ -3214,7 +3214,7 @@ void resumeIOThreadsRange(int start, int end);
 int resizeAllIOThreadsEventLoops(size_t newsize);
 int sendPendingClientsToIOThreads(void);
 void enqueuePendingClientsToMainThread(client *c, int unbind);
-void putInPendingClienstForIOThreads(client *c);
+void enqueuePendingClienstToIOThreads(client *c);
 void handleClientReadError(client *c);
 void unbindClientFromIOThreadEventLoop(client *c);
 int processClientsOfAllIOThreads(void);

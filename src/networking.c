@@ -201,7 +201,7 @@ client *createClient(connection *conn) {
     c->repl_applied = 0;
     c->repl_ack_off = 0;
     c->repl_ack_time = 0;
-    c->io_last_ack_time = 0;
+    c->io_repl_ack_time = 0;
     c->repl_aof_off = 0;
     c->repl_last_partial_write = 0;
     c->slave_listening_port = 0;
@@ -228,8 +228,8 @@ client *createClient(connection *conn) {
     c->postponed_list_node = NULL;
     c->client_tracking_redirection = 0;
     c->client_tracking_prefixes = NULL;
-    c->io_last_client_cron_check_time = 0;
-    c->io_last_repl_cron_check_time = 0;
+    c->io_last_client_cron = 0;
+    c->io_last_repl_cron = 0;
     c->last_memory_usage = 0;
     c->last_memory_type = CLIENT_TYPE_NORMAL;
     c->module_blocked_client = NULL;
@@ -323,16 +323,8 @@ static inline int _prepareClientToWrite(client *c) {
      *
      * If the client runs in an IO thread, we should not put the client in the
      * pending write queue. Instead, we will install the write handler to the
-     * corresponding IO thread’s event loop and let it handle the reply.
-     *
-     * Replicas handled by IO thread ignore the check to clientHasPendingReplies
-     * since it checks how far they've read into the replication buffer and may
-     * return true without them already being in the pending write queue. That
-     * happens when main thread has written into the replication buffer while
-     * they were in IO thread. Later handleClientsWithPendingWrites will deal
-     * with them. */
-    int iothread_replica = c->flags & CLIENT_SLAVE && c->tid != IOTHREAD_MAIN_THREAD_ID;
-    if ((iothread_replica || !clientHasPendingReplies(c)) &&
+     * corresponding IO thread’s event loop and let it handle the reply. */
+    if (!clientHasPendingReplies(c) &&
         likely(c->running_tid == IOTHREAD_MAIN_THREAD_ID))
     {
         putClientInPendingWriteQueue(c);
@@ -2637,7 +2629,7 @@ static inline int _writeToClientSlave(client *c, ssize_t *nwritten) {
     /* Send current block if it is not fully sent. */
     if (used > c->ref_block_pos) {
         *nwritten = connWrite(c->conn, o->buf+c->ref_block_pos,
-                                used-c->ref_block_pos);
+                              used-c->ref_block_pos);
         if (*nwritten <= 0) return C_ERR;
         c->ref_block_pos += *nwritten;
     }
@@ -3003,7 +2995,7 @@ int processInlineBuffer(client *c, pendingCommand *pcmd) {
              * Note c->repl_ack_time will still be updated in
              * updateClientDataFromIOThread with the value of c->io_last_ack_time
              * when the client moves from IO to main thread. */
-            c->io_last_ack_time = mstime();
+            c->io_repl_ack_time = mstime();
     }
 
     /* Masters should never send us inline protocol to run actual
@@ -5242,7 +5234,6 @@ int closeClientOnOutputBufferLimitReached(client *c, int async) {
 void flushSlavesOutputBuffers(void) {
     listIter li;
     listNode *ln;
-    int revert_flags = 0;
 
     listRewind(server.slaves,&li);
     while((ln = listNext(&li))) {
@@ -5250,9 +5241,8 @@ void flushSlavesOutputBuffers(void) {
 
         /* Fetch the replica clients that are currently running in IO thread.
          * If shutdown fails, they will be returned back to IO thread in
-         * handleClientsWithPendingWrites after the repl backlog is fed with new
-         * data. */
-        revert_flags = 0;
+         * putReplicasInPendingClientsToIOThreads after the repl backlog is fed
+         * with new data. */
         if (slave->running_tid != IOTHREAD_MAIN_THREAD_ID) {
             fetchClientFromIOThread(slave);
             /* If the slave doesn't have any pending replies nothing to do 
@@ -5263,10 +5253,7 @@ void flushSlavesOutputBuffers(void) {
 
             putClientInPendingWriteQueue(slave);
 
-            if (!(slave->io_flags & CLIENT_IO_WRITE_ENABLED)) {
-                slave->io_flags |= CLIENT_IO_WRITE_ENABLED;
-                revert_flags |= CLIENT_IO_WRITE_ENABLED;
-            }
+            slave->io_flags |= CLIENT_IO_WRITE_ENABLED;
         }
 
         int can_receive_writes = connHasWriteHandler(slave->conn) ||
@@ -5293,13 +5280,6 @@ void flushSlavesOutputBuffers(void) {
             clientHasPendingReplies(slave))
         {
             writeToClient(slave,0);
-        }
-
-        /* If we fetched the client from IO thread we need to revert its io_flags
-         * so it remains in correct state if it needs to be returned back to
-         * IO-thread later. */
-        if (revert_flags) {
-            slave->io_flags &= ~revert_flags;
         }
     }
 }
