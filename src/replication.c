@@ -118,18 +118,30 @@ void putReplicasInPendingClientsToIOThreads(void) {
     listNode *ln;
     listRewind(server.slaves,&li);
     while((ln = listNext(&li))) {
-        client *slave = ln->value;
+        client *replica = ln->value;
 
-        if (slave->tid == IOTHREAD_MAIN_THREAD_ID ||
-            slave->running_tid != IOTHREAD_MAIN_THREAD_ID)
+        if (replica->tid == IOTHREAD_MAIN_THREAD_ID ||
+            replica->running_tid != IOTHREAD_MAIN_THREAD_ID)
         {
             continue;
         }
- 
-        if (slave->flags & CLIENT_PENDING_WRITE ||
-            replicaFromIOThreadHasPendingAck(slave))
+
+        /* The call to clientHasPendingReplies may seem redundant but in the
+         * case of replica being in IO thread we can have the following case:
+         * replica get's back to main thread after sending the repl buffer it
+         * knows about. In the mean time main thread has accumulated new repl
+         * data. In that case the replica's client wouldn't have been put in
+         * the pending write queue but will still have new repl data it needs to
+         * send, so we make sure to check for that and send it back to IO thread
+         * if so. On the other hand if replica gets back to main thread before
+         * any new repl data has accumulated then after a new cmd is propagated
+         * the replica will be put in the pending write queue as usual so we
+         * need to check for that also. */
+        if (replica->flags & CLIENT_PENDING_WRITE ||
+            clientHasPendingReplies(replica) ||
+            replicaFromIOThreadHasPendingAck(replica))
         {
-            putInPendingClienstForIOThreads(slave);
+            enqueuePendingClienstToIOThreads(replica);
         }
     }
 }
@@ -1441,7 +1453,7 @@ void replconfCommand(client *c) {
                     c->repl_aof_off = offset;
             }
             c->repl_ack_time = server.unixtime;
-            c->io_last_ack_time = mstime();
+            c->io_repl_ack_time = mstime();
 
             /* If this was a diskless replication, we need to really put
              * the slave online when the first ACK is received (which
