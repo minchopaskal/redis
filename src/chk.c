@@ -22,8 +22,8 @@ static_assert(LOBBY_PROMOTION_THRESHOLD < CHK_LUT_SIZE,
 #define HEAP_SEED 1919
 
 typedef struct {
-    int idx[CHK_NUM_TABLES];
-    uint16_t fp;
+    size_t idx[CHK_NUM_TABLES];
+    fingerprint_t fp;
 } fpAndIdx;
 
 static inline counter_t chkMax(counter_t a, counter_t b) {
@@ -152,9 +152,11 @@ fpAndIdx generateItemFpAndIdxs(chkTopK *topk, char *item, int itemlen) {
 
     fpAndIdx res;
     res.fp = (hash & 0xFFFF); /* Only use 16 bits for fingerprint */
+
+    /* Note numbuckets are a power of 2 so we don't use modulo for index calc */
     res.idx[0] = (hash >> 32) & (topk->numbuckets - 1);
     for (int i = 1; i < CHK_NUM_TABLES; ++i) {
-        res.idx[i] = (res.idx[i - 1] ^ (0x5bd1e995 * res.fp)) & (topk->numbuckets - 1);
+        res.idx[i] = (res.idx[i - 1] ^ (0x5bd1e995 * (size_t)res.fp)) & (topk->numbuckets - 1);
     }
 
     return res;

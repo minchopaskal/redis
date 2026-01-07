@@ -5143,7 +5143,11 @@ void hotkeysCommand(client *c) {
     char *sub = c->argv[1]->ptr;
 
     if (!strcasecmp(sub, "START")) {
-        /* HOTKEYS START [COUNT k] [DURATION seconds] [SAMPLE ratio] [SLOTS count slot…] */
+        /* HOTKEYS START
+         *         [COUNT k]
+         *         [DURATION seconds]
+         *         [SAMPLE ratio]
+         *         [SLOTS count slot…] */
         int count = 10;  /* default */
         long duration = 0;  /* default: no auto-stop */
         int sample_ratio = 1;  /* default: track every key */
@@ -5155,29 +5159,35 @@ void hotkeysCommand(client *c) {
             if (j + 1 < c->argc && !strcasecmp(c->argv[j]->ptr, "COUNT")) {
                 long count_val;
                 if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 10, 64, &count_val,
-                    "COUNT must be between 10 and 64") != C_OK) {
+                                                  "COUNT must be between 10 and 64") != C_OK)
+                {
                     return;
                 }
                 count = (int)count_val;
                 j += 2;
             } else if (j + 1 < c->argc && !strcasecmp(c->argv[j]->ptr, "DURATION")) {
-                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 0, LONG_MAX, &duration,
-                    "DURATION must be non-negative") != C_OK) {
+                if (getPositiveLongFromObjectOrReply(c, c->argv[j+1], &duration,
+                                                     "DURATION must be non-negative") != C_OK)
+                {
                     return;
                 }
                 j += 2;
             } else if (j + 1 < c->argc && !strcasecmp(c->argv[j]->ptr, "SAMPLE")) {
                 long ratio_val;
-                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 1, 100, &ratio_val,
-                    "SAMPLE ratio must be between 1 and 100") != C_OK) {
+                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 1, INT_MAX, &ratio_val,
+                                                  "SAMPLE ratio must be positive") != C_OK)
+                {
                     return;
                 }
                 sample_ratio = (int)ratio_val;
                 j += 2;
             } else if (j + 1 < c->argc && !strcasecmp(c->argv[j]->ptr, "SLOTS")) {
                 long slots_count_val;
-                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 1, CLUSTER_SLOTS, &slots_count_val,
-                    "SLOTS count must be between 1 and CLUSTER_SLOTS") != C_OK) {
+                char msg[64];
+                snprintf(msg, 64, "SLOTS count must be between 1 and %d", CLUSTER_SLOTS);
+                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 1, CLUSTER_SLOTS,
+                                                  &slots_count_val, msg) != C_OK)
+                {
                     return;
                 }
                 slots_count = (int)slots_count_val;
@@ -5191,8 +5201,10 @@ void hotkeysCommand(client *c) {
                 dict *seen_slots = dictCreate(&hashDictType);
                 for (int i = 0; i < slots_count; i++) {
                     long slot_val;
-                    if (getRangeLongFromObjectOrReply(c, c->argv[j+2+i], 0, CLUSTER_SLOTS - 1, &slot_val,
-                        "slot number out of range") != C_OK) {
+                    if (getRangeLongFromObjectOrReply(c, c->argv[j+2+i], 0,
+                                                      CLUSTER_SLOTS - 1, &slot_val,
+                                                      "slot number out of range") != C_OK)
+                    {
                         zfree(slots);
                         dictRelease(seen_slots);
                         return;
@@ -5206,6 +5218,8 @@ void hotkeysCommand(client *c) {
                         dictRelease(seen_slots);
                         return;
                     }
+                    sdsfree(slot_key);
+
                     slots[i] = (int)slot_val;
                 }
                 dictRelease(seen_slots);
@@ -5255,14 +5269,16 @@ void hotkeysCommand(client *c) {
         int j = 2;
         while (j < c->argc) {
             if (j + 1 < c->argc && !strcasecmp(c->argv[j]->ptr, "MINCPU")) {
-                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 0, 100, &mincpu,
-                    "MINCPU must be between 0 and 100") != C_OK) {
+                if (getPositiveLongFromObjectOrReply(c, c->argv[j+1], &mincpu,
+                                                     "MINCPU must be between 0 and 100") != C_OK)
+                {
                     return;
                 }
                 j += 2;
             } else if (j + 1 < c->argc && !strcasecmp(c->argv[j]->ptr, "MINNET")) {
-                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 0, 100, &minnet,
-                    "MINNET must be between 0 and 100") != C_OK) {
+                if (getPositiveLongFromObjectOrReply(c, c->argv[j+1], &minnet,
+                                                     "MINNET must be between 0 and 100") != C_OK)
+                {
                     return;
                 }
                 j += 2;
