@@ -107,6 +107,8 @@ chkTopK *chkTopKCreate(int k, int numbuckets, double decay) {
             zfree(topk);
             return NULL;
         }
+
+        memset(topk->tables[i], 0, sizeof(chkBucket) * numbuckets);
     }
 
     topk->heap = ztrycalloc(sizeof(chkHeapBucket) * k);
@@ -117,12 +119,14 @@ chkTopK *chkTopKCreate(int k, int numbuckets, double decay) {
         zfree(topk);
         return NULL;
     }
+    memset(topk->heap, 0, sizeof(chkHeapBucket) * k);
 
-    topk->k = k;
-    topk->numbuckets = numbuckets;
     topk->decay = decay;
     topk->inv_decay = 1. / decay;
- 
+    topk->total = 0;
+    topk->k = k;
+    topk->numbuckets = numbuckets;
+
     topk->lut_decay_exp[0] = 0;
     topk->lut_min_decay[0] = 0;
     topk->lut_decay_prob[0] = 0;

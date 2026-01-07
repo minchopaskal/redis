@@ -5113,7 +5113,11 @@ void hotkeyStatsInit(int count, int duration, int sample_ratio, int *slots,
      * enough) again for better accuracy. Note the CHK implementation uses a
      * power of 2 numbuckets for better cache locality. */
     server.hotkeys.cpu = chkTopKCreate(count * 10, nearestNextPowerOf2((unsigned)count * 100), 1.08);
+    if (!server.hotkeys.cpu) return;
+
     server.hotkeys.net = chkTopKCreate(count * 10, nearestNextPowerOf2((unsigned)count * 100), 1.08);
+    if (!server.hotkeys.net) return;
+
     server.hotkeys.k = count;
     server.hotkeys.duration = duration;
     server.hotkeys.sample_ratio = sample_ratio;
@@ -5214,6 +5218,11 @@ void hotkeysCommand(client *c) {
         }
 
         hotkeyStatsInit(count, duration, sample_ratio, slots, slots_count);
+ 
+        if (!server.hotkeys.cpu || !server.hotkeys.net) {
+            addReplyError(c, "hotkey tracking could not be started!");
+            return;
+        }
 
         addReply(c, shared.ok);
 
@@ -5302,7 +5311,7 @@ void hotkeysCommand(client *c) {
             const int dlen = fixedpoint_d2string(dbuf, sizeof(dbuf), ratio, 2);
             addReplyBulkCBuffer(c, dbuf, dlen);
         }
-        setDeferredMapLen(c, replylen, cpu_toshow);
+        setDeferredArrayLen(c, replylen, cpu_toshow);
 
         addReplyBulkCString(c, "by-net-bytes");
         chkHeapBucket *net = chkTopKList(server.hotkeys.net);
@@ -5318,7 +5327,7 @@ void hotkeysCommand(client *c) {
             const int dlen = fixedpoint_d2string(dbuf, sizeof(dbuf), ratio, 2);
             addReplyBulkCBuffer(c, dbuf, dlen);
         }
-        setDeferredMapLen(c, replylen, net_toshow);
+        setDeferredArrayLen(c, replylen, net_toshow);
 
         /* We have ownership over the temporary topk lists */
         zfree(cpu);
