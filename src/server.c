@@ -4880,10 +4880,8 @@ int finishShutdown(void) {
         if (replica->flags & CLIENT_ASM_MIGRATING) continue;
         num_replicas++;
 
-        /* Fetch the replica clients that are currently running in IO thread.
-         * If shutdown fails, they will be returned back to IO thread in
-         * handleClientsWithPendingWrites after the repl backlog is fed with new
-         * data. */
+        /* We pause the IO thread this replica is running on so we avoid data
+         * races. */
         int paused = 0;
         if (replica->running_tid != IOTHREAD_MAIN_THREAD_ID) {
             pauseIOThread(replica->tid);

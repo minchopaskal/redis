@@ -324,8 +324,8 @@ static inline int _prepareClientToWrite(client *c) {
      * If the client runs in an IO thread, we should not put the client in the
      * pending write queue. Instead, we will install the write handler to the
      * corresponding IO thread’s event loop and let it handle the reply. */
-    if (!clientHasPendingReplies(c) &&
-        likely(c->running_tid == IOTHREAD_MAIN_THREAD_ID))
+    if (likely(c->running_tid == IOTHREAD_MAIN_THREAD_ID) &&
+        !clientHasPendingReplies(c))
     {
         putClientInPendingWriteQueue(c);
     }
@@ -5234,6 +5234,7 @@ int closeClientOnOutputBufferLimitReached(client *c, int async) {
 void flushSlavesOutputBuffers(void) {
     listIter li;
     listNode *ln;
+    int revert_flags = 0;
 
     listRewind(server.slaves,&li);
     while((ln = listNext(&li))) {
@@ -5243,9 +5244,10 @@ void flushSlavesOutputBuffers(void) {
          * If shutdown fails, they will be returned back to IO thread in
          * putReplicasInPendingClientsToIOThreads after the repl backlog is fed
          * with new data. */
+        revert_flags = 0;
         if (slave->running_tid != IOTHREAD_MAIN_THREAD_ID) {
             fetchClientFromIOThread(slave);
-            /* If the slave doesn't have any pending replies nothing to do 
+            /* If the slave doesn't have any pending replies nothing to do
              * anyways. */
             if (!clientHasPendingReplies(slave)) {
                 continue;
@@ -5253,7 +5255,11 @@ void flushSlavesOutputBuffers(void) {
 
             putClientInPendingWriteQueue(slave);
 
-            slave->io_flags |= CLIENT_IO_WRITE_ENABLED;
+            // slave->io_flags |= CLIENT_IO_WRITE_ENABLED;
+            if (!(slave->io_flags & CLIENT_IO_WRITE_ENABLED)) {
+                slave->io_flags |= CLIENT_IO_WRITE_ENABLED;
+                revert_flags |= CLIENT_IO_WRITE_ENABLED;
+            }
         }
 
         int can_receive_writes = connHasWriteHandler(slave->conn) ||
@@ -5281,6 +5287,13 @@ void flushSlavesOutputBuffers(void) {
         {
             writeToClient(slave,0);
         }
+
+        /* If we fetched the client from IO thread we need to revert its io_flags
+         * so it remains in correct state if it needs to be returned back to
+         * IO-thread later. This may happen if flushSlavesOutputBuffers was
+         * called during eviction. */
+        if (revert_flags)
+            slave->io_flags &= ~revert_flags;
     }
 }
 
