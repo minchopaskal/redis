@@ -5295,7 +5295,7 @@ void hotkeysCommand(client *c) {
         int cpu_toshow = 0;
         void *replylen = addReplyDeferredLen(c);
         char dbuf[64];
-        for (int i = 0; i < server.hotkeys.k; ++i, ++cpu_toshow) {
+        for (int i = 0; i < server.hotkeys.k; ++i, cpu_toshow += 2) {
             double ratio = (cpu[i].count*100) / (double)total;
             /* If the item has no count or its ratio of cpu time doesn't cross
              * the threshold we break the loop as all elements after that will
@@ -5318,7 +5318,7 @@ void hotkeysCommand(client *c) {
         total = server.hotkeys.net->total;
         int net_toshow = 0;
         replylen = addReplyDeferredLen(c);
-        for (int i = 0; i < server.hotkeys.k; ++i, ++net_toshow) {
+        for (int i = 0; i < server.hotkeys.k; ++i, net_toshow += 2) {
             double ratio = (net[i].count*100) / (double)total;
             if (net[i].count == 0 || (minnet > 0 && ratio < (double)minnet))
                 break;
