@@ -118,7 +118,7 @@ void putReplicasInPendingClientsToIOThreads(void) {
     listNode *ln;
     listRewind(server.slaves,&li);
     while((ln = listNext(&li))) {
-        client *replica = ln->value;
+        client *replica = listNodeValue(ln);
 
         if (replica->tid == IOTHREAD_MAIN_THREAD_ID ||
             replica->running_tid != IOTHREAD_MAIN_THREAD_ID)
@@ -460,7 +460,7 @@ void freeReplicaReferencedReplBuffer(client *replica) {
         incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
     }
     replica->ref_repl_start_node = NULL;
-    replica->ref_repl_buf_node = NULL;
+    replica->ref_repl_curr_node = NULL;
     replica->ref_last_node = NULL;
     replica->ref_block_pos = 0;
     replica->ref_last_node_used = 0;
@@ -546,7 +546,7 @@ void feedReplicationBuffer(char *s, size_t len) {
             /* Update shared replication buffer start position. */
             if (slave->ref_repl_start_node == NULL) {
                 slave->ref_repl_start_node = start_node;
-                slave->ref_repl_buf_node = start_node;
+                slave->ref_repl_curr_node = start_node;
                 slave->ref_block_pos = start_pos;
                 /* Only increase the start block reference count. */
                 ((replBufBlock *)listNodeValue(start_node))->refcount++;
@@ -850,7 +850,7 @@ long long addReplyReplicationBacklog(client *c, long long offset) {
     replBufBlock *o = listNodeValue(node);
     o->refcount++;
     c->ref_repl_start_node = node;
-    c->ref_repl_buf_node = node;
+    c->ref_repl_curr_node = node;
     c->ref_block_pos = offset - o->repl_offset;
 
     return server.repl_backlog->histlen - skip;
@@ -1457,7 +1457,7 @@ void replconfCommand(client *c) {
                     c->repl_aof_off = offset;
             }
             c->repl_ack_time = server.unixtime;
-            c->io_repl_ack_time = mstime();
+            c->io_repl_ack_time = server.mstime;
 
             /* If this was a diskless replication, we need to really put
              * the slave online when the first ACK is received (which

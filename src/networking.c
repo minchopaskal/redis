@@ -156,7 +156,7 @@ client *createClient(connection *conn) {
     c->buf_encoded = 0;
     c->last_header = NULL;
     c->ref_repl_start_node = NULL;
-    c->ref_repl_buf_node = NULL;
+    c->ref_repl_curr_node = NULL;
     c->ref_block_pos = 0;
     c->ref_last_node = NULL;
     c->ref_last_node_used = 0;
@@ -1473,10 +1473,10 @@ void copyReplicaOutputBuffer(client *dst, client *src) {
 
     if (src->ref_repl_start_node == NULL) return;
 
-    serverAssert(src->ref_repl_start_node == src->ref_repl_buf_node);
+    serverAssert(src->ref_repl_start_node == src->ref_repl_curr_node);
 
     dst->ref_repl_start_node = src->ref_repl_start_node;
-    dst->ref_repl_buf_node = src->ref_repl_buf_node;
+    dst->ref_repl_curr_node = src->ref_repl_curr_node;
     dst->ref_block_pos = src->ref_block_pos;
     ((replBufBlock *)listNodeValue(dst->ref_repl_start_node))->refcount++;
 }
@@ -1489,7 +1489,7 @@ static inline int _clientHasPendingRepliesSlave(client *c) {
     /* Replicas use global shared replication buffer instead of
      * private output buffer. */
     serverAssert(c->bufpos == 0 && listLength(c->reply) == 0);
-    if (c->ref_repl_buf_node == NULL) return 0;
+    if (c->ref_repl_curr_node == NULL) return 0;
 
     /* If the last replication buffer block content is totally sent,
      * we have nothing to send. */
@@ -1499,7 +1499,7 @@ static inline int _clientHasPendingRepliesSlave(client *c) {
     size_t used = c->running_tid == IOTHREAD_MAIN_THREAD_ID ?
         ((replBufBlock*)listNodeValue(ln))->used : c->ref_last_node_used;
 
-    if (ln == c->ref_repl_buf_node && c->ref_block_pos == used) return 0;
+    if (ln == c->ref_repl_curr_node && c->ref_block_pos == used) return 0;
     return 1;
 }
 
@@ -2617,10 +2617,10 @@ static inline int _writeToClientSlave(client *c, ssize_t *nwritten) {
     listNode *ln = c->running_tid == IOTHREAD_MAIN_THREAD_ID ?
         listLast(server.repl_buffer_blocks) : c->ref_last_node;
 
-    replBufBlock *o = listNodeValue(c->ref_repl_buf_node);
+    replBufBlock *o = listNodeValue(c->ref_repl_curr_node);
 
     size_t used;
-    if (c->running_tid != IOTHREAD_MAIN_THREAD_ID && c->ref_repl_buf_node == ln)
+    if (c->running_tid != IOTHREAD_MAIN_THREAD_ID && c->ref_repl_curr_node == ln)
         used = c->ref_last_node_used;
     else
         used = o->used;
@@ -2639,13 +2639,13 @@ static inline int _writeToClientSlave(client *c, ssize_t *nwritten) {
      * the `ln` would be the real last node, so the listNextNode would have
      * returned NULL. But in IO threads case `ln` may be a stale value for the
      * last node - `next` would give us a node we shouldn't know about. */
-    if (c->ref_repl_buf_node == ln)
+    if (c->ref_repl_curr_node == ln)
         return C_OK;
 
     /* If we fully sent the object on head, go to the next one. */
-    listNode *next = listNextNode(c->ref_repl_buf_node);
+    listNode *next = listNextNode(c->ref_repl_curr_node);
     if (next && c->ref_block_pos == used) {
-        c->ref_repl_buf_node = next;
+        c->ref_repl_curr_node = next;
         c->ref_block_pos = 0;
 
         /* Main thread can safely write to repl buffer nodes so we handle
@@ -2986,14 +2986,10 @@ int processInlineBuffer(client *c, pendingCommand *pcmd) {
             c->repl_ack_time = server.unixtime;
         else
             /* If this is a replica client running in an IO thread we cache the
-             * last ack time in a different member variable for 2 reasons:
-             *   - to avoid contention with main thread. f.e see
-             *     refreshGoodSlavesCount()
-             *   - we need a higher granularity for the check if the replica
-             *     client needs to be send from main to IO thread for ACK read.
-             *     see replicaFromIOThreadNeedsAckRead()
+             * last ack time in a different member variable in order to avoid
+             * contention with main thread. f.e see refreshGoodSlavesCount()
              * Note c->repl_ack_time will still be updated in
-             * updateClientDataFromIOThread with the value of c->io_last_ack_time
+             * updateClientDataFromIOThread with the value of c->io_repl_ack_time
              * when the client moves from IO to main thread. */
             c->io_repl_ack_time = mstime();
     }
@@ -5255,7 +5251,6 @@ void flushSlavesOutputBuffers(void) {
 
             putClientInPendingWriteQueue(slave);
 
-            // slave->io_flags |= CLIENT_IO_WRITE_ENABLED;
             if (!(slave->io_flags & CLIENT_IO_WRITE_ENABLED)) {
                 slave->io_flags |= CLIENT_IO_WRITE_ENABLED;
                 revert_flags |= CLIENT_IO_WRITE_ENABLED;

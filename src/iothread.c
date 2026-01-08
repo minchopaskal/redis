@@ -67,21 +67,21 @@ void updateClientDataFromIOThread(client *c) {
         c->read_reploff = c->io_read_reploff;
     }
 
-    /* IO thread has send all the nodes from [ref_repl_start_node, ref_repl_buf_node)
+    /* IO thread has send all the nodes from [ref_repl_start_node, ref_repl_curr_node)
      * Since it only keeps refcount to the start_node we need to decrement
      * it and increment the refcount of the lastly processed buf_node which
      * will become the new start node for the next IO thread iteration. */
     if (c->flags & CLIENT_SLAVE && c->ref_repl_start_node != NULL &&
-        c->ref_repl_start_node != c->ref_repl_buf_node)
+        c->ref_repl_start_node != c->ref_repl_curr_node)
     {
-        serverAssert(c->ref_repl_buf_node);
+        serverAssert(c->ref_repl_curr_node);
 
         ((replBufBlock*)listNodeValue(c->ref_repl_start_node))->refcount--;
-        ((replBufBlock*)listNodeValue(c->ref_repl_buf_node))->refcount++;
+        ((replBufBlock*)listNodeValue(c->ref_repl_curr_node))->refcount++;
 
-        /* Forget about nodes before ref_repl_buf_node as we already
+        /* Forget about nodes before ref_repl_curr_node as we already
          * processed them */
-        c->ref_repl_start_node = c->ref_repl_buf_node;
+        c->ref_repl_start_node = c->ref_repl_curr_node;
 
         incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
     }
@@ -648,13 +648,8 @@ int processClientsFromIOThread(IOThread *t) {
             continue;
         }
 
-        /* IO thread replicas are always kept in main so they are updated with
-         * the latest repl buffer data ASAP. Generally when the replica client
-         * is sent to main thread it will either see that there is new
-         * replication data or NOT. In the former case it's send back to IO
-         * thread and in the latter - it stays in main thread until there is.
-         * See the call to putReplicasInPendingClientsToIOThreads in beforeSleep
-         */
+        /* Handle replica clients in putReplicasInPendingClientsToIOThreads in
+         * beforeSleep */
         if (c->flags & CLIENT_SLAVE) {
             continue;
         }
@@ -869,6 +864,7 @@ int IOThreadCron(struct aeEventLoop *eventLoop, long long id, void *clientData) 
     UNUSED(id);
     IOThread *t = clientData;
 
+    /* Run cron tasks for the clients in the IO thread. */
     IOThreadClientsCron(t);
 
     return 1000/CONFIG_DEFAULT_HZ;
