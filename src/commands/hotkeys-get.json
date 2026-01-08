@@ -28,7 +28,7 @@
                             "description": "Array of hotkeys with CPU time percentages",
                             "type": "array"
                         },
-                        "by-net-throughput": {
+                        "by-net-bytes": {
                             "description": "Array of hotkeys with network throughput percentages",
                             "type": "array"
                         }
