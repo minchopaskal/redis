@@ -120,11 +120,16 @@ void putReplicasInPendingClientsToIOThreads(void) {
     while((ln = listNext(&li))) {
         client *replica = listNodeValue(ln);
 
+        /* We only care about replicas that need to run on IO thread but are
+         * currently in main */
         if (replica->tid == IOTHREAD_MAIN_THREAD_ID ||
             replica->running_tid != IOTHREAD_MAIN_THREAD_ID)
         {
             continue;
         }
+
+        /* Skip the replica if it's scheduled for close */
+        if (replica->flags & CLIENT_CLOSE_ASAP) continue;
 
         /* The call to clientHasPendingReplies may seem redundant but in the
          * case of replica being in IO thread we can have the following case:
