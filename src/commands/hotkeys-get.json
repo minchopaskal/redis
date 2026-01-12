@@ -1,10 +1,10 @@
 {
     "GET": {
-        "summary": "Returns two lists of top K hotkeys - one by cpu time and one by network bytes.",
-        "complexity": "O(K) where K is the number of hotkeys to return.",
+        "summary": "Returns lists of top K hotkeys depending on metrics chosen in HOTKEYS START command.",
+        "complexity": "O(K) where K is the number of hotkeys returned.",
         "group": "server",
-        "since": "8.0.0",
-        "arity": -2,
+        "since": "8.6.0",
+        "arity": 2,
         "container": "HOTKEYS",
         "function": "hotkeysCommand",
         "command_flags": [
@@ -14,24 +14,30 @@
         "reply_schema": {
             "oneOf": [
                 {
-                    "description": "Hotkeys report with collection metadata and two sorted lists",
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                        "collection-start-time": {
-                            "type": "integer"
-                        },
-                        "collection-duration": {
-                            "type": "integer"
-                        },
-                        "by-cpu-time": {
-                            "description": "Array of hotkeys with CPU time percentages",
-                            "type": "array"
-                        },
-                        "by-net-bytes": {
-                            "description": "Array of hotkeys with network throughput percentages",
-                            "type": "array"
-                        }
+                    "description": "Flat array with various metrics(tracking-activated, sample-ratio, selected-slots, time/network statistics), collection info (collection-start-time-unix-ms, collection-duration-ms, total-cpu-time-user-ms, total-cpu-time-sys-ms, total-net-bytes), and two lists of Top-K hotkeys (by-cpu-time and by-net-bytes) where at most K hotkeys are returned.",
+                    "type": "array",
+                    "items": {
+                        "oneOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "array",
+                                "items": {
+                                    "oneOf": [
+                                        {
+                                            "type": "string"
+                                        },
+                                        {
+                                            "type": "integer"
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
                     }
                 },
                 {
@@ -39,21 +45,7 @@
                     "type": "null"
                 }
             ]
-        },
-        "arguments": [
-            {
-                "token": "MINCPU",
-                "name": "mincpu",
-                "type": "integer",
-                "optional": true
-            },
-            {
-                "token": "MINNET",
-                "name": "minnet",
-                "type": "integer",
-                "optional": true
-            }
-        ]
+        }
     }
 }
 

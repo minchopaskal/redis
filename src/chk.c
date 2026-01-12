@@ -17,13 +17,14 @@
 
 #include "chk.h"
 
-#include "murmurhash.h"
+#include "xxhash.h"
 #include "zmalloc.h"
 
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
+/* Lobby to heavy item promotion threshold */
 #define LOBBY_PROMOTION_THRESHOLD 16
 
 #ifndef static_assert
@@ -34,8 +35,20 @@ static_assert(LOBBY_PROMOTION_THRESHOLD < CHK_LUT_SIZE,
               "Lobby promotion threshold should be less then the LUT size to "
               "ensure constant operations during decayCounter!");
 
+/* After a heavy item is demoted is starts recursively kicking out other heavy
+ * items in the case it should stay heavy (defined by isHeavyHitter). In
+ * principle this process could go over all the items in the chkTopK's tables
+ * so it's artificially limited by this constant. */
 #define MAX_KICKS 16
+
+/* An item is defined as heavy hitter if its count is more or equal to x * N
+ * where x is a threashold constant (HEAVY_RATIO) and N is the total count the
+ * chkTopK structure has accumulated. See the paper for more info. */
 #define HEAVY_RATIO 0.008
+
+/* A unique seed for the items when storing them in the heap so it's not related
+ * to the cuckoo's hashes. Also, we don't need the less-bit hash here as the
+ * heap does not take much memory so we avoid needless possible collisions. */
 #define HEAP_SEED 1919
 
 typedef struct {
@@ -45,15 +58,6 @@ typedef struct {
 
 static inline counter_t chkMax(counter_t a, counter_t b) {
     return a > b ? a : b;
-}
-
-static inline char *chkStrndup(const char *s, size_t n) {
-    char *ret = zcalloc(n + 1);
-    if (ret) {
-        memcpy(ret, s, n);
-        ret[n] = '\0';
-    }
-    return ret;
 }
 
 /* Heap operations */
@@ -104,6 +108,8 @@ void chkHeapifyDown(chkHeapBucket *array, size_t len, size_t start) {
 /* chkTopK operations */
 
 chkTopK *chkTopKCreate(int k, int numbuckets, double decay) {
+    if (k <= 0) return NULL;
+
     /* Number of buckets need to be a power of 2 for better performance - we
      * have better cache locality of the tables and faster table indices
      * calculations. */
@@ -111,8 +117,7 @@ chkTopK *chkTopKCreate(int k, int numbuckets, double decay) {
         return NULL;
     }
 
-    chkTopK *topk = ztrymalloc(sizeof(chkTopK));
-    if (!topk) return NULL;
+    chkTopK *topk = zmalloc(sizeof(chkTopK));
 
     for (int i = 0; i < CHK_NUM_TABLES; ++i) {
         topk->tables[i] = ztrycalloc(sizeof(chkBucket) * numbuckets);
@@ -124,19 +129,9 @@ chkTopK *chkTopKCreate(int k, int numbuckets, double decay) {
             zfree(topk);
             return NULL;
         }
-
-        memset(topk->tables[i], 0, sizeof(chkBucket) * numbuckets);
     }
 
-    topk->heap = ztrycalloc(sizeof(chkHeapBucket) * k);
-    if (topk->heap == NULL) {
-        for (int i = 0; i < CHK_NUM_TABLES; ++i)
-            zfree(topk->tables[i]);
-
-        zfree(topk);
-        return NULL;
-    }
-    memset(topk->heap, 0, sizeof(chkHeapBucket) * k);
+    topk->heap = zcalloc(sizeof(chkHeapBucket) * k);
 
     topk->decay = decay;
     topk->inv_decay = 1. / decay;
@@ -167,7 +162,7 @@ void chkTopKDestroy(chkTopK *topk) {
 }
 
 fpAndIdx generateItemFpAndIdxs(chkTopK *topk, char *item, int itemlen) {
-    uint64_t hash = MurmurHash64A(item, itemlen, 0);
+    uint64_t hash = XXH3_64bits_withSeed(item, itemlen, 0);
 
     fpAndIdx res;
     res.fp = (hash & 0xFFFF); /* Only use 16 bits for fingerprint */
@@ -186,6 +181,9 @@ typedef struct {
     int pos;
 } checkEntryRes;
 
+/* Check if `item` is a heavy entry. If so we bump its count. If not - we make
+ * it a heavy entry immediately if there is an empty spot, thus skipping the
+ * lobby as an optimization. */
 checkEntryRes checkHeavyEntries(chkTopK *topk, fpAndIdx item, counter_t weight) {
     int empty_table_idx = -1;
     int empty_pos = -1;
@@ -224,10 +222,18 @@ checkEntryRes checkHeavyEntries(chkTopK *topk, fpAndIdx item, counter_t weight) 
     return res;
 }
 
+/* A heavy hitter is defined by the paper as an item with counter more or equal
+ * to phi * N, where phi is a constant and N is the total count the structure
+ * has recorded up to that point */
 int isHeavyHitter(chkTopK *topk, counter_t cnt) {
     return cnt >= (topk->total * HEAVY_RATIO);
 }
 
+/* After a lobby item is promoted it may be placed on a heavy item's spot. The
+ * latter is kicked out, but it may recursively kick out another heavy item.
+ * The process is limited by MAX_KICKS and also by the fact that during updates
+ * one of the kicked out items may have its counter decayed so much - it's not
+ * passing the heavy item threashold (see isHeavyHitter). */
 void kickout(chkTopK *topk, chkHeavyEntry entry, fpAndIdx item, int table_idx) {
     for (int i = 0; i < MAX_KICKS; ++i) {
         /* Do not try to swap with any entries if we don't reach the heavy
@@ -261,11 +267,20 @@ void kickout(chkTopK *topk, chkHeavyEntry entry, fpAndIdx item, int table_idx) {
     }
 }
 
-int tryPromoteAndKickout(chkTopK *topk, fpAndIdx item, counter_t new_count, int table_idx) {
+/* When a lobby entry's counter passes the promotion threshold we try to promote
+ * it with some probability. See the paper for more details. If promotion is
+ * successful the lobby entry may kick out a heavy one - see kickout() */
+int tryPromoteAndKickout(chkTopK *topk, fpAndIdx item, counter_t new_count,
+                         int table_idx)
+{
     int idx = item.idx[table_idx];
     chkBucket *bucket = &topk->tables[table_idx][idx];
-    counter_t min = (counter_t)-1;
+    counter_t min = (counter_t)-1; /* counter_t is unsigned */
     int min_idx = -1;
+
+    /* We search for heavy item bucket of the promoted lobby entry. We may have
+     * an empty space which we immediately occupy. Otherwise we choose the
+     * bucket with lowest counter */
     for (int i = 0; i < CHK_HEAVY_ENTRIES_PER_BUCKET; ++i) {
         if (bucket->heavy_entries[i].count == 0) {
             bucket->heavy_entries[i].fp = item.fp;
@@ -298,6 +313,7 @@ int tryPromoteAndKickout(chkTopK *topk, fpAndIdx item, counter_t new_count, int 
     return min_idx;
 }
 
+/* Check if an item is a lobby entry */
 checkEntryRes checkLobbyEntries(chkTopK *topk, fpAndIdx item, counter_t weight) {
     for (int i = 0; i < CHK_NUM_TABLES; ++i) {
         int idx = item.idx[i];
@@ -334,7 +350,9 @@ checkEntryRes checkLobbyEntries(chkTopK *topk, fpAndIdx item, counter_t weight) 
     return res;
 }
 
-double getDecayProb(chkTopK *topk, counter_t cnt) {
+/* Probability to decay cnt with 1.
+ * Equal to pow(decay, -cnt) */
+static inline double getDecayProb(chkTopK *topk, counter_t cnt) {
     if (cnt < CHK_LUT_SIZE) {
         return topk->lut_decay_prob[cnt];
     }
@@ -344,7 +362,9 @@ double getDecayProb(chkTopK *topk, counter_t cnt) {
            topk->lut_decay_prob[cnt % (CHK_LUT_SIZE)];
 }
 
-double getExpDecayCount(chkTopK *topk, counter_t cnt) {
+/* Expected decay steps to decay cnt to 0.
+ * Equal to sum(pow(decay, i)) for i in [0; cnt] */
+static inline double getExpDecayCount(chkTopK *topk, counter_t cnt) {
     if (cnt < CHK_LUT_SIZE) {
         return topk->lut_decay_exp[cnt];
     }
@@ -354,7 +374,9 @@ double getExpDecayCount(chkTopK *topk, counter_t cnt) {
            topk->lut_decay_exp[cnt % (CHK_LUT_SIZE)];
 }
 
-double getMinDecayCount(chkTopK *topk, counter_t cnt) {
+/* Expected minimum decay steps to decay cnt with 1. Since probability is
+ * pow(decay, -cnt) it's equal to pow(decay, cnt) */
+static inline double getMinDecayCount(chkTopK *topk, counter_t cnt) {
     if (cnt < CHK_LUT_SIZE) {
         return topk->lut_min_decay[cnt];
     }
@@ -364,10 +386,12 @@ double getMinDecayCount(chkTopK *topk, counter_t cnt) {
            topk->lut_min_decay[cnt % (CHK_LUT_SIZE)];
 }
 
+/* When there is a hash-collission between lobby entries we decay the existing
+ * lobby entry with the weight of the new one. Return the counter after decaying. */
 lobby_counter_t chkDecayCounter(chkTopK *topk, lobby_counter_t cnt, counter_t weight) {
     if (weight == 0) return cnt;
 
-    /* Unweighted update - just decay with probability decay ^ -cnt */
+    /* Unweighted update - just decay with probability pow(decay, -cnt) */
     if (weight == 1) {
         double prob = getDecayProb(topk, (counter_t)cnt);
         if ((rand() / (double)RAND_MAX) < prob) {
@@ -396,7 +420,7 @@ lobby_counter_t chkDecayCounter(chkTopK *topk, lobby_counter_t cnt, counter_t we
         return 0;
 
     /* Weight is large enough to decay the counter to cnt - X where 0 < X < cnt.
-     * We binary search for the largest value `C` such that
+     * We binary search for the largest value `C` such that:
      *
      * (expected decay ops for `C`) >= (expected decay ops for `cnt`) - `weight`
      * i.e lut_decay_exp[C] + weight >= lut_decay_exp[cnt]
@@ -419,22 +443,32 @@ lobby_counter_t chkDecayCounter(chkTopK *topk, lobby_counter_t cnt, counter_t we
     return left;
 }
 
-char *chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight) {
+char *chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight,
+                    int *expelled_len)
+{
     topk->total += weight;
 
+    /* Generate a fingerprint and indices for both cuckoo tables. */
     fpAndIdx itemFpIdx = generateItemFpAndIdxs(topk, item, itemlen);
 
+    /* Check if the item is amongst the heavy entries. If so we just update its
+     * counter. */
     checkEntryRes res = checkHeavyEntries(topk, itemFpIdx, weight);
     if (res.table_idx != -1) {
         goto update_heap;
     }
 
+    /* If the item is not already heavy it may be in the lobby. If so we'll
+     * increase its counter and promote it to a heavy entry if it passes the
+     * threashold */
     res = checkLobbyEntries(topk, itemFpIdx, weight);
     if (res.table_idx != -1) {
         goto update_heap;
     }
 
-    /* Check for empty lobby entries */
+    /* Item is not tracked at all. Check for empty lobby entries - if there is
+     * any - place the item there. The weight may be higher than the promotional
+     * threshold in which case we'll try to promote it. */
     for (int i = 0; i < CHK_NUM_TABLES; ++i) {
         int idx = itemFpIdx.idx[i];
         chkBucket *bucket = &topk->tables[i][idx];
@@ -459,14 +493,18 @@ char *chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight) {
         }
     }
  
-    /* If no empty lobby entries choose a table deterministically and decay its
-     * lobby counter and update */
+    /* If there are no empty lobby entries choose a table deterministically,
+     * decay its lobby counter and update */
     int table_idx = itemFpIdx.fp & 1;
     int idx = itemFpIdx.idx[table_idx];
 
     chkLobbyEntry *e = &topk->tables[table_idx][idx].lobby_entry;
     lobby_counter_t new_count = chkDecayCounter(topk, e->count, weight);
 
+    /* if the chosen lobby entry has decayed its counter to 0, it's replaced by
+     * the new entry. Note, in that case the new entry is has it's weight
+     * decreased by the approximate amount of decay operations needed to decay
+     * the old entry. */
     if (new_count == 0) {
         e->fp = itemFpIdx.fp;
         e->count = chkMax(1, weight - getExpDecayCount(topk, e->count));
@@ -482,6 +520,9 @@ char *chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight) {
         }
     }
 
+    /* After a change in the structure has occured we check if we also need to
+     * update the heap - i.e bump a new item in it, or reorder an old item if
+     * it's counter went up. */
 update_heap:
     if (res.table_idx == -1 || res.pos == -1)
         return NULL;
@@ -496,7 +537,7 @@ update_heap:
         return NULL;
  
     /* Heap uses different hash than the cuckoo tables */
-    uint64_t fp = MurmurHash64A(item, itemlen, HEAP_SEED);
+    uint64_t fp = XXH3_64bits_withSeed(item, itemlen, HEAP_SEED);
     chkHeapBucket *itemHeapPtr = chkCheckExistInHeap(topk, item, itemlen, fp);
     if (itemHeapPtr != NULL) {
         itemHeapPtr->count = entry->count;
@@ -505,10 +546,12 @@ update_heap:
         /* We know the new entry has bigger count than the min-element so it's
          * safe to expel it. */
         char *expelled = topk->heap[0].item;
+        *expelled_len = topk->heap[0].itemlen;
 
         topk->heap[0].count = entry->count;
         topk->heap[0].fp = fp;
-        topk->heap[0].item = chkStrndup(item, itemlen);
+        topk->heap[0].item = zmalloc(itemlen);
+        memcpy(topk->heap[0].item, item, itemlen);
         topk->heap[0].itemlen = itemlen;
         chkHeapifyDown(topk->heap, topk->k, 0);
         return expelled;
@@ -524,12 +567,33 @@ int cmpchkHeapBucket(const void *tmp1, const void *tmp2) {
 }
 
 chkHeapBucket *chkTopKList(chkTopK *topk) {
-    chkHeapBucket *list = ztrycalloc(sizeof(chkHeapBucket) * topk->k);
-    if (list == NULL) return NULL;
-
+    chkHeapBucket *list = zmalloc(sizeof(chkHeapBucket) * topk->k);
     memcpy(list, topk->heap, sizeof(chkHeapBucket) * topk->k);
     qsort(list, topk->k, sizeof(*list), cmpchkHeapBucket);
     return list;
+}
+
+size_t chkTopKGetMemoryUsage(chkTopK *topk) {
+    if (!topk) return 0;
+
+    size_t memory = sizeof(chkTopK);
+
+    /* Memory for tables */
+    for (int i = 0; i < CHK_NUM_TABLES; ++i) {
+        memory += sizeof(chkBucket) * topk->numbuckets;
+    }
+
+    /* Memory for heap array */
+    memory += sizeof(chkHeapBucket) * topk->k;
+
+    /* Memory for heap item strings */
+    for (int i = 0; i < topk->k; ++i) {
+        if (topk->heap[i].item != NULL) {
+            memory += topk->heap[i].itemlen;
+        }
+    }
+
+    return memory;
 }
 
 #ifdef REDIS_TEST
@@ -562,7 +626,8 @@ static int verifyListSorted(chkHeapBucket *list, int k) {
 }
 
 static void chkTopKUpdateAndFreeExpelled(chkTopK *topk, const char *item, int itemlen, counter_t weight) {
-    char *expelled = chkTopKUpdate(topk, (char *)item, itemlen, weight);
+    int len;
+    char *expelled = chkTopKUpdate(topk, (char *)item, itemlen, weight, &len);
     if (expelled) zfree(expelled);
 }
 

@@ -18,6 +18,7 @@
 #pragma once
 
 #include "stdint.h"
+#include <stddef.h>
 
 #define CHK_LUT_SIZE 256
 #define CHK_HEAVY_ENTRIES_PER_BUCKET 2
@@ -75,12 +76,17 @@ typedef struct chkTopK {
     int numbuckets;
 } chkTopK;
 
+/* Create the chkTopK structure. Note, CHK paper recommends decay=1.08 */
 chkTopK *chkTopKCreate(int k, int numbuckets, double decay);
+
+/* Release chkTopK resources */
 void chkTopKDestroy(chkTopK *topk);
 
 /* Update weighted item. If another one was expelled from the topK list -
- * return its name. Caller is responsible for releasing it */
-char *chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight);
+ * return its name as byte array and store its length in *expelled_len. Caller
+ * is responsible for releasing it */
+char *chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight,
+                    int *expelled_len);
 
 /* Get an ordered by count list of topk->k elements inside the topk object.
  *
@@ -89,6 +95,9 @@ char *chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight);
  * share their `item` pointers with the internal topk->heap buckets so one must
  * not use it after `topk` is released. */
 chkHeapBucket *chkTopKList(chkTopK *topk);
+
+/* Get the memory usage in bytes of the chkTopK structure */
+size_t chkTopKGetMemoryUsage(chkTopK *topk);
 
 #ifdef REDIS_TEST
 

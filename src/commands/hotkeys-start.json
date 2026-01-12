@@ -3,7 +3,7 @@
         "summary": "Starts hotkeys tracking.",
         "complexity": "O(1)",
         "group": "server",
-        "since": "8.0.0",
+        "since": "8.6.0",
         "arity": -2,
         "container": "HOTKEYS",
         "function": "hotkeysCommand",
@@ -12,9 +12,41 @@
             "NOSCRIPT"
         ],
         "reply_schema": {
-            "const": "OK"
+            "oneOf": [
+                {
+                    "const": "OK"
+                },
+                {
+                    "description": "Error if a session is already started",
+                    "type": "error"
+                }
+            ]
         },
         "arguments": [
+            {
+                "token": "METRICS",
+                "name": "metrics",
+                "type": "block",
+                "optional": false,
+                "arguments": [
+                    {
+                        "name": "count",
+                        "type": "integer"
+                    },
+                    {
+                        "token": "CPU",
+                        "name": "cpu",
+                        "type": "pure-token",
+                        "optional": true
+                    },
+                    {
+                        "token": "NET",
+                        "name": "net",
+                        "type": "pure-token",
+                        "optional": true
+                    }
+                ]
+            },
             {
                 "token": "COUNT",
                 "name": "k",

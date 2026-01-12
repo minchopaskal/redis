@@ -1812,16 +1812,33 @@ typedef enum childInfoType {
 /* Forward declaration of topK structure used for hotkeys detection */
 struct chkTopK;
 
+/* Hotkeys tracking metric flags */
+#define HOTKEYS_TRACK_CPU (1ULL << 0)
+#define HOTKEYS_TRACK_NET (1ULL << 1)
+
 typedef struct hotkeysStats {
     struct chkTopK *cpu;
     struct chkTopK *net;
-    mstime_t start;
+    mstime_t start; /* Initial time point for wall time tracking */
     int *slots;
+    /* Statistics counters. NOTE, time_* members are saved in microseconds for
+     * accuracy but displayed in milliseconds during HOTKEYS GET */
+    uint64_t time_sampled_commands_selected_slots;  /* microseconds */
+    uint64_t time_all_commands_selected_slots;       /* microseconds */
+    uint64_t time_all_commands_all_slots;            /* microseconds */
+    uint64_t net_bytes_sampled_commands_selected_slots;
+    uint64_t net_bytes_all_commands_selected_slots;
+    uint64_t net_bytes_all_commands_all_slots;
+    /* Initial rusage for CPU time tracking */
+    struct rusage rusage_start;
+
     int numslots;
     int k;
     int duration;
     int sample_ratio;
     int active;
+    uint64_t tracked_metrics;  /* Bit flags: HOTKEYS_TRACK_CPU, HOTKEYS_TRACK_NET, etc. */
+    uint64_t cpu_time;  /* Total CPU time spent updating the topk struct in milliseconds */
 } hotkeyStats;
 
 struct redisServer {
