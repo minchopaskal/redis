@@ -92,7 +92,7 @@ void chkHeapifyDown(chkHeapBucket *array, size_t len, size_t start) {
     }
 
     chkHeapBucket top = {0};
-    memcpy(&top, &array[start], sizeof(chkHeapBucket));
+    top = array[start];
     do {
         memcpy(&array[start], &array[child], sizeof(chkHeapBucket));
         start = child;
