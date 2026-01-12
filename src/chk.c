@@ -65,11 +65,15 @@ static chkHeapBucket *chkCheckExistInHeap(chkTopK *topk, const char *item, int i
                                        uint64_t fp) {
     chkHeapBucket *runner = topk->heap;
 
-    for (int32_t i = topk->k - 1; i >= 0; --i)
-        if (fp == (runner + i)->fp && itemlen == (runner + i)->itemlen &&
-            memcmp((runner + i)->item, item, itemlen) == 0) {
-            return runner + i;
+    for (int32_t i = topk->k - 1; i >= 0; --i) {
+        chkHeapBucket *bucket = runner + i;
+        if (bucket->fp == fp &&
+            bucket->itemlen == itemlen &&
+            memcmp(bucket->item, item, itemlen) == 0) 
+        {
+            return bucket;
         }
+    }
     return NULL;
 }
 
