@@ -42,7 +42,7 @@ static_assert(LOBBY_PROMOTION_THRESHOLD < CHK_LUT_SIZE,
 #define MAX_KICKS 16
 
 /* An item is defined as heavy hitter if its count is more or equal to x * N
- * where x is a threashold constant (HEAVY_RATIO) and N is the total count the
+ * where x is a threshold constant (HEAVY_RATIO) and N is the total count the
  * chkTopK structure has accumulated. See the paper for more info. */
 #define HEAVY_RATIO 0.008
 
@@ -237,7 +237,7 @@ int isHeavyHitter(chkTopK *topk, counter_t cnt) {
  * latter is kicked out, but it may recursively kick out another heavy item.
  * The process is limited by MAX_KICKS and also by the fact that during updates
  * one of the kicked out items may have its counter decayed so much - it's not
- * passing the heavy item threashold (see isHeavyHitter). */
+ * passing the heavy item threshold (see isHeavyHitter). */
 void kickout(chkTopK *topk, chkHeavyEntry entry, fpAndIdx item, int table_idx) {
     for (int i = 0; i < MAX_KICKS; ++i) {
         /* Do not try to swap with any entries if we don't reach the heavy
@@ -464,7 +464,7 @@ char *chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight,
 
     /* If the item is not already heavy it may be in the lobby. If so we'll
      * increase its counter and promote it to a heavy entry if it passes the
-     * threashold */
+     * threshold */
     res = checkLobbyEntries(topk, itemFpIdx, weight);
     if (res.table_idx != -1) {
         goto update_heap;
@@ -524,7 +524,7 @@ char *chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight,
         }
     }
 
-    /* After a change in the structure has occured we check if we also need to
+    /* After a change in the structure has occurred we check if we also need to
      * update the heap - i.e bump a new item in it, or reorder an old item if
      * it's counter went up. */
 update_heap:
