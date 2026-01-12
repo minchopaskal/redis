@@ -12,15 +12,7 @@
             "NOSCRIPT"
         ],
         "reply_schema": {
-            "oneOf": [
-                {
-                    "const": "OK"
-                },
-                {
-                    "description": "Error if session is in progress",
-                    "type": "error"
-                }
-            ]
+            "const": "OK"
         }
     }
 }

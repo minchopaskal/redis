@@ -12,15 +12,7 @@
             "NOSCRIPT"
         ],
         "reply_schema": {
-            "oneOf": [
-                {
-                    "const": "OK"
-                },
-                {
-                    "description": "Error if a session is already started",
-                    "type": "error"
-                }
-            ]
+            "const": "OK"
         },
         "arguments": [
             {

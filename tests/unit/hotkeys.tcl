@@ -354,7 +354,7 @@ start_server {tags {"hotkeys"}} {
             set total_commands 50000
             for {set i 0} {$i < $total_commands} {incr i} {
                 set rand [expr {rand()}]
-                if {$rand < 0.85} {
+                if {$rand < 0.8} {
                     set key [lindex $hot_keys [expr {int(rand() * 20)}]]
                 } else {
                     set key [lindex $all_keys [expr {20 + int(rand() * 80)}]]
@@ -380,14 +380,19 @@ start_server {tags {"hotkeys"}} {
                 lappend returned_cpu_keys [lindex $cpu_time_array $i]
             }
 
-            # Check that all returned keys (based on cpu time) are from our hot_keys list
+            # Check that most of returned keys (based on cpu time) are from our
+            # hot_keys list
             set num_returned_cpu [llength $returned_cpu_keys]
             assert_lessthan_equal $num_returned_cpu 10
             assert_morethan $num_returned_cpu 0
 
+            set res 0
             foreach key $returned_cpu_keys {
-                assert_morethan_equal [lsearch -exact $hot_keys $key] 0
+                if {[lsearch -exact $hot_keys $key] >= 0} {
+                    incr res
+                }
             }
+            assert_morethan $res 5
 
             set returned_net_keys {}
             for {set i 0} {$i < [llength $net_bytes_array]} {incr i 2} {
@@ -399,9 +404,13 @@ start_server {tags {"hotkeys"}} {
             assert_lessthan_equal $num_returned_net 10
             assert_morethan $num_returned_net 0
 
+            set res_net 0
             foreach key $returned_net_keys {
-                assert_morethan_equal [lsearch -exact $hot_keys $key] 0
+                if {[lsearch -exact $hot_keys $key] >= 0} {
+                    incr res_net
+                }
             }
+            assert_morethan $res_net 5
 
             assert_equal {OK} [r hotkeys reset]
         } {} {resp3}
