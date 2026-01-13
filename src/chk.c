@@ -56,13 +56,9 @@ typedef struct {
     fingerprint_t fp;
 } fpAndIdx;
 
-static inline counter_t chkMax(counter_t a, counter_t b) {
-    return a > b ? a : b;
-}
-
 /* Heap operations */
 static chkHeapBucket *chkCheckExistInHeap(chkTopK *topk, const char *item, int itemlen,
-                                       uint64_t fp) {
+                                          uint64_t fp) {
     chkHeapBucket *runner = topk->heap;
 
     for (int32_t i = topk->k - 1; i >= 0; --i) {
@@ -165,6 +161,10 @@ void chkTopKDestroy(chkTopK *topk) {
     zfree(topk);
 }
 
+static inline int generateAltIdx(fingerprint_t fp, int idx, int numbuckets) {
+    return (idx ^ (0x5bd1e995 * (size_t)fp)) & (numbuckets - 1);
+}
+
 fpAndIdx generateItemFpAndIdxs(chkTopK *topk, char *item, int itemlen) {
     uint64_t hash = XXH3_64bits_withSeed(item, itemlen, 0);
 
@@ -174,7 +174,7 @@ fpAndIdx generateItemFpAndIdxs(chkTopK *topk, char *item, int itemlen) {
     /* Note numbuckets are a power of 2 so we don't use modulo for index calc */
     res.idx[0] = (hash >> 32) & (topk->numbuckets - 1);
     for (int i = 1; i < CHK_NUM_TABLES; ++i) {
-        res.idx[i] = (res.idx[i - 1] ^ (0x5bd1e995 * (size_t)res.fp)) & (topk->numbuckets - 1);
+        res.idx[i] = generateAltIdx(res.fp, res.idx[i-1], topk->numbuckets);
     }
 
     return res;
@@ -198,11 +198,13 @@ checkEntryRes checkHeavyEntries(chkTopK *topk, fpAndIdx item, counter_t weight) 
         chkBucket *bucket = &topk->tables[i][idx];
         for (int j = 0; j < CHK_HEAVY_ENTRIES_PER_BUCKET; ++j) {
             chkHeavyEntry *e = &bucket->heavy_entries[j];
-            if (e->fp == item.fp && e->count > 0) {
-                e->count += weight;
+            if (e->count > 0) {
+                if (e->fp == item.fp) {
+                    e->count += weight;
 
-                checkEntryRes res = { i, j };
-                return res;
+                    checkEntryRes res = { i, j };
+                    return res;
+                }
             } else if (empty_table_idx == -1) {
                 empty_table_idx = i;
                 empty_pos = j;
@@ -238,7 +240,7 @@ int isHeavyHitter(chkTopK *topk, counter_t cnt) {
  * The process is limited by MAX_KICKS and also by the fact that during updates
  * one of the kicked out items may have its counter decayed so much - it's not
  * passing the heavy item threshold (see isHeavyHitter). */
-void kickout(chkTopK *topk, chkHeavyEntry entry, fpAndIdx item, int table_idx) {
+void kickout(chkTopK *topk, chkHeavyEntry entry, int idx, int table_idx) {
     for (int i = 0; i < MAX_KICKS; ++i) {
         /* Do not try to swap with any entries if we don't reach the heavy
          * hitter threshold */
@@ -246,11 +248,13 @@ void kickout(chkTopK *topk, chkHeavyEntry entry, fpAndIdx item, int table_idx) {
 
         /* Find the heavy entry in the alt bucket in the other table with
          * minimum count. If there is empty entry there just occupy it, else
-         * recursively kick the minimal one out. */
-        int other_table_idx = 1 - table_idx;
-        int idx = item.idx[other_table_idx];
+         * recursively kick the minimal one out.
+         * To find the alt bucket we need to compute the alt index from the
+         * fingerprint of the kicked-out entry. */
+        table_idx = 1 - table_idx;
+        idx = generateAltIdx(entry.fp, idx, topk->numbuckets);
 
-        chkBucket *bucket = &topk->tables[other_table_idx][idx];
+        chkBucket *bucket = &topk->tables[table_idx][idx];
         counter_t min = (counter_t)-1;
         int min_pos = -1;
         for (int j = 0; j < CHK_HEAVY_ENTRIES_PER_BUCKET; ++j) {
@@ -307,12 +311,13 @@ int tryPromoteAndKickout(chkTopK *topk, fpAndIdx item, counter_t new_count,
     }
 
     chkHeavyEntry to_kickout = bucket->heavy_entries[min_idx];
+    /* Note, that here the promoted item keeps the old count as per the paper */
     bucket->heavy_entries[min_idx].fp =  bucket->lobby_entry.fp;
 
     bucket->lobby_entry.count = 0;
     bucket->lobby_entry.fp = 0;
 
-    kickout(topk, to_kickout, item, table_idx);
+    kickout(topk, to_kickout, idx, table_idx);
 
     return min_idx;
 }
@@ -450,6 +455,8 @@ lobby_counter_t chkDecayCounter(chkTopK *topk, lobby_counter_t cnt, counter_t we
 char *chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight,
                     int *expelled_len)
 {
+    if (weight == 0) return NULL;
+
     topk->total += weight;
 
     /* Generate a fingerprint and indices for both cuckoo tables. */
@@ -503,15 +510,18 @@ char *chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight,
     int idx = itemFpIdx.idx[table_idx];
 
     chkLobbyEntry *e = &topk->tables[table_idx][idx].lobby_entry;
+
+    /* new_count is the count of `e` after decaying it with weight */
     lobby_counter_t new_count = chkDecayCounter(topk, e->count, weight);
 
     /* if the chosen lobby entry has decayed its counter to 0, it's replaced by
-     * the new entry. Note, in that case the new entry is has it's weight
+     * the new entry. Note, in that case the new entry has it's weight
      * decreased by the approximate amount of decay operations needed to decay
      * the old entry. */
     if (new_count == 0) {
         e->fp = itemFpIdx.fp;
-        e->count = chkMax(1, weight - getExpDecayCount(topk, e->count));
+        counter_t exp_decay_cnt = getExpDecayCount(topk, (counter_t)e->count);
+        e->count = exp_decay_cnt >= weight ? 1 : (weight - exp_decay_cnt);
     } else {
         e->count = new_count;
     }

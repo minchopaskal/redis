@@ -2816,6 +2816,13 @@ void prepareForNextCommand(client *c, int update_slot_stats) {
         /* We should do this before reset client. */
         clusterSlotStatsAddNetworkBytesInForUserClient(c);
     }
+
+    hotkeyMetrics metrics = {0, c->net_input_bytes_curr_cmd};
+    hotkeyStatsUpdateCurrentCmd(server.hotkeys, metrics);
+
+    /* Since we are ready with the current command we can clean up the hotkeys */
+    hotkeyStatsPostCurrentCmd(server.hotkeys);
+
     resetClientInternal(c, 1);
 }
 
