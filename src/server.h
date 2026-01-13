@@ -1524,22 +1524,18 @@ typedef struct client {
     listNode *mem_usage_bucket_node;
     clientMemUsageBucket *mem_usage_bucket;
 
-    listNode *ref_repl_start_node; /* Referenced node of replication buffer blocks
-                                    * indicating the initial data this client
-                                    * starts to send. Used by IO threads to keep
-                                    * track of nodes' refcounts. see replBufBlock. */
-    listNode *ref_repl_curr_node;   /* Referenced node of replication buffer blocks,
-                                    * indicating the current node we need to send
-                                    * from.
+    listNode *ref_repl_buf_node; /* Referenced node of replication buffer blocks,
                                     * see the definition of replBufBlock. */
-    size_t ref_block_pos;          /* Access position of referenced buffer block,
+    size_t ref_block_pos;        /* Access position of referenced buffer block,
                                     * i.e. the next offset to send. */
-    listNode *ref_last_node;       /* Cached reference to the last node in the
-                                    * replication buffer. Used only by IO thread
-                                    * to avoid contention with main thread when
-                                    * it feeds the replication buffer. */
-    size_t ref_last_node_used;     /* Cached value of the used bytes in
-                                    * ref_last_node. */
+    listNode *io_curr_repl_node; /* Current node we are sending repl data from in
+                                  * IO thread. */                              
+    size_t io_curr_block_pos;    /* Current position we are sending repl data from
+                                  * in IO thread. */
+    listNode *io_bound_repl_node;/* Bound node we are sending repl data from in
+                                  * IO thread. */
+    size_t io_bound_block_pos;   /* Bound position we are sending repl data from
+                                  * in IO thread. */
 
     /* list node in clients_pending_write list */
     listNode clients_pending_write_node;

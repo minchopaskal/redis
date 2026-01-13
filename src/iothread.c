@@ -67,22 +67,15 @@ void updateClientDataFromIOThread(client *c) {
         c->read_reploff = c->io_read_reploff;
     }
 
-    /* IO thread has send all the nodes from [ref_repl_start_node, ref_repl_curr_node)
-     * Since it only keeps refcount to the start_node we need to decrement
-     * it and increment the refcount of the lastly processed buf_node which
-     * will become the new start node for the next IO thread iteration. */
-    if (c->flags & CLIENT_SLAVE && c->ref_repl_start_node != NULL &&
-        c->ref_repl_start_node != c->ref_repl_curr_node)
+    /* Update replication buffer referenced node if IO thread has sent some data. */
+    if (c->flags & CLIENT_SLAVE && !(c->flags & CLIENT_CLOSE_ASAP) &&
+        (c->io_curr_repl_node != c->ref_repl_buf_node ||
+         c->io_curr_block_pos != c->ref_block_pos))
     {
-        serverAssert(c->ref_repl_curr_node);
-
-        ((replBufBlock*)listNodeValue(c->ref_repl_start_node))->refcount--;
-        ((replBufBlock*)listNodeValue(c->ref_repl_curr_node))->refcount++;
-
-        /* Forget about nodes before ref_repl_curr_node as we already
-         * processed them */
-        c->ref_repl_start_node = c->ref_repl_curr_node;
-
+        ((replBufBlock*)listNodeValue(c->ref_repl_buf_node))->refcount--;
+        ((replBufBlock*)listNodeValue(c->io_curr_repl_node))->refcount++;
+        c->ref_block_pos = c->io_curr_block_pos;
+        c->ref_repl_buf_node = c->io_curr_repl_node;
         incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
     }
 }
@@ -129,7 +122,6 @@ void enqueuePendingClientsToMainThread(client *c, int unbind) {
         sendPendingClientsToMainThreadIfNeeded(t, 1);
         /* Disable read and write to avoid race when main thread processes. */
         c->io_flags &= ~(CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED);
-
         /* Remove the client from IO thread, add it to main thread's pending list. */
         listUnlinkNode(t->clients, c->io_thread_client_list_node);
         listLinkNodeTail(t->pending_clients_to_main_thread, c->io_thread_client_list_node);
@@ -146,9 +138,10 @@ void enqueuePendingClienstToIOThreads(client *c) {
         listUnlinkNode(server.clients_pending_write, &c->clients_pending_write_node);
     }
     if (c->flags & CLIENT_SLAVE) {
-        c->ref_last_node = listLast(server.repl_buffer_blocks);
-        if (c->ref_last_node)
-            c->ref_last_node_used = ((replBufBlock*)listNodeValue(c->ref_last_node))->used;
+        c->io_bound_repl_node = listLast(server.repl_buffer_blocks);
+        c->io_bound_block_pos = ((replBufBlock *)listNodeValue(c->io_bound_repl_node))->used;
+        c->io_curr_repl_node = c->ref_repl_buf_node;
+        c->io_curr_block_pos = c->ref_block_pos;
     }
 
     c->running_tid = c->tid;
@@ -161,11 +154,9 @@ void unbindClientFromIOThreadEventLoop(client *c) {
     serverAssert(c->tid != IOTHREAD_MAIN_THREAD_ID &&
                  c->running_tid == IOTHREAD_MAIN_THREAD_ID);
     if (!connHasEventLoop(c->conn)) return;
-
     /* As calling in main thread, we should pause the io thread to make it safe. */
     pauseIOThread(c->tid);
     connUnbindEventLoop(c->conn);
-    updateClientDataFromIOThread(c);
     resumeIOThread(c->tid);
 }
 
@@ -220,16 +211,12 @@ void fetchClientFromIOThread(client *c) {
     }
     /* Unbind connection of client from io thread event loop. */
     connUnbindEventLoop(c->conn);
-
-    /* As client may be fetched to main thread but later returned (f.e
-     * flushSlavesOutputBuffers) make sure the flags are properly set. */
-    c->io_flags &= ~(CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED);
-
-    resumeIOThread(c->tid);
-
     /* Now main thread can process it. */
     c->running_tid = IOTHREAD_MAIN_THREAD_ID;
+    resumeIOThread(c->tid);
     updateClientDataFromIOThread(c);
+    /* Keep the client in main thread. */
+    keepClientInMainThread(c);
     freeClientDeferredObjects(c, 1); /* Free deferred objects. */
 }
 
@@ -267,14 +254,14 @@ int isClientMustHandledByMainThread(client *c) {
     }
 
     /* If RDB replication is done for this slave it's safe to move it to an IO thread
-     * Note that we also check if the ref_repl_start_node is initialized in order
+     * Note that we also check if the ref_repl_buf_node is initialized in order
      * to prevent race conditions with main thread when it feeds the replication
      * buffer. */
     if (c->flags & CLIENT_SLAVE &&
         (c->replstate == SLAVE_STATE_ONLINE ||
          c->replstate == SLAVE_STATE_SEND_BULK_AND_STREAM) &&
         c->repl_start_cmd_stream_on_ack == 0 &&
-        c->ref_repl_start_node != NULL)
+        c->ref_repl_buf_node != NULL)
     {
         return 0;
     }
@@ -310,9 +297,10 @@ void assignClientToIOThread(client *c) {
     /* Initial caching of replication buffer's last node. See comment above
      * replBufBlock for more info */
     if (c->flags & CLIENT_SLAVE) {
-        c->ref_last_node = listLast(server.repl_buffer_blocks);
-        if (c->ref_last_node)
-            c->ref_last_node_used = ((replBufBlock*)listNodeValue(c->ref_last_node))->used;
+        c->io_curr_repl_node = c->ref_repl_buf_node;
+        c->io_curr_block_pos = c->ref_block_pos;
+        c->io_bound_repl_node = listLast(server.repl_buffer_blocks);
+        c->io_bound_block_pos = ((replBufBlock *)listNodeValue(c->io_bound_repl_node))->used;
     }
 
     /* Unbind connection of client from main thread event loop, disable read and
@@ -627,9 +615,7 @@ int processClientsFromIOThread(IOThread *t) {
 
         /* Handle replica clients in putReplicasInPendingClientsToIOThreads in
          * beforeSleep */
-        if (c->flags & CLIENT_SLAVE) {
-            continue;
-        }
+        if (c->flags & CLIENT_SLAVE) continue;
 
         /* Remove this client from pending write clients queue of main thread,
          * And some clients may do not have reply if CLIENT REPLY OFF/SKIP. */
@@ -637,7 +623,6 @@ int processClientsFromIOThread(IOThread *t) {
             c->flags &= ~CLIENT_PENDING_WRITE;
             listUnlinkNode(server.clients_pending_write, &c->clients_pending_write_node);
         }
-
         c->running_tid = c->tid;
         listLinkNodeHead(mainThreadPendingClientsToIOThreads[c->tid], node);
         node = NULL;
