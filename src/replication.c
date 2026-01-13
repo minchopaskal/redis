@@ -141,7 +141,9 @@ void putReplicasInPendingClientsToIOThreads(void) {
          * if so. On the other hand if replica gets back to main thread before
          * any new repl data has accumulated then after a new cmd is propagated
          * the replica will be put in the pending write queue as usual so we
-         * need to check for that also. */
+         * need to check for that also.
+         * In addition, if the replica client has pending read events, we should
+         * also send them to the IO thread. */
         if (replica->flags & CLIENT_PENDING_WRITE ||
             clientHasPendingReplies(replica) ||
             replicaFromIOThreadHasPendingAck(replica))
@@ -337,6 +339,9 @@ int canFeedReplicaReplBuffer(client *replica) {
     /* Don't feed replicas that are going to be closed ASAP. */
     if (replica->flags & CLIENT_CLOSE_ASAP) return 0;
 
+    /* Don't feed replicas that are running in IO threads. */
+    if (replica->running_tid != IOTHREAD_MAIN_THREAD_ID) return 0;
+
     return 1;
 }
 
@@ -455,20 +460,15 @@ void incrementalTrimReplicationBacklog(size_t max_blocks) {
 void freeReplicaReferencedReplBuffer(client *replica) {
     serverAssert(replica->running_tid == IOTHREAD_MAIN_THREAD_ID);
 
-    if (replica->ref_repl_start_node != NULL) {
+    if (replica->ref_repl_buf_node != NULL) {
         /* Decrease the start buffer node reference count. */
-        replBufBlock *o = listNodeValue(replica->ref_repl_start_node);
-
+        replBufBlock *o = listNodeValue(replica->ref_repl_buf_node);
         serverAssert(o->refcount > 0);
         o->refcount--;
-
         incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
     }
-    replica->ref_repl_start_node = NULL;
-    replica->ref_repl_curr_node = NULL;
-    replica->ref_last_node = NULL;
+    replica->ref_repl_buf_node = NULL;
     replica->ref_block_pos = 0;
-    replica->ref_last_node_used = 0;
 }
 
 /* Append bytes into the global replication buffer list, replication backlog and
@@ -549,9 +549,8 @@ void feedReplicationBuffer(char *s, size_t len) {
             if (!canFeedReplicaReplBuffer(slave)) continue;
 
             /* Update shared replication buffer start position. */
-            if (slave->ref_repl_start_node == NULL) {
-                slave->ref_repl_start_node = start_node;
-                slave->ref_repl_curr_node = start_node;
+            if (slave->ref_repl_buf_node == NULL) {
+                slave->ref_repl_buf_node = start_node;
                 slave->ref_block_pos = start_pos;
                 /* Only increase the start block reference count. */
                 ((replBufBlock *)listNodeValue(start_node))->refcount++;
@@ -854,8 +853,7 @@ long long addReplyReplicationBacklog(client *c, long long offset) {
     /* Setting output buffer of the replica. */
     replBufBlock *o = listNodeValue(node);
     o->refcount++;
-    c->ref_repl_start_node = node;
-    c->ref_repl_curr_node = node;
+    c->ref_repl_buf_node = node;
     c->ref_block_pos = offset - o->repl_offset;
 
     return server.repl_backlog->histlen - skip;
@@ -4454,7 +4452,7 @@ void replicationSendAck(void) {
  */
 void replicationCacheMaster(client *c) {
     serverAssert(server.master != NULL && server.cached_master == NULL);
-    serverAssert(server.master->running_tid == IOTHREAD_MAIN_THREAD_ID);
+    serverAssert(server.master->tid == IOTHREAD_MAIN_THREAD_ID);
     serverLog(LL_NOTICE,"Caching the disconnected master state.");
 
     /* Unlink the client from the server structures. */
@@ -4477,15 +4475,6 @@ void replicationCacheMaster(client *c) {
     c->bufpos = 0;
     resetClient(c, -1);
     resetClientQbufState(c);
-
-    /* If the master client was handled by an IO thread we make sure to reset
-     * it's thread to the main one as later during resurrection/discarding the
-     * cached master we want that to be handled in the main thread.
-     * This is safe to do as replicationCacheMaster is called by freeClient
-     * and we must have already unbound the IO thread event loop. */
-    if (server.master->tid != IOTHREAD_MAIN_THREAD_ID) {
-        server.master->tid = IOTHREAD_MAIN_THREAD_ID;
-    }
 
     /* Save the master. Server.master will be set to null later by
      * replicationHandleMasterDisconnection(). */
