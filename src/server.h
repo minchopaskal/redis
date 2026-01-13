@@ -4312,6 +4312,7 @@ struct chkTopK;
 /* Hotkeys tracking metric flags */
 #define HOTKEYS_TRACK_CPU (1ULL << 0)
 #define HOTKEYS_TRACK_NET (1ULL << 1)
+#define HOTKEYS_METRICS_COUNT 2 /* NOTE: update if adding new metric */
 
 struct hotkeyStats {
     struct chkTopK *cpu;

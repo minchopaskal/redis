@@ -26,7 +26,9 @@ hotkeyStats *hotkeyStatsInit(int count, int duration, int sample_ratio,
      * enough) again for better accuracy. Note the CHK implementation uses a
      * power of 2 numbuckets for better cache locality. */
     if (tracked_metrics & HOTKEYS_TRACK_CPU) {
-        hotkeys->cpu = chkTopKCreate(count * 10, nearestNextPowerOf2((unsigned)count * 100), 1.08);
+        hotkeys->cpu = chkTopKCreate(count * 10,
+                                     nearestNextPowerOf2((unsigned)count * 100),
+                                     1.08);
         if (!hotkeys->cpu) {
             hotkeyStatsRelease(hotkeys);
             return NULL;
@@ -34,7 +36,9 @@ hotkeyStats *hotkeyStatsInit(int count, int duration, int sample_ratio,
     }
 
     if (tracked_metrics & HOTKEYS_TRACK_NET) {
-        hotkeys->net = chkTopKCreate(count * 10, nearestNextPowerOf2((unsigned)count * 100), 1.08);
+        hotkeys->net = chkTopKCreate(count * 10,
+                                     nearestNextPowerOf2((unsigned)count * 100),
+                                     1.08);
         if (!hotkeys->net) {
             hotkeyStatsRelease(hotkeys);
             return NULL;
@@ -155,12 +159,16 @@ void hotkeyStatsUpdateCurrentCmd(hotkeyStats *hotkeys, hotkeyMetrics metrics) {
         int pos = hotkeys->keys_result.keys[i].pos;
 
         if (hotkeys->tracked_metrics & HOTKEYS_TRACK_CPU) {
-            char *ret = chkTopKUpdate(hotkeys->cpu, argv[pos]->ptr, sdslen(argv[pos]->ptr), max(duration_per_key, 1), &len);
+            char *ret = chkTopKUpdate(hotkeys->cpu, argv[pos]->ptr,
+                                      sdslen(argv[pos]->ptr),
+                                      max(duration_per_key, 1), &len);
             if (ret) zfree(ret);
         }
 
         if (hotkeys->tracked_metrics & HOTKEYS_TRACK_NET) {
-            char *ret = chkTopKUpdate(hotkeys->net, argv[pos]->ptr, sdslen(argv[pos]->ptr), max(bytes_per_key, 1), &len);
+            char *ret = chkTopKUpdate(hotkeys->net, argv[pos]->ptr,
+                                      sdslen(argv[pos]->ptr),
+                                      max(bytes_per_key, 1), &len);
             if (ret) zfree(ret);
         }
     }
@@ -174,6 +182,9 @@ void hotkeyStatsPostCurrentCmd(hotkeyStats *hotkeys) {
     if (!hotkeys || !hotkeys->active) return;
 
     getKeysFreeResult(&hotkeys->keys_result);
+    hotkeys->keys_result.numkeys = 0;
+    hotkeys->keys_result.size = MAX_KEYS_BUFFER;
+
     hotkeys->current_client = NULL;
     hotkeys->is_sampled = 0;
     hotkeys->is_in_selected_slots = 0;
@@ -181,7 +192,12 @@ void hotkeyStatsPostCurrentCmd(hotkeyStats *hotkeys) {
 
 /* HOTKEYS command implementation
  * 
- * HOTKEYS START <METRICS count [CPU] [NET]> [COUNT k] [DURATION duration] [SAMPLE ratio] [SLOTS count slot…]
+ * HOTKEYS START
+ *         <METRICS count [CPU] [NET]>
+ *         [COUNT k]
+ *         [DURATION duration]
+ *         [SAMPLE ratio]
+ *         [SLOTS count slot…]
  * HOTKEYS STOP
  * HOTKEYS RESET
  * HOTKEYS GET
@@ -214,8 +230,8 @@ void hotkeysCommand(client *c) {
         }
 
         long metrics_count;
-        if (getRangeLongFromObjectOrReply(c, c->argv[3], 1, LONG_MAX, &metrics_count,
-                                          "METRICS count must be positive") != C_OK)
+        if (getRangeLongFromObjectOrReply(c, c->argv[3], 1, HOTKEYS_METRICS_COUNT,
+                &metrics_count, "METRICS count must be positive") != C_OK)
         {
             return;
         }
@@ -251,41 +267,50 @@ void hotkeysCommand(client *c) {
         int slots_count = 0;
         int *slots = NULL;
         while (j < c->argc) {
-            if (j + 1 < c->argc && !strcasecmp(c->argv[j]->ptr, "COUNT")) {
+            int moreargs = (c->argc-1) - j;
+            if (moreargs && !strcasecmp(c->argv[j]->ptr, "COUNT")) {
                 long count_val;
-                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 1, 64, &count_val,
-                                                  "COUNT must be between 1 and 64") != C_OK)
+                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 1, 64,
+                        &count_val, "COUNT must be between 1 and 64") != C_OK)
                 {
                     zfree(slots);
                     return;
                 }
                 count = (int)count_val;
                 j += 2;
-            } else if (j + 1 < c->argc && !strcasecmp(c->argv[j]->ptr, "DURATION")) {
-                if (getPositiveLongFromObjectOrReply(c, c->argv[j+1], &duration,
-                                                     "DURATION must be non-negative") != C_OK)
+            } else if (moreargs && !strcasecmp(c->argv[j]->ptr, "DURATION")) {
+                /* Arbitrary 1 million seconds limit, so we don't overflow the
+                 * duration member which is kept in milliseconds */
+                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 1, 1000000,
+                        &duration, "DURATION be between 1 and 1000000") != C_OK)
                 {
                     zfree(slots);
                     return;
                 }
                 duration *= 1000;
                 j += 2;
-            } else if (j + 1 < c->argc && !strcasecmp(c->argv[j]->ptr, "SAMPLE")) {
+            } else if (moreargs && !strcasecmp(c->argv[j]->ptr, "SAMPLE")) {
                 long ratio_val;
-                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 1, INT_MAX, &ratio_val,
-                                                  "SAMPLE ratio must be positive") != C_OK)
+                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 1, INT_MAX,
+                        &ratio_val, "SAMPLE ratio must be positive") != C_OK)
                 {
                     zfree(slots);
                     return;
                 }
                 sample_ratio = (int)ratio_val;
                 j += 2;
-            } else if (j + 1 < c->argc && !strcasecmp(c->argv[j]->ptr, "SLOTS")) {
+            } else if (moreargs && !strcasecmp(c->argv[j]->ptr, "SLOTS")) {
+                if (slots) {
+                    addReplyError(c, "SLOTS parameter already specified");
+                    zfree(slots);
+                    return;
+                }
                 long slots_count_val;
                 char msg[64];
-                snprintf(msg, 64, "SLOTS count must be between 1 and %d", CLUSTER_SLOTS);
-                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 1, CLUSTER_SLOTS,
-                                                  &slots_count_val, msg) != C_OK)
+                snprintf(msg, 64, "SLOTS count must be between 1 and %d",
+                         CLUSTER_SLOTS);
+                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 1,
+                        CLUSTER_SLOTS, &slots_count_val, msg) != C_OK)
                 {
                     return;
                 }
@@ -322,7 +347,8 @@ void hotkeysCommand(client *c) {
             }
         }
 
-        hotkeyStats *hotkeys = hotkeyStatsInit(count, duration, sample_ratio, slots, slots_count, tracked_metrics);
+        hotkeyStats *hotkeys = hotkeyStatsInit(count, duration, sample_ratio,
+                                               slots, slots_count, tracked_metrics);
  
         if (!hotkeys || !hotkeys->active) {
             zfree(slots);
@@ -381,7 +407,8 @@ void hotkeysCommand(client *c) {
             duration = (mstime() - server.hotkeys->start);
         }
 
-        /* Get total CPU time using rusage (RUSAGE_SELF) - only if CPU tracking is enabled */
+        /* Get total CPU time using rusage (RUSAGE_SELF) -
+         * only if CPU tracking is enabled */
         uint64_t total_cpu_user_msec = 0;
         uint64_t total_cpu_sys_msec = 0;
         if (server.hotkeys->tracked_metrics & HOTKEYS_TRACK_CPU) {
@@ -389,16 +416,24 @@ void hotkeysCommand(client *c) {
             getrusage(RUSAGE_SELF, &current_ru);
 
             /* Calculate difference in user and sys time */
-            long user_sec = current_ru.ru_utime.tv_sec - server.hotkeys->rusage_start.ru_utime.tv_sec;
-            long user_usec = current_ru.ru_utime.tv_usec - server.hotkeys->rusage_start.ru_utime.tv_usec;
+            long user_sec = current_ru.ru_utime.tv_sec -
+                server.hotkeys->rusage_start.ru_utime.tv_sec;
+
+            long user_usec = current_ru.ru_utime.tv_usec -
+                server.hotkeys->rusage_start.ru_utime.tv_usec;
+
             if (user_usec < 0) {
                 user_sec--;
                 user_usec += 1000000;
             }
             total_cpu_user_msec = (user_sec * 1000) + (user_usec / 1000);
  
-            long sys_sec = current_ru.ru_stime.tv_sec - server.hotkeys->rusage_start.ru_stime.tv_sec;
-            long sys_usec = current_ru.ru_stime.tv_usec - server.hotkeys->rusage_start.ru_stime.tv_usec;
+            long sys_sec = current_ru.ru_stime.tv_sec -
+                server.hotkeys->rusage_start.ru_stime.tv_sec;
+
+            long sys_usec = current_ru.ru_stime.tv_usec -
+                server.hotkeys->rusage_start.ru_stime.tv_usec;
+
             if (sys_usec < 0) {
                 sys_sec--;
                 sys_usec += 1000000;
@@ -454,7 +489,8 @@ void hotkeysCommand(client *c) {
         /* sampled-command-selected-slots-ms (conditional) */
         if (has_sampling && has_selected_slots) {
             addReplyBulkCString(c, "sampled-command-selected-slots-ms");
-            addReplyLongLong(c, server.hotkeys->time_sampled_commands_selected_slots / 1000);
+            addReplyLongLong(c,
+                server.hotkeys->time_sampled_commands_selected_slots / 1000);
 
             total_len += 2;
         }
@@ -462,7 +498,8 @@ void hotkeysCommand(client *c) {
         /* all-commands-selected-slots-ms (conditional) */
         if (has_selected_slots) {
             addReplyBulkCString(c, "all-commands-selected-slots-ms");
-            addReplyLongLong(c, server.hotkeys->time_all_commands_selected_slots / 1000);
+            addReplyLongLong(c,
+                server.hotkeys->time_all_commands_selected_slots / 1000);
 
             total_len += 2;
         }
@@ -474,7 +511,8 @@ void hotkeysCommand(client *c) {
         /* net-bytes-sampled-commands-selected-slots (conditional) */
         if (has_sampling && has_selected_slots) {
             addReplyBulkCString(c, "net-bytes-sampled-commands-selected-slots");
-            addReplyLongLong(c, server.hotkeys->net_bytes_sampled_commands_selected_slots);
+            addReplyLongLong(c,
+                server.hotkeys->net_bytes_sampled_commands_selected_slots);
 
             total_len += 2;
         }
@@ -482,7 +520,8 @@ void hotkeysCommand(client *c) {
         /* net-bytes-all-commands-selected-slots (conditional) */
         if (has_selected_slots) {
             addReplyBulkCString(c, "net-bytes-all-commands-selected-slots");
-            addReplyLongLong(c, server.hotkeys->net_bytes_all_commands_selected_slots);
+            addReplyLongLong(c,
+                server.hotkeys->net_bytes_all_commands_selected_slots);
 
             total_len += 2;
         }
@@ -554,13 +593,15 @@ void hotkeysCommand(client *c) {
     } else if (!strcasecmp(sub, "RESET")) {
         /* HOTKEYS RESET */
         if (c->argc != 2) {
-            addReplyError(c, "wrong number of arguments for 'hotkeys|reset' command");
+            addReplyError(c,
+                "wrong number of arguments for 'hotkeys|reset' command");
             return;
         }
 
         /* Return error if session is in progress and not yet completed */
         if (server.hotkeys && server.hotkeys->active) {
-            addReplyError(c, "hotkey tracking session in progress, stop tracking first");
+            addReplyError(c,
+                "hotkey tracking session in progress, stop tracking first");
             return;
         }
 

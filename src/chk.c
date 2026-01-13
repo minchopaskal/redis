@@ -766,7 +766,7 @@ static void testPowerOf2Buckets(void) {
     test_cond("Non-power-of-2 buckets (65) are rejected", topk2 == NULL);
 
     for (int i = 1; i < 14; ++i) {
-        chkTopK *topk = chkTopKCreate(5, 64, 0.9);
+        chkTopK *topk = chkTopKCreate(5, (1<<i), 0.9);
         char desc[128];
         snprintf(desc, 128, "Power-of-2 buckets (%d) are accepted", 1<<i);
         test_cond(desc, topk != NULL);
