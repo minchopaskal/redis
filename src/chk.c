@@ -373,14 +373,8 @@ static inline double getDecayProb(chkTopK *topk, counter_t cnt) {
 
 /* Expected decay steps to decay cnt to 0.
  * Equal to sum(pow(decay, i)) for i in [0; cnt] */
-static inline double getExpDecayCount(chkTopK *topk, counter_t cnt) {
-    if (cnt < CHK_LUT_SIZE) {
-        return topk->lut_decay_exp[cnt];
-    }
-
-    return pow(topk->lut_decay_exp[CHK_LUT_SIZE],
-               ((double)cnt / (CHK_LUT_SIZE))) *
-           topk->lut_decay_exp[cnt % (CHK_LUT_SIZE)];
+static inline double getExpDecayCount(chkTopK *topk, lobby_counter_t cnt) {
+    return topk->lut_decay_exp[cnt];
 }
 
 /* Expected minimum decay steps to decay cnt with 1. Since probability is
@@ -520,7 +514,7 @@ char *chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight,
      * the old entry. */
     if (new_count == 0) {
         e->fp = itemFpIdx.fp;
-        counter_t exp_decay_cnt = getExpDecayCount(topk, (counter_t)e->count);
+        counter_t exp_decay_cnt = getExpDecayCount(topk, e->count);
         e->count = exp_decay_cnt >= weight ? 1 : (weight - exp_decay_cnt);
     } else {
         e->count = new_count;
