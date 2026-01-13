@@ -4099,8 +4099,12 @@ void afterCommand(client *c) {
     clusterSlotStatsAddNetworkBytesOutForUserClient(c);
 
     /* Update the current cmd's keys with the commands output bytes */
-    hotkeyMetrics metrics = {0, c->net_output_bytes_curr_cmd};
+    hotkeyMetrics metrics =
+        {0, c->net_output_bytes_curr_cmd + c->net_input_bytes_curr_cmd};
     hotkeyStatsUpdateCurrentCmd(server.hotkeys, metrics);
+
+    /* Since we are ready with the current command we can clean up the hotkeys */
+    hotkeyStatsPostCurrentCmd(server.hotkeys);
 
     /* Flush other pending push messages. only when we are not in nested call.
      * So the messages are not interleaved with transaction response. */
