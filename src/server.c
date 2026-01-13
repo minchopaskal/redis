@@ -4027,7 +4027,9 @@ void call(client *c, int flags) {
     afterCommand(c);
 
     /* Clear the original argv.
-     * If the client is blocked we will handle slowlog when it is unblocked. */
+     * If the client is blocked we will handle slowlog when it is unblocked.
+     * NOTE: we free the origin argv only after afterCommand as hotkeyStats
+     * update that happen there depend on original_argv. */
     if (!(c->flags & CLIENT_BLOCKED))
         freeClientOriginalArgv(c);
 

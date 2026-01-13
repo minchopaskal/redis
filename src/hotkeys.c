@@ -182,7 +182,7 @@ void hotkeyStatsPostCurrentCmd(hotkeyStats *hotkeys) {
     if (!hotkeys || !hotkeys->active) return;
 
     getKeysFreeResult(&hotkeys->keys_result);
-    hotkeys->keys_result.numkeys = 0;
+    memset(&hotkeys->keys_result, 0, sizeof(getKeysResult));
     hotkeys->keys_result.size = MAX_KEYS_BUFFER;
 
     hotkeys->current_client = NULL;
