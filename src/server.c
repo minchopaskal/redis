@@ -5529,7 +5529,7 @@ void hotkeysCommand(client *c) {
 
         /* collection-start-time-unix-ms */
         addReplyBulkCString(c, "collection-start-time-unix-ms");
-        addReplyLongLong(c, server.hotkeys.start / 1000);
+        addReplyLongLong(c, server.hotkeys.start);
 
         /* collection-duration-ms */
         addReplyBulkCString(c, "collection-duration-ms");
