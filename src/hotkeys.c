@@ -161,14 +161,14 @@ void hotkeyStatsUpdateCurrentCmd(hotkeyStats *hotkeys, hotkeyMetrics metrics) {
         if (hotkeys->tracked_metrics & HOTKEYS_TRACK_CPU) {
             char *ret = chkTopKUpdate(hotkeys->cpu, argv[pos]->ptr,
                                       sdslen(argv[pos]->ptr),
-                                      max(duration_per_key, 1), &len);
+                                      duration_per_key, &len);
             if (ret) zfree(ret);
         }
 
         if (hotkeys->tracked_metrics & HOTKEYS_TRACK_NET) {
             char *ret = chkTopKUpdate(hotkeys->net, argv[pos]->ptr,
                                       sdslen(argv[pos]->ptr),
-                                      max(bytes_per_key, 1), &len);
+                                      bytes_per_key, &len);
             if (ret) zfree(ret);
         }
     }
