@@ -386,7 +386,7 @@ void hotkeysCommand(client *c) {
 
         if (server.hotkeys->active) {
             server.hotkeys->active = 0;
-            server.hotkeys->duration = (mstime() - server.hotkeys->start);
+            server.hotkeys->duration = mstime() - server.hotkeys->start;
         }
 
         addReply(c, shared.ok);
