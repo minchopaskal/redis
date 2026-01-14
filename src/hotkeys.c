@@ -11,6 +11,7 @@
 #include "server.h"
 #include "chk.h"
 #include "cluster.h"
+#include <sys/resource.h>
 
 static inline int nearestNextPowerOf2(unsigned int count) {
     return count == 0 ? 1 : (1 << (32 - __builtin_clz(count)));
