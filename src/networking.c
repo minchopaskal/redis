@@ -2816,7 +2816,6 @@ void prepareForNextCommand(client *c, int update_slot_stats) {
         /* We should do this before reset client. */
         clusterSlotStatsAddNetworkBytesInForUserClient(c);
     }
- 
     resetClientInternal(c, 1);
 }
 
