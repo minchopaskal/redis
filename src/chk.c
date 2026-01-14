@@ -105,7 +105,9 @@ void chkHeapifyDown(chkHeapBucket *array, size_t len, size_t start) {
     memcpy(&array[start], &top, sizeof(chkHeapBucket));
 }
 
-/* chkTopK operations */
+/*-----------------------------------------------------------------------------
+ * chkTopK operations
+ *----------------------------------------------------------------------------*/
 
 chkTopK *chkTopKCreate(int k, int numbuckets, double decay) {
     if (k <= 0) return NULL;
