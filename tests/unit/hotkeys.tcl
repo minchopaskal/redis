@@ -101,6 +101,15 @@ start_server {tags {"hotkeys"}} {
         assert_match "*syntax error*" $err
     } {} {resp3}
 
+    test {HOTKEYS START - Error: METRICS same parameter} {
+        r hello 3
+        catch {r hotkeys start METRICS 2 CPU CPU} err
+        assert_match "*METRICS CPU*" $err
+        catch {r hotkeys start METRICS 2 NET NET} err
+        assert_match "*METRICS NET*" $err
+    } {} {resp3}
+
+
     test {HOTKEYS START - with COUNT parameter} {
         r hello 3
         assert_equal {OK} [r hotkeys start METRICS 2 CPU NET COUNT 20]

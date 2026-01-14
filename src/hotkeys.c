@@ -244,10 +244,18 @@ void hotkeysCommand(client *c) {
         int metrics_parsed = 0;
         while (j < c->argc && metrics_parsed < metrics_count) {
             if (!strcasecmp(c->argv[j]->ptr, "CPU")) {
+                if (tracked_metrics & HOTKEYS_TRACK_CPU) {
+                    addReplyError(c, "METRICS CPU defined more than once!");
+                    return;
+                }
                 tracked_metrics |= HOTKEYS_TRACK_CPU;
                 metrics_parsed++;
                 j++;
             } else if (!strcasecmp(c->argv[j]->ptr, "NET")) {
+                if (tracked_metrics & HOTKEYS_TRACK_NET) {
+                    addReplyError(c, "METRICS NET defined more than once!");
+                    return;
+                }
                 tracked_metrics |= HOTKEYS_TRACK_NET;
                 metrics_parsed++;
                 j++;
