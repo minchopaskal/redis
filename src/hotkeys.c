@@ -414,7 +414,7 @@ void hotkeysCommand(client *c) {
         if (!server.hotkeys->active) {
             duration = server.hotkeys->duration;
         } else {
-            duration = (mstime() - server.hotkeys->start);
+            duration = mstime() - server.hotkeys->start;
         }
 
         /* Get total CPU time using rusage (RUSAGE_SELF) -
