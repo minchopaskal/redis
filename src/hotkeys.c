@@ -359,7 +359,9 @@ void hotkeysCommand(client *c) {
                                                slots, slots_count, tracked_metrics);
  
         if (!hotkeys || !hotkeys->active) {
-            zfree(slots);
+            if (!hotkeys) zfree(slots);
+            /* If hotkeys was initialized it will have taken ownership of slots
+             * so they will be released insize hotkeyStatsRelease */
             hotkeyStatsRelease(hotkeys);
             addReplyError(c, "hotkey tracking could not be started!");
             return;
