@@ -17,8 +17,10 @@
 
 #include "chk.h"
 
-#include "xxhash.h"
+#include "redisassert.h"
 #include "zmalloc.h"
+
+#include "xxhash.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -119,10 +121,12 @@ chkTopK *chkTopKCreate(int k, int numbuckets, double decay) {
         return NULL;
     }
 
-    chkTopK *topk = zmalloc(sizeof(chkTopK));
+    chkTopK *topk = zcalloc(sizeof(chkTopK));
 
     for (int i = 0; i < CHK_NUM_TABLES; ++i) {
-        topk->tables[i] = ztrycalloc(sizeof(chkBucket) * numbuckets);
+        size_t usable = 0;
+        topk->tables[i] = ztrycalloc_usable(sizeof(chkBucket) * numbuckets, &usable);
+        topk->alloc_size += usable;
 
         if (topk->tables[i] == NULL) {
             for (int j = 0; j < i; ++j)
@@ -133,11 +137,12 @@ chkTopK *chkTopKCreate(int k, int numbuckets, double decay) {
         }
     }
 
-    topk->heap = zcalloc(sizeof(chkHeapBucket) * k);
+    size_t usable = 0;
+    topk->heap = zcalloc_usable(sizeof(chkHeapBucket) * k, &usable);
+    topk->alloc_size += usable;
 
     topk->decay = decay;
     topk->inv_decay = 1. / decay;
-    topk->total = 0;
     topk->k = k;
     topk->numbuckets = numbuckets;
 
@@ -153,12 +158,21 @@ chkTopK *chkTopKCreate(int k, int numbuckets, double decay) {
     return topk;
 }
 
-void chkTopKDestroy(chkTopK *topk) {
-    for (int i = 0; i < CHK_NUM_TABLES; ++i)
-        zfree(topk->tables[i]);
-    for (int i = 0; i < topk->k; ++i)
-        zfree(topk->heap[i].item);
-    zfree(topk->heap);
+void chkTopKRelease(chkTopK *topk) {
+    size_t usable;
+    for (int i = 0; i < CHK_NUM_TABLES; ++i) {
+        zfree_usable(topk->tables[i], &usable);
+        topk->alloc_size -= usable;
+    }
+    for (int i = 0; i < topk->k; ++i) {
+        zfree_usable(topk->heap[i].item, &usable);
+        topk->alloc_size -= usable;
+    }
+    zfree_usable(topk->heap, &usable);
+    topk->alloc_size -= usable;
+
+    debugAssert(topk->_alloc_size == 0);
+
     zfree(topk);
 }
 
@@ -556,10 +570,11 @@ update_heap:
          * safe to expel it. */
         char *expelled = topk->heap[0].item;
         *expelled_len = topk->heap[0].itemlen;
+        topk->alloc_size -= topk->heap[0].alloc_size;
 
         topk->heap[0].count = entry->count;
         topk->heap[0].fp = fp;
-        topk->heap[0].item = zmalloc(itemlen);
+        topk->heap[0].item = zmalloc_usable(itemlen, &topk->heap[0].alloc_size);
         memcpy(topk->heap[0].item, item, itemlen);
         topk->heap[0].itemlen = itemlen;
         chkHeapifyDown(topk->heap, topk->k, 0);
@@ -585,24 +600,7 @@ chkHeapBucket *chkTopKList(chkTopK *topk) {
 size_t chkTopKGetMemoryUsage(chkTopK *topk) {
     if (!topk) return 0;
 
-    size_t memory = sizeof(chkTopK);
-
-    /* Memory for tables */
-    for (int i = 0; i < CHK_NUM_TABLES; ++i) {
-        memory += sizeof(chkBucket) * topk->numbuckets;
-    }
-
-    /* Memory for heap array */
-    memory += sizeof(chkHeapBucket) * topk->k;
-
-    /* Memory for heap item strings */
-    for (int i = 0; i < topk->k; ++i) {
-        if (topk->heap[i].item != NULL) {
-            memory += topk->heap[i].itemlen;
-        }
-    }
-
-    return memory;
+    return topk->alloc_size;
 }
 
 #ifdef REDIS_TEST
@@ -661,7 +659,7 @@ static void testBasicTopK(void) {
     test_cond("chkTopKList returns non-NULL", list != NULL);
 
     if (list == NULL) {
-        chkTopKDestroy(topk);
+        chkTopKRelease(topk);
         return;
     }
 
@@ -676,7 +674,7 @@ static void testBasicTopK(void) {
     test_cond("item5 has the highest count", idx1 == 0);
 
     zfree(list);
-    chkTopKDestroy(topk);
+    chkTopKRelease(topk);
 }
 
 static void testHeavierElementsReplaceLighter(void) {
@@ -699,7 +697,7 @@ static void testHeavierElementsReplaceLighter(void) {
     test_cond("Initial topk list is not NULL", list1 != NULL);
 
     if (list1 == NULL) {
-        chkTopKDestroy(topk);
+        chkTopKRelease(topk);
         return;
     }
 
@@ -724,7 +722,7 @@ static void testHeavierElementsReplaceLighter(void) {
     test_cond("Updated topk list is not NULL", list2 != NULL);
 
     if (list2 == NULL) {
-        chkTopKDestroy(topk);
+        chkTopKRelease(topk);
         return;
     }
 
@@ -750,7 +748,7 @@ static void testHeavierElementsReplaceLighter(void) {
               light_items_remaining > 0);
 
     zfree(list2);
-    chkTopKDestroy(topk);
+    chkTopKRelease(topk);
 }
 
 static void testPowerOf2Buckets(void) {
@@ -765,7 +763,7 @@ static void testPowerOf2Buckets(void) {
         char desc[128];
         snprintf(desc, 128, "Power-of-2 buckets (%d) are accepted", 1<<i);
         test_cond(desc, topk != NULL);
-        if (topk != NULL) chkTopKDestroy(topk);
+        if (topk != NULL) chkTopKRelease(topk);
     }
 }
 
@@ -786,7 +784,7 @@ static void testManySmallWeightUpdates(void) {
     test_cond("Topk list after adding item0 and item1 is not NULL", list1 != NULL);
 
     if (list1 == NULL) {
-        chkTopKDestroy(topk);
+        chkTopKRelease(topk);
         return;
     }
 
@@ -806,7 +804,7 @@ static void testManySmallWeightUpdates(void) {
     test_cond("Topk list after many small updates is not NULL", list2 != NULL);
 
     if (list2 == NULL) {
-        chkTopKDestroy(topk);
+        chkTopKRelease(topk);
         return;
     }
 
@@ -826,7 +824,7 @@ static void testManySmallWeightUpdates(void) {
               (item1_count > item2_count ? item1_count - item2_count : item2_count - item1_count) < 5);
 
     zfree(list2);
-    chkTopKDestroy(topk);
+    chkTopKRelease(topk);
 }
 
 int chkTopKTest(int argc, char *argv[], int flags) {

@@ -16,7 +16,7 @@ static inline int nearestNextPowerOf2(unsigned int count) {
     return count == 0 ? 1 : (1 << (32 - __builtin_clz(count)));
 }
 
-hotkeyStats *hotkeyStatsInit(int count, int duration, int sample_ratio,
+hotkeyStats *hotkeyStatsCreate(int count, int duration, int sample_ratio,
                              int *slots, int slots_count, uint64_t tracked_metrics)
 {
     hotkeyStats *hotkeys = zcalloc(sizeof(hotkeyStats));
@@ -26,9 +26,7 @@ hotkeyStats *hotkeyStatsInit(int count, int duration, int sample_ratio,
      * enough) again for better accuracy. Note the CHK implementation uses a
      * power of 2 numbuckets for better cache locality. */
     if (tracked_metrics & HOTKEYS_TRACK_CPU) {
-        hotkeys->cpu = chkTopKCreate(count * 10,
-                                     nearestNextPowerOf2((unsigned)count * 100),
-                                     1.08);
+        hotkeys->cpu = chkTopKCreate(count * 10, nearestNextPowerOf2((unsigned)count * 100), 1.08);
         if (!hotkeys->cpu) {
             hotkeyStatsRelease(hotkeys);
             return NULL;
@@ -36,9 +34,7 @@ hotkeyStats *hotkeyStatsInit(int count, int duration, int sample_ratio,
     }
 
     if (tracked_metrics & HOTKEYS_TRACK_NET) {
-        hotkeys->net = chkTopKCreate(count * 10,
-                                     nearestNextPowerOf2((unsigned)count * 100),
-                                     1.08);
+        hotkeys->net = chkTopKCreate(count * 10, nearestNextPowerOf2((unsigned)count * 100), 1.08);
         if (!hotkeys->net) {
             hotkeyStatsRelease(hotkeys);
             return NULL;
@@ -58,21 +54,22 @@ hotkeyStats *hotkeyStatsInit(int count, int duration, int sample_ratio,
     hotkeys->slots = slots;
     hotkeys->numslots = slots_count;
     hotkeys->active = 1;
-
     hotkeys->keys_result.size = MAX_KEYS_BUFFER;
+    hotkeys->start = mstime();
 
     /* Store initial rusage for CPU time tracking */
-    getrusage(RUSAGE_SELF, &hotkeys->rusage_start);
-
-    hotkeys->start = mstime();
+    struct rusage rusage;
+    getrusage(RUSAGE_SELF, &rusage);
+    hotkeys->ru_utime = rusage.ru_utime;
+    hotkeys->ru_stime = rusage.ru_stime;
 
     return hotkeys;
 }
 
 void hotkeyStatsRelease(hotkeyStats *hotkeys) {
     if (!hotkeys) return;
-    if (hotkeys->cpu) chkTopKDestroy(hotkeys->cpu);
-    if (hotkeys->net) chkTopKDestroy(hotkeys->net);
+    if (hotkeys->cpu) chkTopKRelease(hotkeys->cpu);
+    if (hotkeys->net) chkTopKRelease(hotkeys->net);
     zfree(hotkeys->slots);
     getKeysFreeResult(&hotkeys->keys_result);
 
@@ -188,6 +185,18 @@ void hotkeyStatsPostCurrentCmd(hotkeyStats *hotkeys) {
     hotkeys->current_client = NULL;
     hotkeys->is_sampled = 0;
     hotkeys->is_in_selected_slots = 0;
+}
+
+static int64_t time_diff_ms(struct timeval a, struct timeval b) {
+    int64_t sec = (int64_t)(a.tv_sec - b.tv_sec);
+    int64_t usec = (int64_t)(a.tv_usec - b.tv_usec);
+
+    if (usec < 0) {
+        sec--;
+        usec += 1000000;
+    }
+
+    return sec * 1000 + usec / 1000;
 }
 
 /* HOTKEYS command implementation
@@ -355,7 +364,7 @@ void hotkeysCommand(client *c) {
             }
         }
 
-        hotkeyStats *hotkeys = hotkeyStatsInit(count, duration, sample_ratio,
+        hotkeyStats *hotkeys = hotkeyStatsCreate(count, duration, sample_ratio,
                                                slots, slots_count, tracked_metrics);
  
         if (!hotkeys || !hotkeys->active) {
@@ -426,29 +435,8 @@ void hotkeysCommand(client *c) {
             getrusage(RUSAGE_SELF, &current_ru);
 
             /* Calculate difference in user and sys time */
-            long user_sec = current_ru.ru_utime.tv_sec -
-                server.hotkeys->rusage_start.ru_utime.tv_sec;
-
-            long user_usec = current_ru.ru_utime.tv_usec -
-                server.hotkeys->rusage_start.ru_utime.tv_usec;
-
-            if (user_usec < 0) {
-                user_sec--;
-                user_usec += 1000000;
-            }
-            total_cpu_user_msec = (user_sec * 1000) + (user_usec / 1000);
- 
-            long sys_sec = current_ru.ru_stime.tv_sec -
-                server.hotkeys->rusage_start.ru_stime.tv_sec;
-
-            long sys_usec = current_ru.ru_stime.tv_usec -
-                server.hotkeys->rusage_start.ru_stime.tv_usec;
-
-            if (sys_usec < 0) {
-                sys_sec--;
-                sys_usec += 1000000;
-            }
-            total_cpu_sys_msec = (sys_sec * 1000) + (sys_usec / 1000);
+            total_cpu_user_msec = time_diff_ms(current_ru.ru_utime, server.hotkeys->ru_utime);
+            total_cpu_sys_msec = time_diff_ms(current_ru.ru_stime, server.hotkeys->ru_stime);
         }
 
         /* Get totals and lists for enabled metrics */
@@ -521,8 +509,7 @@ void hotkeysCommand(client *c) {
         /* net-bytes-sampled-commands-selected-slots (conditional) */
         if (has_sampling && has_selected_slots) {
             addReplyBulkCString(c, "net-bytes-sampled-commands-selected-slots");
-            addReplyLongLong(c,
-                server.hotkeys->net_bytes_sampled_commands_selected_slots);
+            addReplyLongLong(c, server.hotkeys->net_bytes_sampled_commands_selected_slots);
 
             total_len += 2;
         }

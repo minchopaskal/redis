@@ -35,7 +35,6 @@
 #include <pthread.h>
 #include <syslog.h>
 #include <netinet/in.h>
-#include <sys/resource.h>
 #include <sys/socket.h>
 #include <lua.h>
 #include <signal.h>
@@ -4329,8 +4328,9 @@ struct hotkeyStats {
     uint64_t net_bytes_sampled_commands_selected_slots;
     uint64_t net_bytes_all_commands_selected_slots;
     uint64_t net_bytes_all_commands_all_slots;
-    /* Initial rusage for CPU time tracking */
-    struct rusage rusage_start;
+    /* rusage stats for CPU time tracking */
+    struct timeval ru_utime;
+    struct timeval ru_stime;
 
     int k;
     int duration;
@@ -4355,8 +4355,8 @@ typedef struct hotkeyMetrics {
  * specific slots is desired the user should pass along an already allocated and
  * populated slots array. The hotkeys structure takes ownership of the array and
  * will free it upon release. On failure the slots memory is released. */
-hotkeyStats *hotkeyStatsInit(int count, int duration, int sample_ratio,
-                             int *slots, int slots_count, uint64_t tracked_metrics);
+hotkeyStats *hotkeyStatsCreate(int count, int duration, int sample_ratio,
+                               int *slots, int slots_count, uint64_t tracked_metrics);
 void hotkeyStatsRelease(hotkeyStats *hotkeys);
 /* Preparation for updates of the hotkeyStats for the current command, f.e
  * cache the current client and the getKeysResult. */
