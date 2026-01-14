@@ -145,7 +145,6 @@ chkTopK *chkTopKCreate(int k, int numbuckets, double decay) {
     for (int i = 1; i < CHK_LUT_SIZE + 1; ++i) {
         topk->lut_decay_exp[i] = topk->lut_decay_exp[i - 1] + pow(topk->decay, i - 1);
         topk->lut_min_decay[i] = topk->lut_decay_exp[i] - topk->lut_decay_exp[i - 1];
-
         topk->lut_decay_prob[i] = pow(topk->inv_decay, i);
     }
 
