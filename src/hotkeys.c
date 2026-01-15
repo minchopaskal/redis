@@ -287,7 +287,7 @@ void hotkeysCommand(client *c) {
                 /* Arbitrary 1 million seconds limit, so we don't overflow the
                  * duration member which is kept in milliseconds */
                 if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 1, 1000000,
-                        &duration, "DURATION be between 1 and 1000000") != C_OK)
+                        &duration, "DURATION must be between 1 and 1000000") != C_OK)
                 {
                     zfree(slots);
                     return;

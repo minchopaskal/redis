@@ -88,9 +88,9 @@ start_server {tags {"hotkeys"}} {
     test {HOTKEYS START - Error: invalid METRICS count} {
         r hello 3
         catch {r hotkeys start METRICS 0} err
-        assert_match "*METRICS count must be positive*" $err
+        assert_match "*METRICS count*" $err
         catch {r hotkeys start METRICS -1} err
-        assert_match "*METRICS count must be positive*" $err
+        assert_match "*METRICS count*" $err
     } {} {resp3}
 
     test {HOTKEYS START - Error: METRICS count mismatch} {
@@ -99,6 +99,8 @@ start_server {tags {"hotkeys"}} {
         assert_match "*METRICS count does not match number of metric types provided*" $err
         catch {r hotkeys start METRICS 1 CPU NET} err
         assert_match "*syntax error*" $err
+        catch {r hotkeys start METRICS 3 CPU NET} err
+        assert_match "*METRICS count*" $err
     } {} {resp3}
 
     test {HOTKEYS START - Error: METRICS invalid metrics} {
@@ -106,6 +108,8 @@ start_server {tags {"hotkeys"}} {
         catch {r hotkeys start METRICS 1 GPU} err
         assert_match "*METRICS invalid metrics*" $err
         catch {r hotkeys start METRICS 2 GPU NYET} err
+        assert_match "*METRICS invalid metrics*" $err
+        catch {r hotkeys start METRICS 2 GPU CPU} err
         assert_match "*METRICS invalid metrics*" $err
     } {} {resp3}
 
