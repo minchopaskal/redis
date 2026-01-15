@@ -155,8 +155,10 @@ void chkTopKRelease(chkTopK *topk) {
         topk->alloc_size -= usable;
     }
     for (int i = 0; i < topk->k; ++i) {
-        sdsfreeusable(topk->heap[i].item, &usable);
-        topk->alloc_size -= usable;
+        if (topk->heap[i].item) {
+            topk->alloc_size -= sdsAllocSize(topk->heap[i].item);
+            sdsfree(topk->heap[i].item);
+        }
     }
     zfree_usable(topk->heap, &usable);
     topk->alloc_size -= usable;
