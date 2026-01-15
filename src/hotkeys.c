@@ -14,7 +14,7 @@
 #include <sys/resource.h>
 
 static inline int nearestNextPowerOf2(unsigned int count) {
-    return count == 0 ? 1 : (1 << (32 - __builtin_clz(count)));
+    return count == 0 ? 1 : (1 << (32 - __builtin_clz(count-1)));
 }
 
 hotkeyStats *hotkeyStatsCreate(int count, int duration, int sample_ratio,
