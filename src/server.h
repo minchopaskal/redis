@@ -4337,7 +4337,7 @@ struct hotkeyStats {
     int sample_ratio;
     int active;
     uint64_t tracked_metrics;  /* Bit flags: HOTKEYS_TRACK_CPU, HOTKEYS_TRACK_NET, etc. */
-    uint64_t cpu_time;  /* Total CPU time spent updating the topk struct in milliseconds */
+    mstime_t cpu_time;  /* Total CPU time spent updating the topk struct in milliseconds */
 
     /* Current command related fields */
     getKeysResult keys_result;

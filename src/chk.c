@@ -58,6 +58,10 @@ typedef struct {
     fingerprint_t fp;
 } fpAndIdx;
 
+counter_t counterMin(counter_t a, counter_t b) {
+    return a < b ? a : b;
+}
+
 /* Heap operations */
 static chkHeapBucket *chkCheckExistInHeap(chkTopK *topk, const char *item, int itemlen,
                                           uint64_t fp) {
@@ -112,29 +116,17 @@ void chkHeapifyDown(chkHeapBucket *array, size_t len, size_t start) {
  *----------------------------------------------------------------------------*/
 
 chkTopK *chkTopKCreate(int k, int numbuckets, double decay) {
-    if (k <= 0) return NULL;
-
     /* Number of buckets need to be a power of 2 for better performance - we
      * have better cache locality of the tables and faster table indices
      * calculations. */
-    if ((numbuckets & (numbuckets - 1)) != 0) {
-        return NULL;
-    }
+    assert(k > 0 && (numbuckets & (numbuckets - 1)) == 0);
 
     chkTopK *topk = zcalloc(sizeof(chkTopK));
 
     for (int i = 0; i < CHK_NUM_TABLES; ++i) {
         size_t usable = 0;
-        topk->tables[i] = ztrycalloc_usable(sizeof(chkBucket) * numbuckets, &usable);
+        topk->tables[i] = zcalloc_usable(sizeof(chkBucket) * numbuckets, &usable);
         topk->alloc_size += usable;
-
-        if (topk->tables[i] == NULL) {
-            for (int j = 0; j < i; ++j)
-                zfree(topk->tables[j]);
-
-            zfree(topk);
-            return NULL;
-        }
     }
 
     size_t usable = 0;
@@ -171,7 +163,7 @@ void chkTopKRelease(chkTopK *topk) {
     zfree_usable(topk->heap, &usable);
     topk->alloc_size -= usable;
 
-    debugAssert(topk->_alloc_size == 0);
+    debugAssert(topk->alloc_size == 0);
 
     zfree(topk);
 }
@@ -530,7 +522,8 @@ char *chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight,
     if (new_count == 0) {
         e->fp = itemFpIdx.fp;
         counter_t exp_decay_cnt = getExpDecayCount(topk, e->count);
-        e->count = exp_decay_cnt >= weight ? 1 : (weight - exp_decay_cnt);
+        e->count = exp_decay_cnt >= weight ?
+            1 : (lobby_counter_t)counterMin(255, weight - exp_decay_cnt);
     } else {
         e->count = new_count;
     }
@@ -570,11 +563,13 @@ update_heap:
          * safe to expel it. */
         char *expelled = topk->heap[0].item;
         *expelled_len = topk->heap[0].itemlen;
-        topk->alloc_size -= topk->heap[0].alloc_size;
-
         topk->heap[0].count = entry->count;
         topk->heap[0].fp = fp;
-        topk->heap[0].item = zmalloc_usable(itemlen, &topk->heap[0].alloc_size);
+
+        size_t usable;
+        topk->heap[0].item = zmalloc_usable(itemlen, &usable);
+        topk->alloc_size += usable;
+
         memcpy(topk->heap[0].item, item, itemlen);
         topk->heap[0].itemlen = itemlen;
         chkHeapifyDown(topk->heap, topk->k, 0);
@@ -751,22 +746,6 @@ static void testHeavierElementsReplaceLighter(void) {
     chkTopKRelease(topk);
 }
 
-static void testPowerOf2Buckets(void) {
-    chkTopK *topk1 = chkTopKCreate(5, 63, 0.9);
-    test_cond("Non-power-of-2 buckets (63) are rejected", topk1 == NULL);
-
-    chkTopK *topk2 = chkTopKCreate(5, 65, 0.9);
-    test_cond("Non-power-of-2 buckets (65) are rejected", topk2 == NULL);
-
-    for (int i = 1; i < 14; ++i) {
-        chkTopK *topk = chkTopKCreate(5, (1<<i), 0.9);
-        char desc[128];
-        snprintf(desc, 128, "Power-of-2 buckets (%d) are accepted", 1<<i);
-        test_cond(desc, topk != NULL);
-        if (topk != NULL) chkTopKRelease(topk);
-    }
-}
-
 static void testManySmallWeightUpdates(void) {
     int k = 2;
     int numbuckets = 64;
@@ -834,7 +813,6 @@ int chkTopKTest(int argc, char *argv[], int flags) {
 
     testBasicTopK();
     testHeavierElementsReplaceLighter();
-    testPowerOf2Buckets();
     testManySmallWeightUpdates();
 
     return 0;

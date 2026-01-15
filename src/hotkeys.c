@@ -18,35 +18,21 @@ static inline int nearestNextPowerOf2(unsigned int count) {
 }
 
 hotkeyStats *hotkeyStatsCreate(int count, int duration, int sample_ratio,
-                             int *slots, int slots_count, uint64_t tracked_metrics)
+                               int *slots, int slots_count, uint64_t tracked_metrics)
 {
+    serverAssert(tracked_metrics & (HOTKEYS_TRACK_CPU | HOTKEYS_TRACK_NET));
+
     hotkeyStats *hotkeys = zcalloc(sizeof(hotkeyStats));
 
     /* We track count * 10 keys for better accuracy. Numbuckets is roughly 10
      * times the elements we track (actually num_buckets == 7-8 * count is
      * enough) again for better accuracy. Note the CHK implementation uses a
      * power of 2 numbuckets for better cache locality. */
-    if (tracked_metrics & HOTKEYS_TRACK_CPU) {
+    if (tracked_metrics & HOTKEYS_TRACK_CPU)
         hotkeys->cpu = chkTopKCreate(count * 10, nearestNextPowerOf2((unsigned)count * 100), 1.08);
-        if (!hotkeys->cpu) {
-            hotkeyStatsRelease(hotkeys);
-            return NULL;
-        }
-    }
 
-    if (tracked_metrics & HOTKEYS_TRACK_NET) {
+    if (tracked_metrics & HOTKEYS_TRACK_NET)
         hotkeys->net = chkTopKCreate(count * 10, nearestNextPowerOf2((unsigned)count * 100), 1.08);
-        if (!hotkeys->net) {
-            hotkeyStatsRelease(hotkeys);
-            return NULL;
-        }
-    }
-
-    /* At least one metric must be enabled */
-    if (tracked_metrics == 0) {
-        hotkeyStatsRelease(hotkeys);
-        return NULL;
-    }
 
     hotkeys->tracked_metrics = tracked_metrics;
     hotkeys->k = count;
@@ -144,7 +130,7 @@ void hotkeyStatsUpdateCurrentCmd(hotkeyStats *hotkeys, hotkeyMetrics metrics) {
         return;
     }
 
-    long long start_time = mstime();
+    mstime_t start_time = mstime();
 
     /* Keys we've cached in the keys_result only track positions in the client's
      * argv array so we must fetch it. */
@@ -172,7 +158,7 @@ void hotkeyStatsUpdateCurrentCmd(hotkeyStats *hotkeys, hotkeyMetrics metrics) {
     }
 
     /* Track CPU time spent updating the topk structures. */
-    long long end_time = mstime();
+    mstime_t end_time = mstime();
     hotkeys->cpu_time += (end_time - start_time);
 }
 
@@ -259,23 +245,24 @@ void hotkeysCommand(client *c) {
                     return;
                 }
                 tracked_metrics |= HOTKEYS_TRACK_CPU;
-                metrics_parsed++;
-                j++;
             } else if (!strcasecmp(c->argv[j]->ptr, "NET")) {
                 if (tracked_metrics & HOTKEYS_TRACK_NET) {
                     addReplyError(c, "METRICS NET defined more than once!");
                     return;
                 }
                 tracked_metrics |= HOTKEYS_TRACK_NET;
-                metrics_parsed++;
-                j++;
-            } else {
-                break;
             }
+            ++metrics_parsed;
+            ++j;
         }
 
         if (metrics_parsed != metrics_count) {
             addReplyError(c, "METRICS count does not match number of metric types provided");
+            return;
+        }
+
+        if (tracked_metrics == 0) {
+            addReplyError(c, "METRICS invalid metrics. Supported: CPU|NET");
             return;
         }
 
@@ -366,17 +353,8 @@ void hotkeysCommand(client *c) {
         }
 
         hotkeyStats *hotkeys = hotkeyStatsCreate(count, duration, sample_ratio,
-                                               slots, slots_count, tracked_metrics);
+                                                 slots, slots_count, tracked_metrics);
  
-        if (!hotkeys || !hotkeys->active) {
-            if (!hotkeys) zfree(slots);
-            /* If hotkeys was initialized it will have taken ownership of slots
-             * so they will be released insize hotkeyStatsRelease */
-            hotkeyStatsRelease(hotkeys);
-            addReplyError(c, "hotkey tracking could not be started!");
-            return;
-        }
-
         hotkeyStatsRelease(server.hotkeys);
         server.hotkeys = hotkeys;
 
@@ -414,10 +392,7 @@ void hotkeysCommand(client *c) {
             return;
         }
 
-        if (!server.hotkeys->active && !server.hotkeys->tracked_metrics) {
-            addReplyNull(c);
-            return;
-        }
+        serverAssert(server.hotkeys->tracked_metrics);
 
         /* Calculate duration */
         int duration = 0;
@@ -488,8 +463,7 @@ void hotkeysCommand(client *c) {
         /* sampled-command-selected-slots-ms (conditional) */
         if (has_sampling && has_selected_slots) {
             addReplyBulkCString(c, "sampled-command-selected-slots-ms");
-            addReplyLongLong(c,
-                server.hotkeys->time_sampled_commands_selected_slots / 1000);
+            addReplyLongLong(c, server.hotkeys->time_sampled_commands_selected_slots / 1000);
 
             total_len += 2;
         }
@@ -497,8 +471,7 @@ void hotkeysCommand(client *c) {
         /* all-commands-selected-slots-ms (conditional) */
         if (has_selected_slots) {
             addReplyBulkCString(c, "all-commands-selected-slots-ms");
-            addReplyLongLong(c,
-                server.hotkeys->time_all_commands_selected_slots / 1000);
+            addReplyLongLong(c, server.hotkeys->time_all_commands_selected_slots / 1000);
 
             total_len += 2;
         }

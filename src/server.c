@@ -6632,10 +6632,10 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
         info = sdscatprintf(info, "# Hotkeys\r\n"
             "tracking-active:%d\r\n"
             "used-memory:%zu\r\n"
-            "cpu-time:%llu\r\n",
+            "cpu-time:%lld\r\n",
             server.hotkeys->active ? 1 : 0,
             memory_usage,
-            (unsigned long long)server.hotkeys->cpu_time);
+            server.hotkeys->cpu_time);
     }
 
     /* Modules */

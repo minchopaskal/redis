@@ -49,11 +49,6 @@ typedef struct {
     char *item;
     int itemlen;
 
-    /* Used for memory tracking. The addition 8 bytes here are fine as
-     * chkHeapBucket is part of the heap which has only K elements (when
-     * creating the chkTopK structure). K is expected to be a small number. */
-    size_t alloc_size;
-
     uint64_t fp; /* Fingerprint used to identify the item. Internal use only */
 } chkHeapBucket;
 
@@ -83,7 +78,9 @@ typedef struct chkTopK {
     int numbuckets;
 } chkTopK;
 
-/* Create the chkTopK structure. Note, CHK paper recommends decay=1.08 */
+/* Create the chkTopK structure. Note, CHK paper recommends decay=1.08.
+ * numbuckets must be a power of 2. Recommended size for numbuckets is at least
+ * 7 or 8 times k. */
 chkTopK *chkTopKCreate(int k, int numbuckets, double decay);
 
 /* Release chkTopK resources */

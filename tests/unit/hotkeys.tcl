@@ -101,6 +101,14 @@ start_server {tags {"hotkeys"}} {
         assert_match "*syntax error*" $err
     } {} {resp3}
 
+    test {HOTKEYS START - Error: METRICS invalid metrics} {
+        r hello 3
+        catch {r hotkeys start METRICS 1 GPU} err
+        assert_match "*METRICS invalid metrics*" $err
+        catch {r hotkeys start METRICS 2 GPU NYET} err
+        assert_match "*METRICS invalid metrics*" $err
+    } {} {resp3}
+
     test {HOTKEYS START - Error: METRICS same parameter} {
         r hello 3
         catch {r hotkeys start METRICS 2 CPU CPU} err
