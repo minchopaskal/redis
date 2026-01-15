@@ -16,10 +16,8 @@
  */
 
 #include "chk.h"
-
 #include "redisassert.h"
 #include "zmalloc.h"
-
 #include "xxhash.h"
 
 #include <math.h>
