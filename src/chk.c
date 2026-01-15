@@ -67,7 +67,7 @@ static chkHeapBucket *chkCheckExistInHeap(chkTopK *topk, const char *item, int i
                                           uint64_t fp) {
     for (int32_t i = topk->k - 1; i >= 0; --i) {
         chkHeapBucket *bucket = topk->heap + i;
-        if (bucket->fp == fp &&
+        if (bucket->fp == fp && bucket->item &&
             sdslen(bucket->item) == (size_t)itemlen &&
             memcmp(bucket->item, item, itemlen) == 0)
         {
@@ -603,8 +603,8 @@ size_t chkTopKGetMemoryUsage(chkTopK *topk) {
 
 static int findItemInList(chkHeapBucket *list, int k, const char *item, int itemlen) {
     for (int i = 0; i < k; i++) {
-        if (list[i].item != NULL && 
-            sdslen(list[i].item) == (size_t)itemlen && 
+        if (list[i].item != NULL &&
+            sdslen(list[i].item) == (size_t)itemlen &&
             memcmp(list[i].item, item, itemlen) == 0) {
             return i;
         }

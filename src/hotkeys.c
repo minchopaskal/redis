@@ -221,8 +221,10 @@ void hotkeysCommand(client *c) {
         }
 
         long metrics_count;
+        char errmsg[128];
+        snprintf(errmsg, 128, "METRICS count must be > 0 and <= %d", HOTKEYS_METRICS_COUNT);
         if (getRangeLongFromObjectOrReply(c, c->argv[3], 1, HOTKEYS_METRICS_COUNT,
-                &metrics_count, "METRICS count must be positive") != C_OK)
+                &metrics_count, errmsg) != C_OK)
         {
             return;
         }
@@ -233,6 +235,7 @@ void hotkeysCommand(client *c) {
 
         /* Parse CPU and NET tokens */
         int metrics_parsed = 0;
+        int valid_metrics = 0;
         while (j < c->argc && metrics_parsed < metrics_count) {
             if (!strcasecmp(c->argv[j]->ptr, "CPU")) {
                 if (tracked_metrics & HOTKEYS_TRACK_CPU) {
@@ -240,12 +243,14 @@ void hotkeysCommand(client *c) {
                     return;
                 }
                 tracked_metrics |= HOTKEYS_TRACK_CPU;
+                ++valid_metrics;
             } else if (!strcasecmp(c->argv[j]->ptr, "NET")) {
                 if (tracked_metrics & HOTKEYS_TRACK_NET) {
                     addReplyError(c, "METRICS NET defined more than once!");
                     return;
                 }
                 tracked_metrics |= HOTKEYS_TRACK_NET;
+                ++valid_metrics;
             }
             ++metrics_parsed;
             ++j;
@@ -256,7 +261,7 @@ void hotkeysCommand(client *c) {
             return;
         }
 
-        if (tracked_metrics == 0) {
+        if (valid_metrics != metrics_count) {
             addReplyError(c, "METRICS invalid metrics. Supported: CPU|NET");
             return;
         }
