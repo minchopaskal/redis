@@ -327,7 +327,6 @@ start_server {tags {"hotkeys"}} {
         set result [dict get $result "by-net-bytes"]
         assert [dict exists $result "x"]
         assert [dict exists $result "y"]
-        puts $result
 
         assert_equal {OK} [r hotkeys stop]
         assert_equal {OK} [r hotkeys reset]
