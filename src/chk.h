@@ -17,8 +17,10 @@
 
 #pragma once
 
-#include "stdint.h"
+#include "sds.h"
+
 #include <stddef.h>
+#include <stdint.h>
 
 #define CHK_LUT_SIZE 256
 #define CHK_HEAVY_ENTRIES_PER_BUCKET 2
@@ -41,13 +43,11 @@ typedef struct {
 typedef struct {
     chkHeavyEntry heavy_entries[CHK_HEAVY_ENTRIES_PER_BUCKET];
     chkLobbyEntry lobby_entry;
-    int num_heavy_entries;
 } chkBucket;
 
 typedef struct {
     counter_t count;
-    char *item;
-    int itemlen;
+    sds item;
 
     uint64_t fp; /* Fingerprint used to identify the item. Internal use only */
 } chkHeapBucket;
@@ -87,10 +87,8 @@ chkTopK *chkTopKCreate(int k, int numbuckets, double decay);
 void chkTopKRelease(chkTopK *topk);
 
 /* Update weighted item. If another one was expelled from the topK list -
- * return its name as byte array and store its length in *expelled_len. Caller
- * is responsible for releasing it */
-char *chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight,
-                    int *expelled_len);
+ * return it. Caller is responsible for releasing it */
+sds chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight);
 
 /* Get an ordered by count list of topk->k elements inside the topk object.
  *

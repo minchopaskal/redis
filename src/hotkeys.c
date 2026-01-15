@@ -138,22 +138,17 @@ void hotkeyStatsUpdateCurrentCmd(hotkeyStats *hotkeys, hotkeyMetrics metrics) {
     robj **argv = c->original_argv ? c->original_argv : c->argv;
 
     /* Add all keys to topK structure */
-    int len;
     for (int i = 0; i < numkeys; ++i) {
         int pos = hotkeys->keys_result.keys[i].pos;
 
         if (hotkeys->tracked_metrics & HOTKEYS_TRACK_CPU) {
-            char *ret = chkTopKUpdate(hotkeys->cpu, argv[pos]->ptr,
-                                      sdslen(argv[pos]->ptr),
-                                      duration_per_key, &len);
-            if (ret) zfree(ret);
+            sds ret = chkTopKUpdate(hotkeys->cpu, argv[pos]->ptr, sdslen(argv[pos]->ptr), duration_per_key);
+            if (ret) sdsfree(ret);
         }
 
         if (hotkeys->tracked_metrics & HOTKEYS_TRACK_NET) {
-            char *ret = chkTopKUpdate(hotkeys->net, argv[pos]->ptr,
-                                      sdslen(argv[pos]->ptr),
-                                      bytes_per_key, &len);
-            if (ret) zfree(ret);
+            sds ret = chkTopKUpdate(hotkeys->net, argv[pos]->ptr, sdslen(argv[pos]->ptr), bytes_per_key);
+            if (ret) sdsfree(ret);
         }
     }
 
@@ -334,8 +329,8 @@ void hotkeysCommand(client *c) {
                         return;
                     }
                     /* Check for duplicate slot indices */
-                    for (int j = 0; j < i; ++j) {
-                        if (slots[j] == slot_val) {
+                    for (int k = 0; k < i; ++k) {
+                        if (slots[k] == slot_val) {
                             addReplyError(c, "duplicate slot number");
                             zfree(slots);
                             return;
@@ -372,11 +367,8 @@ void hotkeysCommand(client *c) {
             return;
         }
 
-        if (server.hotkeys->active) {
-            server.hotkeys->active = 0;
-            server.hotkeys->duration = mstime() - server.hotkeys->start;
-        }
-
+        server.hotkeys->active = 0;
+        server.hotkeys->duration = mstime() - server.hotkeys->start;
         addReply(c, shared.ok);
 
     } else if (!strcasecmp(sub, "GET")) {
@@ -535,7 +527,7 @@ void hotkeysCommand(client *c) {
             /* Nested array of key-value pairs */
             addReplyArrayLen(c, 2 * cpu_count);
             for (int i = 0; i < cpu_count; ++i) {
-                addReplyBulkCBuffer(c, cpu[i].item, cpu[i].itemlen);
+                addReplyBulkCBuffer(c, cpu[i].item, sdslen(cpu[i].item));
                 /* Return raw microsec value */
                 addReplyLongLong(c, cpu[i].count);
             }
@@ -550,7 +542,7 @@ void hotkeysCommand(client *c) {
             /* Nested array of key-value pairs */
             addReplyArrayLen(c, 2 * net_count);
             for (int i = 0; i < net_count; ++i) {
-                addReplyBulkCBuffer(c, net[i].item, net[i].itemlen);
+                addReplyBulkCBuffer(c, net[i].item, sdslen(net[i].item));
                 /* Return raw byte value */
                 addReplyLongLong(c, net[i].count);
             }

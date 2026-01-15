@@ -58,20 +58,18 @@ typedef struct {
     fingerprint_t fp;
 } fpAndIdx;
 
-counter_t counterMin(counter_t a, counter_t b) {
+static inline counter_t counterMin(counter_t a, counter_t b) {
     return a < b ? a : b;
 }
 
 /* Heap operations */
 static chkHeapBucket *chkCheckExistInHeap(chkTopK *topk, const char *item, int itemlen,
                                           uint64_t fp) {
-    chkHeapBucket *runner = topk->heap;
-
     for (int32_t i = topk->k - 1; i >= 0; --i) {
-        chkHeapBucket *bucket = runner + i;
+        chkHeapBucket *bucket = topk->heap + i;
         if (bucket->fp == fp &&
-            bucket->itemlen == itemlen &&
-            memcmp(bucket->item, item, itemlen) == 0) 
+            sdslen(bucket->item) == (size_t)itemlen &&
+            memcmp(bucket->item, item, itemlen) == 0)
         {
             return bucket;
         }
@@ -157,7 +155,7 @@ void chkTopKRelease(chkTopK *topk) {
         topk->alloc_size -= usable;
     }
     for (int i = 0; i < topk->k; ++i) {
-        zfree_usable(topk->heap[i].item, &usable);
+        sdsfreeusable(topk->heap[i].item, &usable);
         topk->alloc_size -= usable;
     }
     zfree_usable(topk->heap, &usable);
@@ -453,8 +451,7 @@ lobby_counter_t chkDecayCounter(chkTopK *topk, lobby_counter_t cnt, counter_t we
     return left;
 }
 
-char *chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight,
-                    int *expelled_len)
+sds chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight)
 {
     if (weight == 0) return NULL;
 
@@ -561,17 +558,14 @@ update_heap:
     } else {
         /* We know the new entry has bigger count than the min-element so it's
          * safe to expel it. */
-        char *expelled = topk->heap[0].item;
-        *expelled_len = topk->heap[0].itemlen;
+        sds expelled = topk->heap[0].item;
+        if (expelled) topk->alloc_size -= sdsAllocSize(expelled);
+
         topk->heap[0].count = entry->count;
         topk->heap[0].fp = fp;
+        topk->heap[0].item = sdsnewlen(item, itemlen);
+        topk->alloc_size += sdsAllocSize(topk->heap[0].item);
 
-        size_t usable;
-        topk->heap[0].item = zmalloc_usable(itemlen, &usable);
-        topk->alloc_size += usable;
-
-        memcpy(topk->heap[0].item, item, itemlen);
-        topk->heap[0].itemlen = itemlen;
         chkHeapifyDown(topk->heap, topk->k, 0);
         return expelled;
     }
@@ -608,7 +602,7 @@ size_t chkTopKGetMemoryUsage(chkTopK *topk) {
 static int findItemInList(chkHeapBucket *list, int k, const char *item, int itemlen) {
     for (int i = 0; i < k; i++) {
         if (list[i].item != NULL && 
-            list[i].itemlen == itemlen && 
+            sdslen(list[i].item) == (size_t)itemlen && 
             memcmp(list[i].item, item, itemlen) == 0) {
             return i;
         }
@@ -628,9 +622,8 @@ static int verifyListSorted(chkHeapBucket *list, int k) {
 }
 
 static void chkTopKUpdateAndFreeExpelled(chkTopK *topk, const char *item, int itemlen, counter_t weight) {
-    int len;
-    char *expelled = chkTopKUpdate(topk, (char *)item, itemlen, weight, &len);
-    if (expelled) zfree(expelled);
+    sds expelled = chkTopKUpdate(topk, (char *)item, itemlen, weight);
+    if (expelled) sdsfree(expelled);
 }
 
 static void testBasicTopK(void) {
