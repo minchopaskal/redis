@@ -315,6 +315,26 @@ start_server {tags {"hotkeys"}} {
         assert_equal {OK} [r hotkeys reset]
     } {} {resp3}
 
+    test {HOTKEYS - nested commands} {
+        r hello 3
+        assert_equal {OK} [r hotkeys start METRICS 1 NET]
+        r eval "redis.call('set', 'x', 1)" 1 x
+        r eval "redis.call('set', 'y', 1)" 1 y
+        r eval "redis.call('set', 'x', 2)" 1 x
+        r eval "redis.call('set', 'x', 3)" 1 x
+
+        set result [r hotkeys get]
+        set result [dict get $result "by-net-bytes"]
+        assert [dict exists $result "x"]
+        assert [dict exists $result "y"]
+        puts $result
+
+        assert_equal {OK} [r hotkeys stop]
+        assert_equal {OK} [r hotkeys reset]
+    } {} {resp3}
+
+
+
     test {HOTKEYS GET - no conditional fields without selected slots} {
         r hello 3
         assert_equal {OK} [r hotkeys start METRICS 2 CPU NET SAMPLE 10]

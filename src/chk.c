@@ -56,13 +56,10 @@ typedef struct {
     fingerprint_t fp;
 } fpAndIdx;
 
-static inline counter_t counterMin(counter_t a, counter_t b) {
-    return a < b ? a : b;
-}
+#define min(a, b) ((a) < (b) ? (a) : (b))
 
 /* Heap operations */
-static chkHeapBucket *chkCheckExistInHeap(chkTopK *topk, const char *item, int itemlen,
-                                          uint64_t fp) {
+static chkHeapBucket *chkCheckExistInHeap(chkTopK *topk, const char *item, int itemlen, uint64_t fp) {
     for (int32_t i = topk->k - 1; i >= 0; --i) {
         chkHeapBucket *bucket = topk->heap + i;
         if (bucket->fp == fp && bucket->item &&
@@ -520,7 +517,7 @@ sds chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight)
         e->fp = itemFpIdx.fp;
         counter_t exp_decay_cnt = getExpDecayCount(topk, e->count);
         e->count = exp_decay_cnt >= weight ?
-            1 : (lobby_counter_t)counterMin(255, weight - exp_decay_cnt);
+            1 : (lobby_counter_t)min(255, weight - exp_decay_cnt);
     } else {
         e->count = new_count;
     }

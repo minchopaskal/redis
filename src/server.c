@@ -3934,8 +3934,15 @@ void call(client *c, int flags) {
         clusterSlotStatsAddCpuDuration(c, c->duration);
     }
 
-    /* Populate the per-key hotkey stats */
-    if (update_command_stats && !(c->flags & CLIENT_BLOCKED)) {
+    /* Populate the per-key hotkey stats. Before updating stats for a command
+     * we need to do some setup on the hotkeyStats structure. We only do this
+     * once during the outer-most call in case of nesting.
+     * NOTE: even though we update the network bytes during nested calls we
+     * only update the duration, since the outer-most call records the whole
+     * duration. */
+    if (update_command_stats && !(c->flags & CLIENT_BLOCKED) &&
+        !server.execution_nesting)
+    {
         /* First we need to prepare the hotkeyStats for updates */
         hotkeyStatsPreCurrentCmd(server.hotkeys, c);
 
@@ -4027,10 +4034,25 @@ void call(client *c, int flags) {
     /* Do some maintenance job and cleanup */
     afterCommand(c);
 
+    /* The afterCommand updates the replication network bytes. At this point we
+     * are ready to update the ingress/egress net bytes and cleanup tracking
+     * of the current command. */
+    if (update_command_stats && !(c->flags & CLIENT_BLOCKED)) {
+        /* Update the current cmd's keys with the commands output bytes */
+        hotkeyMetrics metrics =
+            {0, c->net_output_bytes_curr_cmd + c->net_input_bytes_curr_cmd};
+        hotkeyStatsUpdateCurrentCmd(server.hotkeys, metrics);
+
+        /* Just like curr cmd setup we only do the cleanup in case we are not in
+         * a nested command. */
+        if (!server.execution_nesting)
+            hotkeyStatsPostCurrentCmd(server.hotkeys);
+    }
+
     /* Clear the original argv.
      * If the client is blocked we will handle slowlog when it is unblocked.
-     * NOTE: we free the origin argv only after afterCommand as hotkeyStats
-     * update that happen there depend on original_argv. */
+     * NOTE: we free the origin argv only after hoykeyStatsPostCurrentCmd as
+     * hotkeyStats updates depend on original_argv. */
     if (!(c->flags & CLIENT_BLOCKED))
         freeClientOriginalArgv(c);
 
@@ -4100,15 +4122,7 @@ void afterCommand(client *c) {
     trackingHandlePendingKeyInvalidations();
 
     clusterSlotStatsAddNetworkBytesOutForUserClient(c);
-
-    /* Update the current cmd's keys with the commands output bytes */
-    hotkeyMetrics metrics =
-        {0, c->net_output_bytes_curr_cmd + c->net_input_bytes_curr_cmd};
-    hotkeyStatsUpdateCurrentCmd(server.hotkeys, metrics);
-
-    /* Since we are ready with the current command we can clean up the hotkeys */
-    hotkeyStatsPostCurrentCmd(server.hotkeys);
-
+ 
     /* Flush other pending push messages. only when we are not in nested call.
      * So the messages are not interleaved with transaction response. */
     if (!server.execution_nesting)
