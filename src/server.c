@@ -4122,6 +4122,7 @@ void afterCommand(client *c) {
     trackingHandlePendingKeyInvalidations();
 
     clusterSlotStatsAddNetworkBytesOutForUserClient(c);
+
     /* Flush other pending push messages. only when we are not in nested call.
      * So the messages are not interleaved with transaction response. */
     if (!server.execution_nesting)
