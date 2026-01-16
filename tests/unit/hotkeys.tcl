@@ -106,11 +106,15 @@ start_server {tags {"hotkeys"}} {
     test {HOTKEYS START - Error: METRICS invalid metrics} {
         r hello 3
         catch {r hotkeys start METRICS 1 GPU} err
-        assert_match "*METRICS invalid metrics*" $err
+        assert_match "*METRICS no valid metrics*" $err
         catch {r hotkeys start METRICS 2 GPU NYET} err
-        assert_match "*METRICS invalid metrics*" $err
-        catch {r hotkeys start METRICS 2 GPU CPU} err
-        assert_match "*METRICS invalid metrics*" $err
+        assert_match "*METRICS no valid metrics*" $err
+
+        # Allowing invalid metrics gives us forward-compatibility
+        assert_equal {OK} [r hotkeys start METRICS 2 GPU CPU]
+
+        assert_equal {OK} [r hotkeys stop]
+        assert_equal {OK} [r hotkeys reset]
     } {} {resp3}
 
     test {HOTKEYS START - Error: METRICS same parameter} {
