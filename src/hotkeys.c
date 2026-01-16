@@ -103,6 +103,10 @@ void hotkeyStatsPreCurrentCmd(hotkeyStats *hotkeys, client *c) {
 void hotkeyStatsUpdateCurrentCmd(hotkeyStats *hotkeys, hotkeyMetrics metrics) {
     if (!hotkeys || !hotkeys->active) return;
     if (hotkeys->keys_result.numkeys == 0) return;
+
+    /* Don't update stats for nested calls */
+    if (server.execution_nesting) return;
+
     serverAssert(hotkeys->current_client);
 
     int numkeys = hotkeys->keys_result.numkeys;
