@@ -1719,7 +1719,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 
     /* Check if hotkey tracking duration has expired and auto-stop if needed */
     if (server.hotkeys && server.hotkeys->active && server.hotkeys->duration > 0) {
-        mstime_t elapsed = (mstime() - server.hotkeys->start);
+        mstime_t elapsed = (server.mstime - server.hotkeys->start);
         if (elapsed >= server.hotkeys->duration) {
             server.hotkeys->active = 0;
             server.hotkeys->duration = elapsed;

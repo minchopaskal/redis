@@ -2416,8 +2416,6 @@ typedef struct {
 /*-----------------------------------------------------------------------------
  * Hotkey tracking
  *----------------------------------------------------------------------------*/
-/* Forward declaration of topK structure used for hotkeys detection */
-struct chkTopK;
 
 /* Hotkeys tracking metric flags */
 #define HOTKEYS_TRACK_CPU (1ULL << 0)
@@ -2466,8 +2464,6 @@ typedef struct hotkeyMetrics {
     uint64_t cpu_time_usec;
     uint64_t net_bytes;
 } hotkeyMetrics;
-
-
 
 /* pendingCommand flags */
 enum {
