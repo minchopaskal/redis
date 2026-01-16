@@ -117,15 +117,14 @@ chkTopK *chkTopKCreate(int k, int numbuckets, double decay) {
      * calculations. */
     assert(k > 0 && (numbuckets & (numbuckets - 1)) == 0);
 
-    chkTopK *topk = zcalloc(sizeof(chkTopK));
+    size_t usable = 0;
+    chkTopK *topk = zcalloc_usable(sizeof(chkTopK), &usable);
 
     for (int i = 0; i < CHK_NUM_TABLES; ++i) {
-        size_t usable = 0;
         topk->tables[i] = zcalloc_usable(sizeof(chkBucket) * numbuckets, &usable);
         topk->alloc_size += usable;
     }
 
-    size_t usable = 0;
     topk->heap = zcalloc_usable(sizeof(chkHeapBucket) * k, &usable);
     topk->alloc_size += usable;
 
@@ -161,8 +160,7 @@ void chkTopKRelease(chkTopK *topk) {
     }
     zfree_usable(topk->heap, &usable);
     topk->alloc_size -= usable;
-
-    debugAssert(topk->alloc_size == 0);
+    debugAssert(topk->alloc_size == zmalloc_usable_size(topk));
 
     zfree(topk);
 }

@@ -48,7 +48,6 @@ typedef struct {
 typedef struct {
     counter_t count;
     sds item;
-
     uint64_t fp; /* Fingerprint used to identify the item. Internal use only */
 } chkHeapBucket;
 
