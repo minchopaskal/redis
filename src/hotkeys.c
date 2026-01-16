@@ -14,7 +14,8 @@
 #include <sys/resource.h>
 
 static inline int nearestNextPowerOf2(unsigned int count) {
-    return count == 0 ? 1 : (1 << (32 - __builtin_clz(count-1)));
+    if (count <= 1) return 1;
+    return 1 << (32 - __builtin_clz(count-1));
 }
 
 /* Initialize the hotkeys structure and start tracking. If tracking keys in
@@ -272,8 +273,8 @@ void hotkeysCommand(client *c) {
             return;
         }
 
-        if (valid_metrics != metrics_count) {
-            addReplyError(c, "METRICS invalid metrics. Supported: CPU|NET");
+        if (valid_metrics == 0) {
+            addReplyError(c, "METRICS no valid metrics passed. Supported: CPU|NET");
             return;
         }
 

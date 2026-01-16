@@ -2449,9 +2449,9 @@ struct hotkeyStats {
     struct timeval ru_stime;
 
     int tracking_count; /* Count of top hotkeys we want to track */
-    int duration; /* Tracking duration */
     int sample_ratio; /* Track a key with probability 1 / sample_ratio */
     int active; /* True if tracking is currently active */
+    mstime_t duration; /* Tracking duration */
     uint64_t tracked_metrics;  /* Bit flags: HOTKEYS_TRACK_CPU, HOTKEYS_TRACK_NET, etc. */
     mstime_t cpu_time;  /* Total CPU time spent updating the topk struct in milliseconds */
 
