@@ -108,6 +108,9 @@ void chkHeapifyDown(chkHeapBucket *array, size_t len, size_t start) {
  * chkTopK operations
  *----------------------------------------------------------------------------*/
 
+/* Create the chkTopK structure. Note, CHK paper recommends decay=1.08.
+ * numbuckets must be a power of 2. Recommended size for numbuckets is at least
+ * 7 or 8 times k. */
 chkTopK *chkTopKCreate(int k, int numbuckets, double decay) {
     /* Number of buckets need to be a power of 2 for better performance - we
      * have better cache locality of the tables and faster table indices
@@ -143,6 +146,7 @@ chkTopK *chkTopKCreate(int k, int numbuckets, double decay) {
     return topk;
 }
 
+/* Release chkTopK resources */
 void chkTopKRelease(chkTopK *topk) {
     size_t usable;
     for (int i = 0; i < CHK_NUM_TABLES; ++i) {
@@ -448,6 +452,8 @@ lobby_counter_t chkDecayCounter(chkTopK *topk, lobby_counter_t cnt, counter_t we
     return left;
 }
 
+/* Update weighted item. If another one was expelled from the topK list -
+ * return it. Caller is responsible for releasing it */
 sds chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight)
 {
     if (weight == 0) return NULL;
@@ -576,6 +582,12 @@ int cmpchkHeapBucket(const void *tmp1, const void *tmp2) {
     return res1->count < res2->count ? 1 : res1->count > res2->count ? -1 : 0;
 }
 
+/* Get an ordered by count list of topk->k elements inside the topk object.
+ *
+ * NOTE, the returned array is a copy of the internal heap stored by `topk`. The
+ * caller is responsible for releasing it after use. The elements of the array
+ * share their `item` pointers with the internal topk->heap buckets so one must
+ * not use it after `topk` is released. */
 chkHeapBucket *chkTopKList(chkTopK *topk) {
     chkHeapBucket *list = zmalloc(sizeof(chkHeapBucket) * topk->k);
     memcpy(list, topk->heap, sizeof(chkHeapBucket) * topk->k);

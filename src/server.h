@@ -2010,6 +2010,7 @@ struct redisServer {
     monotime el_cron_duration;
     durationStats duration_stats[EL_DURATION_TYPE_NUM];
 
+    /* Hotkey tracking */
     hotkeyStats *hotkeys;
 
     /* Configuration */
@@ -2411,6 +2412,62 @@ typedef struct {
     keyReference *keys;                          /* Key indices array, points to keysbuf or heap */
 } getKeysResult;
 #define GETKEYS_RESULT_INIT { 0, MAX_KEYS_BUFFER, {{0}}, NULL }
+
+/*-----------------------------------------------------------------------------
+ * Hotkey tracking
+ *----------------------------------------------------------------------------*/
+/* Forward declaration of topK structure used for hotkeys detection */
+struct chkTopK;
+
+/* Hotkeys tracking metric flags */
+#define HOTKEYS_TRACK_CPU (1ULL << 0)
+#define HOTKEYS_TRACK_NET (1ULL << 1)
+#define HOTKEYS_METRICS_COUNT 2 /* NOTE: update if adding new metric */
+
+/* A structure for tracking hotkey statistics by given metrics. */
+struct hotkeyStats {
+    struct chkTopK *cpu;
+    struct chkTopK *net;
+    mstime_t start; /* Initial time point for wall time tracking */
+
+    /* Only keys from selected slots will be tracked. If slots are not
+     * initialized - all keys are tracked. */
+    int *slots;
+    int numslots;
+
+    /* Statistics counters. NOTE, time_* members are saved in microseconds for
+     * accuracy but displayed in milliseconds during HOTKEYS GET */
+    uint64_t time_sampled_commands_selected_slots;  /* microseconds */
+    uint64_t time_all_commands_selected_slots;       /* microseconds */
+    uint64_t time_all_commands_all_slots;            /* microseconds */
+    uint64_t net_bytes_sampled_commands_selected_slots;
+    uint64_t net_bytes_all_commands_selected_slots;
+    uint64_t net_bytes_all_commands_all_slots;
+
+    /* rusage stats for CPU time tracking */
+    struct timeval ru_utime;
+    struct timeval ru_stime;
+
+    int tracking_count; /* Count of top hotkeys we want to track */
+    int duration; /* Tracking duration */
+    int sample_ratio; /* Track a key with probability 1 / sample_ratio */
+    int active; /* True if tracking is currently active */
+    uint64_t tracked_metrics;  /* Bit flags: HOTKEYS_TRACK_CPU, HOTKEYS_TRACK_NET, etc. */
+    mstime_t cpu_time;  /* Total CPU time spent updating the topk struct in milliseconds */
+
+    /* Current command related fields */
+    getKeysResult keys_result; /* Key results for current command */
+    client *current_client;
+    int is_sampled; /* Indicates whether or not keys from cmd are sampled via sample_ratio */
+    int is_in_selected_slots; /* Indicates whether or not keys from cmd are in selected_slots */
+};
+
+typedef struct hotkeyMetrics {
+    uint64_t cpu_time_usec;
+    uint64_t net_bytes;
+} hotkeyMetrics;
+
+
 
 /* pendingCommand flags */
 enum {
@@ -3961,6 +4018,14 @@ char *redisBuildIdString(void);
 sds stringDigest(robj *o);
 int validateHexDigest(client *c, const sds digest);
 
+/* Hotkey tracking */
+hotkeyStats *hotkeyStatsCreate(int count, int duration, int sample_ratio,
+                               int *slots, int slots_count, uint64_t tracked_metrics);
+void hotkeyStatsRelease(hotkeyStats *hotkeys);
+void hotkeyStatsPreCurrentCmd(hotkeyStats *hotkeys, client *c);
+void hotkeyStatsUpdateCurrentCmd(hotkeyStats *hotkeys, hotkeyMetrics metrics);
+void hotkeyStatsPostCurrentCmd(hotkeyStats *hotkeys);
+
 /* Commands prototypes */
 void authCommand(client *c);
 void pingCommand(client *c);
@@ -4302,69 +4367,5 @@ int iAmMaster(void);
 
 #define STRINGIFY_(x) #x
 #define STRINGIFY(x) STRINGIFY_(x)
-
-/* Hotkey tracking */
-
-/* Forward declaration of topK structure used for hotkeys detection */
-struct chkTopK;
-
-/* Hotkeys tracking metric flags */
-#define HOTKEYS_TRACK_CPU (1ULL << 0)
-#define HOTKEYS_TRACK_NET (1ULL << 1)
-#define HOTKEYS_METRICS_COUNT 2 /* NOTE: update if adding new metric */
-
-struct hotkeyStats {
-    struct chkTopK *cpu;
-    struct chkTopK *net;
-    mstime_t start; /* Initial time point for wall time tracking */
-    int *slots;
-    int numslots;
-
-    /* Statistics counters. NOTE, time_* members are saved in microseconds for
-     * accuracy but displayed in milliseconds during HOTKEYS GET */
-    uint64_t time_sampled_commands_selected_slots;  /* microseconds */
-    uint64_t time_all_commands_selected_slots;       /* microseconds */
-    uint64_t time_all_commands_all_slots;            /* microseconds */
-    uint64_t net_bytes_sampled_commands_selected_slots;
-    uint64_t net_bytes_all_commands_selected_slots;
-    uint64_t net_bytes_all_commands_all_slots;
-    /* rusage stats for CPU time tracking */
-    struct timeval ru_utime;
-    struct timeval ru_stime;
-
-    int k;
-    int duration;
-    int sample_ratio;
-    int active;
-    uint64_t tracked_metrics;  /* Bit flags: HOTKEYS_TRACK_CPU, HOTKEYS_TRACK_NET, etc. */
-    mstime_t cpu_time;  /* Total CPU time spent updating the topk struct in milliseconds */
-
-    /* Current command related fields */
-    getKeysResult keys_result;
-    client *current_client;
-    int is_sampled;
-    int is_in_selected_slots;
-};
-
-typedef struct hotkeyMetrics {
-    uint64_t cpu_time_usec;
-    uint64_t net_bytes;
-} hotkeyMetrics;
-
-/* Initialize the hotkeys structure and start tracking. If tracking keys in
- * specific slots is desired the user should pass along an already allocated and
- * populated slots array. The hotkeys structure takes ownership of the array and
- * will free it upon release. On failure the slots memory is released. */
-hotkeyStats *hotkeyStatsCreate(int count, int duration, int sample_ratio,
-                               int *slots, int slots_count, uint64_t tracked_metrics);
-void hotkeyStatsRelease(hotkeyStats *hotkeys);
-/* Preparation for updates of the hotkeyStats for the current command, f.e
- * cache the current client and the getKeysResult. */
-void hotkeyStatsPreCurrentCmd(hotkeyStats *hotkeys, client *c);
-/* Update the hotkeyStats with passed metrics. This can be called multiple times
- * between the calls to hotkeyStatsPreCurrentCmd and hotkeyStatsPostCurrentCmd */
-void hotkeyStatsUpdateCurrentCmd(hotkeyStats *hotkeys, hotkeyMetrics metrics);
-/* Some cleanup work for hotkeyStats after the command has finished execution */
-void hotkeyStatsPostCurrentCmd(hotkeyStats *hotkeys);
 
 #endif

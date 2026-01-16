@@ -17,6 +17,10 @@ static inline int nearestNextPowerOf2(unsigned int count) {
     return count == 0 ? 1 : (1 << (32 - __builtin_clz(count-1)));
 }
 
+/* Initialize the hotkeys structure and start tracking. If tracking keys in
+ * specific slots is desired the user should pass along an already allocated and
+ * populated slots array. The hotkeys structure takes ownership of the array and
+ * will free it upon release. On failure the slots memory is released. */
 hotkeyStats *hotkeyStatsCreate(int count, int duration, int sample_ratio,
                                int *slots, int slots_count, uint64_t tracked_metrics)
 {
@@ -35,14 +39,14 @@ hotkeyStats *hotkeyStatsCreate(int count, int duration, int sample_ratio,
         hotkeys->net = chkTopKCreate(count * 10, nearestNextPowerOf2((unsigned)count * 100), 1.08);
 
     hotkeys->tracked_metrics = tracked_metrics;
-    hotkeys->k = count;
+    hotkeys->tracking_count = count;
     hotkeys->duration = duration;
     hotkeys->sample_ratio = sample_ratio;
     hotkeys->slots = slots;
     hotkeys->numslots = slots_count;
     hotkeys->active = 1;
-    hotkeys->keys_result.size = MAX_KEYS_BUFFER;
-    hotkeys->start = mstime();
+    hotkeys->keys_result = (getKeysResult)GETKEYS_RESULT_INIT;
+    hotkeys->start = server.mstime;
 
     /* Store initial rusage for CPU time tracking */
     struct rusage rusage;
@@ -73,14 +77,15 @@ static inline int isSlotSelected(hotkeyStats *hotkeys, int slot) {
     return 0;
 }
 
+/* Preparation for updates of the hotkeyStats for the current command, f.e
+ * cache the current client and the getKeysResult. */
 void hotkeyStatsPreCurrentCmd(hotkeyStats *hotkeys, client *c) {
     if (!hotkeys || !hotkeys->active) return;
 
     robj **argv = c->original_argv ? c->original_argv : c->argv;
     int argc = c->original_argv ? c->original_argc : c->argc;
 
-    hotkeys->keys_result.numkeys = 0;
-    hotkeys->keys_result.size = MAX_KEYS_BUFFER;
+    hotkeys->keys_result = (getKeysResult)GETKEYS_RESULT_INIT;
     if (getKeysFromCommandWithSpecs(c->realcmd, argv, argc, GET_KEYSPEC_DEFAULT,
                                     &hotkeys->keys_result) == 0)
     {
@@ -100,6 +105,8 @@ void hotkeyStatsPreCurrentCmd(hotkeyStats *hotkeys, client *c) {
     hotkeys->current_client = c;
 }
 
+/* Update the hotkeyStats with passed metrics. This can be called multiple times
+ * between the calls to hotkeyStatsPreCurrentCmd and hotkeyStatsPostCurrentCmd */
 void hotkeyStatsUpdateCurrentCmd(hotkeyStats *hotkeys, hotkeyMetrics metrics) {
     if (!hotkeys || !hotkeys->active) return;
     if (hotkeys->keys_result.numkeys == 0) return;
@@ -134,7 +141,7 @@ void hotkeyStatsUpdateCurrentCmd(hotkeyStats *hotkeys, hotkeyMetrics metrics) {
         return;
     }
 
-    mstime_t start_time = mstime();
+    mstime_t start_time = ustime();
 
     /* Keys we've cached in the keys_result only track positions in the client's
      * argv array so we must fetch it. */
@@ -157,16 +164,16 @@ void hotkeyStatsUpdateCurrentCmd(hotkeyStats *hotkeys, hotkeyMetrics metrics) {
     }
 
     /* Track CPU time spent updating the topk structures. */
-    mstime_t end_time = mstime();
-    hotkeys->cpu_time += (end_time - start_time);
+    mstime_t end_time = ustime();
+    hotkeys->cpu_time += (end_time - start_time)/1000;
 }
 
+/* Some cleanup work for hotkeyStats after the command has finished execution */
 void hotkeyStatsPostCurrentCmd(hotkeyStats *hotkeys) {
     if (!hotkeys || !hotkeys->active) return;
 
     getKeysFreeResult(&hotkeys->keys_result);
-    memset(&hotkeys->keys_result, 0, sizeof(getKeysResult));
-    hotkeys->keys_result.size = MAX_KEYS_BUFFER;
+    hotkeys->keys_result = (getKeysResult)GETKEYS_RESULT_INIT;
 
     hotkeys->current_client = NULL;
     hotkeys->is_sampled = 0;
@@ -377,7 +384,7 @@ void hotkeysCommand(client *c) {
         }
 
         server.hotkeys->active = 0;
-        server.hotkeys->duration = mstime() - server.hotkeys->start;
+        server.hotkeys->duration = server.mstime - server.hotkeys->start;
         addReply(c, shared.ok);
 
     } else if (!strcasecmp(sub, "GET")) {
@@ -400,7 +407,7 @@ void hotkeysCommand(client *c) {
         if (!server.hotkeys->active) {
             duration = server.hotkeys->duration;
         } else {
-            duration = mstime() - server.hotkeys->start;
+            duration = server.mstime - server.hotkeys->start;
         }
 
         /* Get total CPU time using rusage (RUSAGE_SELF) -
@@ -425,7 +432,7 @@ void hotkeysCommand(client *c) {
 
         if (server.hotkeys->tracked_metrics & HOTKEYS_TRACK_CPU) {
             cpu = chkTopKList(server.hotkeys->cpu);
-            for (int i = 0; i < server.hotkeys->k; ++i) {
+            for (int i = 0; i < server.hotkeys->tracking_count; ++i) {
                 if (cpu[i].count == 0) break;
                 cpu_count++;
             }
@@ -434,7 +441,7 @@ void hotkeysCommand(client *c) {
         if (server.hotkeys->tracked_metrics & HOTKEYS_TRACK_NET) {
             total_net_bytes = server.hotkeys->net->total;
             net = chkTopKList(server.hotkeys->net);
-            for (int i = 0; i < server.hotkeys->k; ++i) {
+            for (int i = 0; i < server.hotkeys->tracking_count; ++i) {
                 if (net[i].count == 0) break;
                 net_count++;
             }

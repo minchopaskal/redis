@@ -53,8 +53,8 @@ typedef struct {
 } chkHeapBucket;
 
 typedef struct chkTopK {
-    chkBucket *tables[CHK_NUM_TABLES];
-    chkHeapBucket *heap;
+    chkBucket *tables[CHK_NUM_TABLES]; /* Cuckoo tables */
+    chkHeapBucket *heap; /* Min-heap for storing top-K item's names */
 
     size_t alloc_size; /* Used for memory tracking only */
 
@@ -68,37 +68,19 @@ typedef struct chkTopK {
      * but we actually store (1/decay)^i for faster computation. */
     double lut_decay_prob[CHK_LUT_SIZE + 1];
 
-    /* Decay constant */
-    double decay;
-    double inv_decay;
+    double decay; /* Decay constant */
+    double inv_decay; /* Cache 1/decay for faster computations */
 
-    counter_t total;
+    counter_t total; /* Total recorded count for all updates */
 
     int k;
     int numbuckets;
 } chkTopK;
 
-/* Create the chkTopK structure. Note, CHK paper recommends decay=1.08.
- * numbuckets must be a power of 2. Recommended size for numbuckets is at least
- * 7 or 8 times k. */
 chkTopK *chkTopKCreate(int k, int numbuckets, double decay);
-
-/* Release chkTopK resources */
 void chkTopKRelease(chkTopK *topk);
-
-/* Update weighted item. If another one was expelled from the topK list -
- * return it. Caller is responsible for releasing it */
 sds chkTopKUpdate(chkTopK *topk, char *item, int itemlen, counter_t weight);
-
-/* Get an ordered by count list of topk->k elements inside the topk object.
- *
- * NOTE, the returned array is a copy of the internal heap stored by `topk`. The
- * caller is responsible for releasing it after use. The elements of the array
- * share their `item` pointers with the internal topk->heap buckets so one must
- * not use it after `topk` is released. */
 chkHeapBucket *chkTopKList(chkTopK *topk);
-
-/* Get the memory usage in bytes of the chkTopK structure */
 size_t chkTopKGetMemoryUsage(chkTopK *topk);
 
 #ifdef REDIS_TEST
