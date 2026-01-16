@@ -119,6 +119,7 @@ chkTopK *chkTopKCreate(int k, int numbuckets, double decay) {
 
     size_t usable = 0;
     chkTopK *topk = zcalloc_usable(sizeof(chkTopK), &usable);
+    topk->alloc_size += usable;
 
     for (int i = 0; i < CHK_NUM_TABLES; ++i) {
         topk->tables[i] = zcalloc_usable(sizeof(chkBucket) * numbuckets, &usable);
