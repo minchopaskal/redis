@@ -1105,7 +1105,7 @@ typedef struct clientReplyBlock {
  *  Repl Backlog                               Replica_A    Replica_B
  *
  * Each replica or replication backlog increments only the refcount of the
- * 'ref_repl_curr_node' which it points to. So when replica walks to the next
+ * 'ref_repl_buf_node' which it points to. So when replica walks to the next
  * node, it should first increase the next node's refcount, and when we trim
  * the replication buffer nodes, we remove node always from the head node which
  * refcount is 0. If the refcount of the head node is not 0, we must stop
@@ -1114,25 +1114,22 @@ typedef struct clientReplyBlock {
  * For replicas in IO threads we don't update the refcount while sending the
  * repl data, but only when the client is send back to main. This avoids data
  * races. In order to achieve this, the replicas keep track of following:
- * - ref_repl_start_node - the node we started to send repl data from
- * - ref_repl_curr_node - the current node we've reached
- * - ref_repl_last_node - the last node in the replication buffer as seen by
+ * - io_curr_repl_node - the current node we've reached.
+ * - io_bound_repl_node - the last node in the replication buffer as seen by
  *                        the replica client before it was send to IO thread
  *
- * When the client is send to main it can decrement ref_repl_start_node's
- * refcount and increment it for ref_repl_curr_node, since all the nodes
+ * When the client is send to IO thread for the first time io_curr_repl_node is
+ * initialized with ref_repl_buf_node.
+ * When the client is send back to main it can decrement ref_repl_buf_node's
+ * refcount and increment it for io_curr_repl_node, since all the nodes
  * in-between are already send and the client doesn't hold reference to them.
  *
- * `ref_repl_last_node` is needed because IO thread needs to know when to stop
+ * `io_bound_repl_node` is needed because IO thread needs to know when to stop
  * sending data. If it was reading directly from the replication buffer,
  * there will be a data race, because main thread may be writing to it during
- * `feedReplicationBuffer`. `ref_repl_last_node` is cached in the client
+ * `feedReplicationBuffer`. `io_bound_repl_node` is cached in the client
  * together with its used size just before sending the client to IO thread
- * in `enqueuePendingClienstToIOThreads`.
- *
- * Note that since replica clients in main thread do not have the problem of
- * immideately updating the refcount after write, the `ref_repl_start_node` and
- * `ref_repl_curr_node` are effectively the same for them. */
+ * in `enqueuePendingClienstToIOThreads`. */
 
 /* Similar with 'clientReplyBlock', it is used for shared buffers between
  * all replica clients and replication backlog. */
