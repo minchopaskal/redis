@@ -180,7 +180,6 @@ void keepClientInMainThread(client *c) {
     updateClientDataFromIOThread(c);
     connSetReadHandler(c->conn, readQueryFromClient);
     c->io_flags |= CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED;
-    c->running_tid = IOTHREAD_MAIN_THREAD_ID;
     c->tid = IOTHREAD_MAIN_THREAD_ID;
     freeClientDeferredObjects(c, 1); /* Free deferred objects. */
     /* Main thread starts to manage it. */
@@ -221,6 +220,7 @@ void fetchClientFromIOThread(client *c) {
     resumeIOThread(c->tid);
 
     /* Keep the client in main thread. */
+    c->running_tid = IOTHREAD_MAIN_THREAD_ID;
     keepClientInMainThread(c);
 }
 
