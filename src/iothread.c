@@ -304,7 +304,8 @@ void assignClientToIOThread(client *c) {
         c->io_curr_repl_node = c->ref_repl_buf_node;
         c->io_curr_block_pos = c->ref_block_pos;
         c->io_bound_repl_node = listLast(server.repl_buffer_blocks);
-        c->io_bound_block_pos = ((replBufBlock *)listNodeValue(c->io_bound_repl_node))->used;
+        if (likely(c->io_bound_repl_node != NULL))
+            c->io_bound_block_pos = ((replBufBlock *)listNodeValue(c->io_bound_repl_node))->used;
     }
 
     /* Unbind connection of client from main thread event loop, disable read and
