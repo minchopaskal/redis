@@ -185,14 +185,14 @@ size_t hotkeysGetMemoryUsage(hotkeyStats *hotkeys) {
     if (!hotkeys) return 0;
 
     size_t memory_usage = sizeof(hotkeyStats);
-    if (server.hotkeys->cpu) {
+    if (hotkeys->cpu) {
         memory_usage += chkTopKGetMemoryUsage(hotkeys->cpu);
     }
-    if (server.hotkeys->net) {
+    if (hotkeys->net) {
         memory_usage += chkTopKGetMemoryUsage(hotkeys->net);
     }
     /* Add memory for slots array if present */
-    if (server.hotkeys->slots) {
+    if (hotkeys->slots) {
         memory_usage += sizeof(int) * hotkeys->numslots;
     }
 
