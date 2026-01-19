@@ -339,9 +339,6 @@ int canFeedReplicaReplBuffer(client *replica) {
     /* Don't feed replicas that are going to be closed ASAP. */
     if (replica->flags & CLIENT_CLOSE_ASAP) return 0;
 
-    /* Don't feed replicas that are running in IO threads. */
-    if (replica->running_tid != IOTHREAD_MAIN_THREAD_ID) return 0;
-
     return 1;
 }
 

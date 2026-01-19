@@ -325,7 +325,7 @@ static inline int _prepareClientToWrite(client *c) {
      * If the client runs in an IO thread, we should not put the client in the
      * pending write queue. Instead, we will install the write handler to the
      * corresponding IO thread’s event loop and let it handle the reply. */
-    if (!clientHasPendingReplies(c) && likely(c->running_tid == IOTHREAD_MAIN_THREAD_ID))
+    if (likely(c->running_tid == IOTHREAD_MAIN_THREAD_ID) && !clientHasPendingReplies(c))
         putClientInPendingWriteQueue(c);
 
     /* Authorize the caller to queue in the output buffer of this client. */

@@ -138,10 +138,11 @@ void enqueuePendingClienstToIOThreads(client *c) {
         listUnlinkNode(server.clients_pending_write, &c->clients_pending_write_node);
     }
     if (c->flags & CLIENT_SLAVE) {
-        c->io_bound_repl_node = listLast(server.repl_buffer_blocks);
-        c->io_bound_block_pos = ((replBufBlock *)listNodeValue(c->io_bound_repl_node))->used;
         c->io_curr_repl_node = c->ref_repl_buf_node;
         c->io_curr_block_pos = c->ref_block_pos;
+        c->io_bound_repl_node = listLast(server.repl_buffer_blocks);
+        if (likely(c->io_bound_repl_node != NULL))
+            c->io_bound_block_pos = ((replBufBlock*)listNodeValue(c->io_bound_repl_node))->used;
     }
 
     c->running_tid = c->tid;
@@ -170,8 +171,13 @@ void keepClientInMainThread(client *c) {
     server.io_threads_clients_num[c->tid]--;
     /* Unbind connection of client from io thread event loop. */
     unbindClientFromIOThreadEventLoop(c);
+
+    /* Update the client's data in case it was just fetched from IO thread */
+    updateClientDataFromIOThread(c);
+
     /* Let main thread to run it, rebind event loop and read handler */
     connRebindEventLoop(c->conn, server.el);
+    updateClientDataFromIOThread(c);
     connSetReadHandler(c->conn, readQueryFromClient);
     c->io_flags |= CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED;
     c->running_tid = IOTHREAD_MAIN_THREAD_ID;
@@ -214,14 +220,10 @@ void fetchClientFromIOThread(client *c) {
     /* Unbind connection of client from io thread event loop. */
     connUnbindEventLoop(c->conn);
     /* Now main thread can process it. */
-    c->running_tid = IOTHREAD_MAIN_THREAD_ID;
     resumeIOThread(c->tid);
-    updateClientDataFromIOThread(c);
+
     /* Keep the client in main thread. */
     keepClientInMainThread(c);
-    freeClientDeferredObjects(c, 1); /* Free deferred objects. */
-    freeClientIODeferredObjects(c, 1); /* Free IO deferred objects. */
-    tryUnlinkClientFromPendingRefReply(c, 0);
 }
 
 /* For some clients, we must handle them in the main thread, since there is
