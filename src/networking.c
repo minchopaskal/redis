@@ -2610,6 +2610,7 @@ static inline int _writeToClientSlave(client *c, ssize_t *nwritten) {
 
     if (c->running_tid != IOTHREAD_MAIN_THREAD_ID) {
         replBufBlock *o = listNodeValue(c->io_curr_repl_node);
+        /* The IO thread must not send data beyond the bound position. */
         size_t pos = c->io_curr_repl_node == c->io_bound_repl_node ?
                      c->io_bound_block_pos : o->used;
         if (pos > c->io_curr_block_pos) {
