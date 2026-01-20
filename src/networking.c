@@ -251,6 +251,7 @@ client *createClient(connection *conn) {
     c->commands_processed = 0;
     c->task = NULL;
     c->node_id = NULL;
+    atomicSet(c->pending_read, 0);
     return c;
 }
 

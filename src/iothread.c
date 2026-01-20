@@ -177,7 +177,6 @@ void keepClientInMainThread(client *c) {
 
     /* Let main thread to run it, rebind event loop and read handler */
     connRebindEventLoop(c->conn, server.el);
-    updateClientDataFromIOThread(c);
     connSetReadHandler(c->conn, readQueryFromClient);
     c->io_flags |= CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED;
     c->tid = IOTHREAD_MAIN_THREAD_ID;
