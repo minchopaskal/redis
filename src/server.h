@@ -1559,7 +1559,7 @@ typedef struct client {
     size_t ref_block_pos;        /* Access position of referenced buffer block,
                                     * i.e. the next offset to send. */
     listNode *io_curr_repl_node; /* Current node we are sending repl data from in
-                                  * IO thread. */                              
+                                  * IO thread. */
     size_t io_curr_block_pos;    /* Current position we are sending repl data from
                                   * in IO thread. */
     listNode *io_bound_repl_node;/* Bound node we are sending repl data from in

@@ -300,8 +300,8 @@ void assignClientToIOThread(client *c) {
     /* The client running in IO thread needs to have deferred objects array. */
     c->deferred_objects = zmalloc(sizeof(deferredObject) * CLIENT_MAX_DEFERRED_OBJECTS);
 
-    /* Initial caching of replication buffer's last node. See comment above
-     * replBufBlock for more info */
+    /* Initial caching of replication buffer's ref nodes for IO threads. See
+     * comment above replBufBlock for more info */
     if (c->flags & CLIENT_SLAVE) {
         c->io_curr_repl_node = c->ref_repl_buf_node;
         c->io_curr_block_pos = c->ref_block_pos;
