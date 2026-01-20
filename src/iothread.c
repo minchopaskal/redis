@@ -68,8 +68,7 @@ void updateClientDataFromIOThread(client *c) {
     }
 
     /* Update replication buffer referenced node if IO thread has sent some data. */
-    if (c->flags & CLIENT_SLAVE && !(c->flags & CLIENT_CLOSE_ASAP) &&
-        c->ref_repl_buf_node != NULL &&
+    if (c->flags & CLIENT_SLAVE && c->ref_repl_buf_node != NULL &&
         (c->io_curr_repl_node != c->ref_repl_buf_node ||
          c->io_curr_block_pos != c->ref_block_pos))
     {
