@@ -1121,17 +1121,17 @@ typedef struct clientReplyBlock {
  * trimming and never iterate the next node.
  *
  * For replicas in IO threads we don't update the refcount while sending the
- * repl data, but only when the client is send back to main. This avoids data
+ * repl data, but only when the client is sent back to main. This avoids data
  * races. In order to achieve this, the replicas keep track of following:
  * - io_curr_repl_node - the current node we've reached.
  * - io_bound_repl_node - the last node in the replication buffer as seen by
- *                        the replica client before it was send to IO thread
+ *                        the replica client before it was sent to IO thread
  *
- * When the client is send to IO thread for the first time io_curr_repl_node is
+ * When the client is sent to IO thread for the first time io_curr_repl_node is
  * initialized with ref_repl_buf_node.
- * When the client is send back to main it can decrement ref_repl_buf_node's
+ * When the client is sent back to main it can decrement ref_repl_buf_node's
  * refcount and increment it for io_curr_repl_node, since all the nodes
- * in-between are already send and the client doesn't hold reference to them.
+ * in-between are already sent and the client doesn't hold reference to them.
  *
  * `io_bound_repl_node` is needed because IO thread needs to know when to stop
  * sending data. If it was reading directly from the replication buffer,
@@ -1493,11 +1493,11 @@ typedef struct client {
     long long repl_ack_off; /* Replication ack offset, if this is a slave. */
     long long repl_aof_off; /* Replication AOF fsync ack offset, if this is a slave. */
     long long repl_ack_time;/* Replication ack time, if this is a slave. */
-    mstime_t io_repl_ack_time; /* Replication ack time, if this is a replica in
-                                * IO thread. Keeps track of repl_ack_time while
-                                * replica is in IO thread to avoid data races
-                                * with main. repl_ack_time is updated with this
-                                * value when replica returns to main thread. */
+    long long io_repl_ack_time; /* Replication ack time, if this is a replica in
+                                 * IO thread. Keeps track of repl_ack_time while
+                                 * replica is in IO thread to avoid data races
+                                 * with main. repl_ack_time is updated with this
+                                 * value when replica returns to main thread. */
     long long repl_last_partial_write; /* The last time the server did a partial write from the RDB child pipe to this replica  */
     long long psync_initial_offset; /* FULLRESYNC reply offset other slaves
                                        copying this slave output buffer

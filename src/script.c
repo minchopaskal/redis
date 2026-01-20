@@ -39,7 +39,7 @@ static void exitScriptTimedoutMode(scriptRunCtx *run_ctx) {
     blockingOperationEnds();
     /* if we are a replica and we have an active master, set it for continue processing */
     if (server.masterhost && server.master) {
-        /* Master running in IO thread needs to be send to main thread so that
+        /* Master running in IO thread needs to be sent to main thread so that
          * it can process any pending commands ASAP without waiting for the next
          * read.
          * We don't queue the client for reprocessing in this case as it will

@@ -2741,7 +2741,7 @@ int writeToClient(client *c, int handler_installed) {
         if (c->running_tid == IOTHREAD_MAIN_THREAD_ID)
             tryUnlinkClientFromPendingRefReply(c, 1);
 
-        /* If replica client has send all the replication data it knows about
+        /* If replica client has sent all the replication data it knows about
          * we send it to main thread so it can pick up new repl data ASAP.
          * Note, that we keep it in IO thread in case we have a pending ACK read. */
         if (c->flags & CLIENT_SLAVE && c->running_tid != IOTHREAD_MAIN_THREAD_ID) {
@@ -2977,7 +2977,7 @@ int processInlineBuffer(client *c, pendingCommand *pcmd) {
              * Note c->repl_ack_time will still be updated in
              * updateClientDataFromIOThread with the value of c->io_repl_ack_time
              * when the client moves from IO to main thread. */
-            c->io_repl_ack_time = mstime();
+            c->io_repl_ack_time = server.unixtime;
     }
 
     /* Masters should never send us inline protocol to run actual
@@ -3793,7 +3793,6 @@ void readQueryFromClient(connection *conn) {
     if (c->flags & CLIENT_MASTER) {
         if (c->running_tid == IOTHREAD_MAIN_THREAD_ID) {
             c->read_reploff += nread;
-            c->io_read_reploff += nread;
         } else {
             /* Same comment as for c->io_lastinteraction */
             c->io_read_reploff += nread;

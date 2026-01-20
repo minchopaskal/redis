@@ -52,15 +52,13 @@ void updateClientDataFromIOThread(client *c) {
     serverAssert(c->tid != IOTHREAD_MAIN_THREAD_ID &&
                  c->running_tid == IOTHREAD_MAIN_THREAD_ID);
 
-    if (c->io_repl_ack_time / 1000 > c->repl_ack_time) {
+    if (c->io_repl_ack_time > c->repl_ack_time) {
         serverAssert(c->flags & CLIENT_SLAVE);
-        c->repl_ack_time = c->io_repl_ack_time / 1000;
-        c->io_repl_ack_time = 0;
+        c->repl_ack_time = c->io_repl_ack_time;
     }
-    if (c->io_lastinteraction != 0) {
+    if (c->io_lastinteraction > c->lastinteraction) {
         serverAssert(c->flags & CLIENT_MASTER);
         c->lastinteraction = c->io_lastinteraction;
-        c->io_lastinteraction = 0;
     }
     if (c->io_read_reploff > c->read_reploff) {
         serverAssert(c->flags & CLIENT_MASTER);
@@ -138,11 +136,17 @@ void enqueuePendingClienstToIOThreads(client *c) {
         listUnlinkNode(server.clients_pending_write, &c->clients_pending_write_node);
     }
     if (c->flags & CLIENT_SLAVE) {
+        c->io_repl_ack_time = c->repl_ack_time;
+
         c->io_curr_repl_node = c->ref_repl_buf_node;
         c->io_curr_block_pos = c->ref_block_pos;
         c->io_bound_repl_node = listLast(server.repl_buffer_blocks);
         if (likely(c->io_bound_repl_node != NULL))
             c->io_bound_block_pos = ((replBufBlock*)listNodeValue(c->io_bound_repl_node))->used;
+    }
+    if (c->flags & CLIENT_MASTER) {
+        c->io_read_reploff = c->read_reploff;
+        c->io_lastinteraction = c->lastinteraction;
     }
 
     c->running_tid = c->tid;
@@ -293,28 +297,18 @@ void assignClientToIOThread(client *c) {
     /* Assign the client to the IO thread. */
     server.io_threads_clients_num[c->tid]--;
     c->tid = min_id;
-    c->running_tid = min_id;
     server.io_threads_clients_num[min_id]++;
 
     /* The client running in IO thread needs to have deferred objects array. */
     c->deferred_objects = zmalloc(sizeof(deferredObject) * CLIENT_MAX_DEFERRED_OBJECTS);
-
-    /* Initial caching of replication buffer's ref nodes for IO threads. See
-     * comment above replBufBlock for more info */
-    if (c->flags & CLIENT_SLAVE) {
-        c->io_curr_repl_node = c->ref_repl_buf_node;
-        c->io_curr_block_pos = c->ref_block_pos;
-        c->io_bound_repl_node = listLast(server.repl_buffer_blocks);
-        if (likely(c->io_bound_repl_node != NULL))
-            c->io_bound_block_pos = ((replBufBlock *)listNodeValue(c->io_bound_repl_node))->used;
-    }
 
     /* Unbind connection of client from main thread event loop, disable read and
      * write, and then put it in the list, main thread will send these clients
      * to IO thread in beforeSleep. */
     connUnbindEventLoop(c->conn);
     c->io_flags &= ~(CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED);
-    listAddNodeTail(mainThreadPendingClientsToIOThreads[c->tid], c);
+
+    enqueuePendingClienstToIOThreads(c);
 }
 
 /* If updating maxclients config, we not only resize the event loop of main thread
