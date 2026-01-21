@@ -175,10 +175,8 @@ void keepClientInMainThread(client *c) {
     server.io_threads_clients_num[c->tid]--;
     /* Unbind connection of client from io thread event loop. */
     unbindClientFromIOThreadEventLoop(c);
-
     /* Update the client's data in case it was just fetched from IO thread */
     updateClientDataFromIOThread(c);
-
     /* Let main thread to run it, rebind event loop and read handler */
     connRebindEventLoop(c->conn, server.el);
     connSetReadHandler(c->conn, readQueryFromClient);

@@ -1473,9 +1473,9 @@ typedef struct client {
                                 * this. */
     time_t obuf_soft_limit_reached_time;
     mstime_t io_last_client_cron;  /* Timestamp of last invocation of client
-                                    * cron in IO thread */
-    mstime_t io_last_repl_cron;    /* Timestamp of last invocation of
-                                    * replication cron in IO thread. */
+                                    * cron if client is running in IO thread */
+    mstime_t io_last_repl_cron;    /* Timestamp of last invocation of replication
+                                    * cron if client is running in IO thread. */
     int authenticated;      /* Needed when the default user requires auth. */
     int replstate;          /* Replication state if this is a slave. */
     int repl_start_cmd_stream_on_ack; /* Install slave write handler on first ACK. */
@@ -1555,9 +1555,9 @@ typedef struct client {
     clientMemUsageBucket *mem_usage_bucket;
 
     listNode *ref_repl_buf_node; /* Referenced node of replication buffer blocks,
-                                    * see the definition of replBufBlock. */
+                                  * see the definition of replBufBlock. */
     size_t ref_block_pos;        /* Access position of referenced buffer block,
-                                    * i.e. the next offset to send. */
+                                  * i.e. the next offset to send. */
     listNode *io_curr_repl_node; /* Current node we are sending repl data from in
                                   * IO thread. */
     size_t io_curr_block_pos;    /* Current position we are sending repl data from
@@ -3358,7 +3358,7 @@ void replDataBufInit(replDataBuf *buf);
 void replDataBufClear(replDataBuf *buf);
 void replDataBufReadFromConn(connection *conn, replDataBuf *buf, void (*error_handler)(connection *conn));
 int replDataBufStreamToDb(replDataBuf *buf, replDataBufToDbCtx *ctx);
-int replicaFromIOThreadHasPendingAck(client *c);
+int replicaFromIOThreadHasPendingRead(client *c);
 void putReplicasInPendingClientsToIOThreads(void);
 int replicationCronRunMasterClient(void);
 

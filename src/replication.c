@@ -98,7 +98,7 @@ unsigned long replicationLogicalReplicaCount(void) {
     return count;
 }
 
-int replicaFromIOThreadHasPendingAck(client *c) {
+int replicaFromIOThreadHasPendingRead(client *c) {
     serverAssert(c->tid != IOTHREAD_MAIN_THREAD_ID);
 
     int pending_read;
@@ -146,7 +146,7 @@ void putReplicasInPendingClientsToIOThreads(void) {
          * also send them to the IO thread. */
         if (replica->flags & CLIENT_PENDING_WRITE ||
             clientHasPendingReplies(replica) ||
-            replicaFromIOThreadHasPendingAck(replica))
+            replicaFromIOThreadHasPendingRead(replica))
         {
             enqueuePendingClienstToIOThreads(replica);
         }
@@ -1457,7 +1457,6 @@ void replconfCommand(client *c) {
                     c->repl_aof_off = offset;
             }
             c->repl_ack_time = server.unixtime;
-
             /* If this was a diskless replication, we need to really put
              * the slave online when the first ACK is received (which
              * confirms slave is online and ready to get more data). This

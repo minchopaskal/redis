@@ -2745,7 +2745,7 @@ int writeToClient(client *c, int handler_installed) {
          * we send it to main thread so it can pick up new repl data ASAP.
          * Note, that we keep it in IO thread in case we have a pending ACK read. */
         if (c->flags & CLIENT_SLAVE && c->running_tid != IOTHREAD_MAIN_THREAD_ID) {
-            if (!replicaFromIOThreadHasPendingAck(c))
+            if (!replicaFromIOThreadHasPendingRead(c))
                 enqueuePendingClientsToMainThread(c, 0);
         }
     }
