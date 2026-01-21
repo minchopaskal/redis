@@ -136,13 +136,13 @@ void enqueuePendingClienstToIOThreads(client *c) {
         listUnlinkNode(server.clients_pending_write, &c->clients_pending_write_node);
     }
     if (c->flags & CLIENT_SLAVE) {
-        c->io_repl_ack_time = c->repl_ack_time;
+        serverAssert(c->ref_repl_buf_node != NULL);
 
+        c->io_repl_ack_time = c->repl_ack_time;
         c->io_curr_repl_node = c->ref_repl_buf_node;
         c->io_curr_block_pos = c->ref_block_pos;
         c->io_bound_repl_node = listLast(server.repl_buffer_blocks);
-        if (likely(c->io_bound_repl_node != NULL))
-            c->io_bound_block_pos = ((replBufBlock*)listNodeValue(c->io_bound_repl_node))->used;
+        c->io_bound_block_pos = ((replBufBlock*)listNodeValue(c->io_bound_repl_node))->used;
     }
     if (c->flags & CLIENT_MASTER) {
         c->io_read_reploff = c->read_reploff;
