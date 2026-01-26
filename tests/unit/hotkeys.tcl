@@ -192,7 +192,7 @@ start_server {tags {"hotkeys"}} {
         r hello 3
         catch {r hotkeys start METRICS 1 CPU SLOTS 2 0 5} err
         assert_match "*SLOTS parameter cannot be used in non-cluster mode*" $err
-    } {} {resp3}
+    } {} {resp3 cluster:skip}
 
     test {HOTKEYS STOP - basic functionality} {
         r hello 3
