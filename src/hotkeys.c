@@ -561,7 +561,7 @@ void hotkeysCommand(client *c) {
             total_len += 2;
         }
 
-        /* by-cpu-time - only if CPU tracking is enabled */
+        /* by-cpu-time-us - only if CPU tracking is enabled */
         if (server.hotkeys->tracked_metrics & HOTKEYS_TRACK_CPU) {
             addReplyBulkCString(c, "by-cpu-time-us");
             /* Nested array of key-value pairs */
