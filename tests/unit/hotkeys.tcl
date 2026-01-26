@@ -11,13 +11,11 @@ proc hotkeys_array_to_dict {arr} {
 
 start_server {tags {"hotkeys"}} {
     test {HOTKEYS START - METRICS required} {
-        r hello 3
         catch {r hotkeys start} err
         assert_match "*METRICS parameter is required*" $err
-    } {} {resp3}
+    }
 
     test {HOTKEYS START - METRICS with CPU only} {
-        r hello 3
         assert_equal {OK} [r hotkeys start METRICS 1 CPU]
         r set key1 value1
         assert_equal {OK} [r hotkeys stop]
@@ -34,10 +32,9 @@ start_server {tags {"hotkeys"}} {
         assert {![dict exists $result "by-net-bytes"]}
 
         assert_equal {OK} [r hotkeys reset]
-    } {} {resp3}
+    }
 
     test {HOTKEYS START - METRICS with NET only} {
-        r hello 3
         assert_equal {OK} [r hotkeys start METRICS 1 NET]
         r set key1 value1
         assert_equal {OK} [r hotkeys stop]
@@ -54,10 +51,9 @@ start_server {tags {"hotkeys"}} {
         assert {![dict exists $result "by-cpu-time-us"]}
 
         assert_equal {OK} [r hotkeys reset]
-    } {} {resp3}
+    }
 
     test {HOTKEYS START - METRICS with both CPU and NET} {
-        r hello 3
         assert_equal {OK} [r hotkeys start METRICS 2 CPU NET]
         r set key1 value1
         assert_equal {OK} [r hotkeys stop]
@@ -74,37 +70,33 @@ start_server {tags {"hotkeys"}} {
         assert [dict exists $result "by-net-bytes"]
 
         assert_equal {OK} [r hotkeys reset]
-    } {} {resp3}
+    }
 
     test {HOTKEYS START - Error: session already started} {
-        r hello 3
         assert_equal {OK} [r hotkeys start METRICS 1 CPU]
         catch {r hotkeys start METRICS 1 NET} err
         assert_match "*hotkey tracking session already in progress*" $err
         assert_equal {OK} [r hotkeys stop]
         assert_equal {OK} [r hotkeys reset]
-    } {} {resp3}
+    }
 
     test {HOTKEYS START - Error: invalid METRICS count} {
-        r hello 3
         catch {r hotkeys start METRICS 0} err
         assert_match "*METRICS count*" $err
         catch {r hotkeys start METRICS -1} err
         assert_match "*METRICS count*" $err
-    } {} {resp3}
+    }
 
     test {HOTKEYS START - Error: METRICS count mismatch} {
-        r hello 3
         catch {r hotkeys start METRICS 2 CPU} err
         assert_match "*METRICS count does not match number of metric types provided*" $err
         catch {r hotkeys start METRICS 1 CPU NET} err
         assert_match "*syntax error*" $err
         catch {r hotkeys start METRICS 3 CPU NET} err
         assert_match "*METRICS count*" $err
-    } {} {resp3}
+    }
 
     test {HOTKEYS START - Error: METRICS invalid metrics} {
-        r hello 3
         catch {r hotkeys start METRICS 1 GPU} err
         assert_match "*METRICS no valid metrics*" $err
         catch {r hotkeys start METRICS 2 GPU NYET} err
@@ -115,19 +107,17 @@ start_server {tags {"hotkeys"}} {
 
         assert_equal {OK} [r hotkeys stop]
         assert_equal {OK} [r hotkeys reset]
-    } {} {resp3}
+    }
 
     test {HOTKEYS START - Error: METRICS same parameter} {
-        r hello 3
         catch {r hotkeys start METRICS 2 CPU CPU} err
         assert_match "*METRICS CPU*" $err
         catch {r hotkeys start METRICS 2 NET NET} err
         assert_match "*METRICS NET*" $err
-    } {} {resp3}
+    }
 
 
     test {HOTKEYS START - with COUNT parameter} {
-        r hello 3
         assert_equal {OK} [r hotkeys start METRICS 2 CPU NET COUNT 20]
 
         for {set i 0} {$i < 30} {incr i} {
@@ -151,18 +141,16 @@ start_server {tags {"hotkeys"}} {
         assert_lessthan_equal $net_count 20
 
         assert_equal {OK} [r hotkeys reset]
-    } {} {resp3}
+    }
 
     test {HOTKEYS START - Error: COUNT out of range} {
-        r hello 3
         catch {r hotkeys start METRICS 1 CPU COUNT 0} err
         assert_match "*COUNT must be between 1 and 64*" $err
         catch {r hotkeys start METRICS 1 CPU COUNT 100} err
         assert_match "*COUNT must be between 1 and 64*" $err
-    } {} {resp3}
+    }
 
     test {HOTKEYS START - with DURATION parameter} {
-        r hello 3
         assert_equal {OK} [r hotkeys start METRICS 1 CPU DURATION 1]
         after 1500
 
@@ -173,29 +161,25 @@ start_server {tags {"hotkeys"}} {
         assert_equal 0 [dict get $result "tracking-active"]
 
         assert_equal {OK} [r hotkeys reset]
-    } {} {resp3}
+    }
 
     test {HOTKEYS START - with SAMPLE parameter} {
-        r hello 3
         assert_equal {OK} [r hotkeys start METRICS 2 CPU NET SAMPLE 10]
         assert_equal {OK} [r hotkeys stop]
         assert_equal {OK} [r hotkeys reset]
-    } {} {resp3}
+    }
 
     test {HOTKEYS START - Error: SAMPLE ratio invalid} {
-        r hello 3
         catch {r hotkeys start METRICS 1 CPU SAMPLE 0} err
         assert_match "*SAMPLE ratio must be positive*" $err
-    } {} {resp3}
+    }
 
     test {HOTKEYS START - Error: SLOTS not allowed in non-cluster mode} {
-        r hello 3
         catch {r hotkeys start METRICS 1 CPU SLOTS 2 0 5} err
         assert_match "*SLOTS parameter cannot be used in non-cluster mode*" $err
-    } {} {resp3 cluster:skip}
+    } {} {cluster:skip}
 
     test {HOTKEYS STOP - basic functionality} {
-        r hello 3
         assert_equal {OK} [r hotkeys start METRICS 2 CPU NET]
         assert_equal {OK} [r hotkeys stop]
 
@@ -206,35 +190,31 @@ start_server {tags {"hotkeys"}} {
         assert_equal 0 [dict get $result "tracking-active"]
 
         assert_equal {OK} [r hotkeys reset]
-    } {} {resp3}
+    }
 
     test {HOTKEYS RESET - basic functionality} {
-        r hello 3
         assert_equal {OK} [r hotkeys start METRICS 1 CPU]
         assert_equal {OK} [r hotkeys stop]
         assert_equal {OK} [r hotkeys reset]
         # After reset, GET should return nil
         set result [r hotkeys get]
         assert_equal {} $result
-    } {} {resp3}
+    }
 
     test {HOTKEYS RESET - Error: session in progress} {
-        r hello 3
         assert_equal {OK} [r hotkeys start METRICS 1 CPU]
         catch {r hotkeys reset} err
         assert_match "*hotkey tracking session in progress, stop tracking first*" $err
         assert_equal {OK} [r hotkeys stop]
         assert_equal {OK} [r hotkeys reset]
-    } {} {resp3}
+    }
 
     test {HOTKEYS GET - returns nil when not started} {
-        r hello 3
         set result [r hotkeys get]
         assert_equal {} $result
-    } {} {resp3}
+    }
 
     test {HOTKEYS GET - sample-ratio field} {
-        r hello 3
         assert_equal {OK} [r hotkeys start METRICS 2 CPU NET SAMPLE 5]
         assert_equal {OK} [r hotkeys stop]
 
@@ -245,10 +225,9 @@ start_server {tags {"hotkeys"}} {
         assert_equal 5 [dict get $result "sample-ratio"]
 
         assert_equal {OK} [r hotkeys reset]
-    } {} {resp3}
+    }
 
     test {HOTKEYS - nested commands} {
-        r hello 3
         assert_equal {OK} [r hotkeys start METRICS 1 NET]
         r eval "redis.call('set', 'x', 1)" 1 x
         r eval "redis.call('set', 'y', 1)" 1 y
@@ -262,12 +241,11 @@ start_server {tags {"hotkeys"}} {
 
         assert_equal {OK} [r hotkeys stop]
         assert_equal {OK} [r hotkeys reset]
-    } {} {resp3}
+    }
 
 
 
     test {HOTKEYS GET - no conditional fields without selected slots} {
-        r hello 3
         assert_equal {OK} [r hotkeys start METRICS 2 CPU NET SAMPLE 10]
         r set key1 value1
         assert_equal {OK} [r hotkeys stop]
@@ -288,12 +266,10 @@ start_server {tags {"hotkeys"}} {
         assert [dict exists $result "net-bytes-all-commands-all-slots"]
 
         assert_equal {OK} [r hotkeys reset]
-    } {} {resp3}
+    }
 
     foreach sample_ratio {1 100 500 1000} {
         test "HOTKEYS detection with biased key access, sample ratio = $sample_ratio" {
-            r hello 3
-
             # Generate 100 random keys
             set all_keys {}
             for {set i 0} {$i < 100} {incr i} {
@@ -371,39 +347,34 @@ start_server {tags {"hotkeys"}} {
             assert_morethan $res_net 5
 
             assert_equal {OK} [r hotkeys reset]
-        } {} {resp3}
+        }
     }
 }
 
 start_cluster 1 0 {tags {external:skip cluster hotkeys}} {
 
     test {HOTKEYS START - with SLOTS parameter in cluster mode} {
-        R 0 hello 3
         assert_equal {OK} [R 0 hotkeys start METRICS 2 CPU NET SLOTS 2 0 5]
         assert_equal {OK} [R 0 hotkeys stop]
         assert_equal {OK} [R 0 hotkeys reset]
     }
 
     test {HOTKEYS START - Error: SLOTS count mismatch} {
-        R 0 hello 3
         catch {R 0 hotkeys start METRICS 1 CPU SLOTS 2 0} err
         assert_match "*not enough slot numbers provided*" $err
     }
 
     test {HOTKEYS START - Error: duplicate slots} {
-        R 0 hello 3
         catch {R 0 hotkeys start METRICS 1 CPU SLOTS 2 0 0} err
         assert_match "*duplicate slot number*" $err
     }
 
     test {HOTKEYS START - Error: SLOTS already specified} {
-        R 0 hello 3
         catch {R 0 hotkeys start METRICS 1 CPU SLOTS 1 0 SLOTS 1 5} err
         assert_match "*SLOTS parameter already specified*" $err
     }
 
     test {HOTKEYS GET - selected-slots field} {
-        R 0 hello 3
         assert_equal {OK} [R 0 hotkeys start METRICS 2 CPU NET SLOTS 2 0 5]
         assert_equal {OK} [R 0 hotkeys stop]
 
@@ -420,7 +391,6 @@ start_cluster 1 0 {tags {external:skip cluster hotkeys}} {
     }
 
     test {HOTKEYS GET - conditional fields with sample_ratio > 1 and selected slots} {
-        R 0 hello 3
         assert_equal {OK} [R 0 hotkeys start METRICS 2 CPU NET SAMPLE 10 SLOTS 1 0]
         R 0 set "{06S}key1" value1
         assert_equal {OK} [R 0 hotkeys stop]
@@ -440,7 +410,6 @@ start_cluster 1 0 {tags {external:skip cluster hotkeys}} {
     }
 
     test {HOTKEYS GET - no conditional fields with sample_ratio = 1} {
-        R 0 hello 3
         assert_equal {OK} [R 0 hotkeys start METRICS 2 CPU NET SLOTS 1 0]
         R 0 set "{06S}key1" value1
         assert_equal {OK} [R 0 hotkeys stop]
@@ -462,8 +431,6 @@ start_cluster 1 0 {tags {external:skip cluster hotkeys}} {
     }
 
     test {HOTKEYS - tracks only keys in selected slots} {
-        R 0 hello 3
-
         # Get slots for keys with different hash tags
         set key_slot0 "{06S}key"
         set slot0 [R 0 cluster keyslot $key_slot0]
@@ -499,8 +466,6 @@ start_cluster 1 0 {tags {external:skip cluster hotkeys}} {
     }
 
     test {HOTKEYS - multiple selected slots} {
-        R 0 hello 3
-
         # Get slots for keys with different hash tags
         set key_slot0 "{06S}key"
         set slot0 [R 0 cluster keyslot $key_slot0]
