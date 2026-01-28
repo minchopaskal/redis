@@ -3706,7 +3706,7 @@ void readQueryFromClient(connection *conn) {
     size_t qblen, readlen;
 
     /* We have to read compressed data but compression for this client is
-     * currently disabled. This could happend f.e when client was just fetched
+     * currently disabled. This could happened f.e when client was just fetched
      * to main thread. */
     int pending_compression_read = c->compression_state &&
                                    !(c->io_flags & CLIENT_IO_COMPRESSION_ENABLED);
