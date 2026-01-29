@@ -14,7 +14,7 @@
         "reply_schema": {
             "oneOf": [
                 {
-                    "description": "Map with various metrics (tracking-active, sample-ratio, selected-slots, time/network statistics), collection info (collection-start-time-unix-ms, collection-duration-ms, total-cpu-time-user-ms, total-cpu-time-sys-ms, total-net-bytes), and the requested maps of Top-K hotkeys (available metrics: by-cpu-time-us, by-net-bytes) where at most K hotkeys are returned.",
+                    "description": "Map with various metrics (tracking-active, sample-ratio, selected-slots, time/network statistics), collection info (collection-start-time-unix-ms, collection-duration-ms, total-cpu-time-user-ms, total-cpu-time-sys-ms, total-net-bytes), and the requested lists of Top-K hotkeys (available metrics: by-cpu-time-us, by-net-bytes) where at most K hotkeys are returned.",
                     "type": "object",
                     "properties": {
                         "tracking-active": {
@@ -88,7 +88,7 @@
                                     }
                                 ]
                             },
-                            "description": "Map of key names to their CPU time usage in microseconds (only present when CPU tracking is enabled)."
+                            "description": "Flat array of key-value pairs (key1, cpu_time1, key2, cpu_time2, ...) for top-K hotkeys by CPU time in microseconds (only present when CPU tracking is enabled)."
                         },
                         "by-net-bytes": {
                             "type": "array",
@@ -102,7 +102,7 @@
                                     }
                                 ]
                             },
-                            "description": "Map of key names to their network byte usage (only present when NET tracking is enabled)."
+                            "description": "Flat array of key-value pairs (key1, bytes1, key2, bytes2, ...) for top-K hotkeys by network bytes (only present when NET tracking is enabled)."
                         }
                     },
                     "additionalProperties": false
