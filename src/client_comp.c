@@ -262,7 +262,7 @@ int consumeAndTryWriteCompressed(client *c, char *data, size_t len,
                 *nwritten = -1;
                 return -1;
             }
-            *nwritten = -1;
+            // *nwritten = -1;
             return consumed;
         }
         *nwritten += written;
