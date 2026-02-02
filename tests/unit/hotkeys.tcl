@@ -9,7 +9,7 @@ proc hotkeys_array_to_dict {arr} {
     return $result
 }
 
-start_server {tags {"hotkeys"}} {
+start_server {tags {external:skip "hotkeys"}} {
     test {HOTKEYS START - METRICS required} {
         catch {r hotkeys start} err
         assert_match "*METRICS parameter is required*" $err
@@ -407,7 +407,7 @@ start_server {tags {"hotkeys"}} {
     }
 }
 
-start_server {tags {"hotkeys"}} {
+start_server {tags {external:skip "hotkeys"}} {
     test {HOTKEYS GET - RESP3 returns map with flat array values for hotkeys} {
         r hello 3
 
