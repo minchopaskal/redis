@@ -369,6 +369,12 @@ void hotkeysCommand(client *c) {
                         zfree(slots);
                         return;
                     }
+                    if (!clusterNodeCoversSlot(getMyClusterNode(), slot_val)) {
+                        addReplyErrorFormat(c, "slot %ld not handled by this node", slot_val);
+                        zfree(slots);
+                        return;
+                    }
+
                     /* Check for duplicate slot indices */
                     for (int k = 0; k < i; ++k) {
                         if (slots[k] == slot_val) {

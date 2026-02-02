@@ -471,6 +471,21 @@ start_cluster 1 0 {tags {external:skip cluster hotkeys}} {
         assert_match "*SLOTS parameter already specified*" $err
     }
 
+    test {HOTKEYS START - Error: invalid slot - negative value} {
+        catch {R 0 hotkeys start METRICS 1 CPU SLOTS 1 -1} err
+        assert_match "*Invalid or out of range slot*" $err
+    }
+
+    test {HOTKEYS START - Error: invalid slot - out of range} {
+        catch {R 0 hotkeys start METRICS 1 CPU SLOTS 1 16384} err
+        assert_match "*Invalid or out of range slot*" $err
+    }
+
+    test {HOTKEYS START - Error: invalid slot - non-integer} {
+        catch {R 0 hotkeys start METRICS 1 CPU SLOTS 1 abc} err
+        assert_match "*Invalid or out of range slot*" $err
+    }
+
     test {HOTKEYS GET - selected-slots field} {
         assert_equal {OK} [R 0 hotkeys start METRICS 2 CPU NET SLOTS 2 0 5]
         assert_equal {OK} [R 0 hotkeys stop]
@@ -615,6 +630,20 @@ start_cluster 1 0 {tags {external:skip cluster hotkeys}} {
         assert_equal 1 $found_slot1
 
         assert_equal {OK} [R 0 hotkeys reset]
+    }
+}
+
+start_cluster 2 0 {tags {external:skip cluster hotkeys}} {
+
+    test {HOTKEYS START - Error: slot not handled by this node} {
+        # In a 2-master cluster, each node handles half the slots.
+        # Node 0 handles slots 0-8191, Node 1 handles slots 8192-16383.
+        # Try to use a slot that belongs to node 1 on node 0.
+        catch {R 0 hotkeys start METRICS 1 CPU SLOTS 1 8192} err
+        assert_match "*slot 8192 not handled by this node*" $err
+        catch {R 1 hotkeys start METRICS 1 CPU SLOTS 1 0} err
+        assert_match "*slot 0 not handled by this node*" $err
+
     }
 }
 

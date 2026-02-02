@@ -11,6 +11,11 @@
             "ADMIN",
             "NOSCRIPT"
         ],
+        "command_tips": [
+            "NONDETERMINISTIC_OUTPUT",
+            "REQUEST_POLICY:SPECIAL",
+            "RESPONSE_POLICY:SPECIAL"
+        ],
         "reply_schema": {
             "oneOf": [
                 {
