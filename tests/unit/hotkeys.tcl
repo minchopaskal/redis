@@ -20,7 +20,7 @@ start_server {tags {external:skip "hotkeys"}} {
         r set key1 value1
         assert_equal {OK} [r hotkeys stop]
 
-        set result [r hotkeys get]
+        set result [lindex [r hotkeys get] 0]
         if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
             set result [hotkeys_array_to_dict $result]
         }
@@ -39,7 +39,7 @@ start_server {tags {external:skip "hotkeys"}} {
         r set key1 value1
         assert_equal {OK} [r hotkeys stop]
 
-        set result [r hotkeys get]
+        set result [lindex [r hotkeys get] 0]
         if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
             set result [hotkeys_array_to_dict $result]
         }
@@ -58,7 +58,7 @@ start_server {tags {external:skip "hotkeys"}} {
         r set key1 value1
         assert_equal {OK} [r hotkeys stop]
 
-        set result [r hotkeys get]
+        set result [lindex [r hotkeys get] 0]
         if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
             set result [hotkeys_array_to_dict $result]
         }
@@ -126,7 +126,7 @@ start_server {tags {external:skip "hotkeys"}} {
 
         assert_equal {OK} [r hotkeys stop]
 
-        set result [r hotkeys get]
+        set result [lindex [r hotkeys get] 0]
         if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
             set result [hotkeys_array_to_dict $result]
         }
@@ -154,7 +154,7 @@ start_server {tags {external:skip "hotkeys"}} {
         assert_equal {OK} [r hotkeys start METRICS 1 CPU DURATION 1]
         after 1500
 
-        set result [r hotkeys get]
+        set result [lindex [r hotkeys get] 0]
         if {[llength $result] > 0 && [lindex $result 0] eq "tracking-active"} {
             set result [hotkeys_array_to_dict $result]
         }
@@ -183,7 +183,7 @@ start_server {tags {external:skip "hotkeys"}} {
         assert_equal {OK} [r hotkeys start METRICS 2 CPU NET]
         assert_equal {OK} [r hotkeys stop]
 
-        set result [r hotkeys get]
+        set result [lindex [r hotkeys get] 0]
         if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
             set result [hotkeys_array_to_dict $result]
         }
@@ -197,7 +197,7 @@ start_server {tags {external:skip "hotkeys"}} {
         assert_equal {OK} [r hotkeys stop]
         assert_equal {OK} [r hotkeys reset]
         # After reset, GET should return nil
-        set result [r hotkeys get]
+        set result [lindex [r hotkeys get] 0]
         assert_equal {} $result
     }
 
@@ -210,7 +210,7 @@ start_server {tags {external:skip "hotkeys"}} {
     }
 
     test {HOTKEYS GET - returns nil when not started} {
-        set result [r hotkeys get]
+        set result [lindex [r hotkeys get] 0]
         assert_equal {} $result
     }
 
@@ -218,7 +218,7 @@ start_server {tags {external:skip "hotkeys"}} {
         assert_equal {OK} [r hotkeys start METRICS 2 CPU NET SAMPLE 5]
         assert_equal {OK} [r hotkeys stop]
 
-        set result [r hotkeys get]
+        set result [lindex [r hotkeys get] 0]
         if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
             set result [hotkeys_array_to_dict $result]
         }
@@ -234,7 +234,7 @@ start_server {tags {external:skip "hotkeys"}} {
         r eval "redis.call('set', 'x', 2)" 1 x
         r eval "redis.call('set', 'x', 3)" 1 x
 
-        set result [r hotkeys get]
+        set result [lindex [r hotkeys get] 0]
         set result [dict get $result "by-net-bytes"]
         assert [dict exists $result "x"]
         assert [dict exists $result "y"]
@@ -260,7 +260,7 @@ start_server {tags {external:skip "hotkeys"}} {
         r exec
 
         assert_equal {OK} [r hotkeys stop]
-        set result [r hotkeys get]
+        set result [lindex [r hotkeys get] 0]
         assert_equal {OK} [r hotkeys reset]
 
         # Check NET metrics
@@ -290,7 +290,7 @@ start_server {tags {external:skip "hotkeys"}} {
         r exec
 
         assert_equal {OK} [r hotkeys stop]
-        set result [r hotkeys get]
+        set result [lindex [r hotkeys get] 0]
         assert_equal {OK} [r hotkeys reset]
 
         # Check NET metrics - both keys should be tracked through EVAL commands
@@ -306,7 +306,7 @@ start_server {tags {external:skip "hotkeys"}} {
         r set key1 value1
         assert_equal {OK} [r hotkeys stop]
 
-        set result [r hotkeys get]
+        set result [lindex [r hotkeys get] 0]
         if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
             set result [hotkeys_array_to_dict $result]
         }
@@ -354,7 +354,7 @@ start_server {tags {external:skip "hotkeys"}} {
 
             assert_equal {OK} [r hotkeys stop]
 
-            set result [r hotkeys get]
+            set result [lindex [r hotkeys get] 0]
             assert_not_equal $result {}
 
             # Convert to dict if it's a flat array
@@ -415,7 +415,7 @@ start_server {tags {external:skip "hotkeys"}} {
         r set testkey testvalue
         assert_equal {OK} [r hotkeys stop]
 
-        set result [r hotkeys get]
+        set result [lindex [r hotkeys get] 0]
 
         # In RESP3, the outer result is a native map (dict)
         assert [dict exists $result "tracking-active"]
@@ -443,6 +443,25 @@ start_server {tags {external:skip "hotkeys"}} {
         set first_val [lindex $net_array 1]
         assert_equal "testkey" $first_key
         assert {[string is integer $first_val]}
+
+        assert_equal {OK} [r hotkeys reset]
+    }
+
+    test {HOTKEYS GET - selected-slots returns full range in non-cluster mode} {
+        assert_equal {OK} [r hotkeys start METRICS 1 CPU]
+        assert_equal {OK} [r hotkeys stop]
+
+        set result [lindex [r hotkeys get] 0]
+        if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
+            set result [hotkeys_array_to_dict $result]
+        }
+        set slots [dict get $result "selected-slots"]
+        # Should return single range [[0, 16383]]
+        assert_equal 1 [llength $slots]
+        set range [lindex $slots 0]
+        assert_equal 2 [llength $range]
+        assert_equal 0 [lindex $range 0]
+        assert_equal 16383 [lindex $range 1]
 
         assert_equal {OK} [r hotkeys reset]
     }
@@ -486,18 +505,57 @@ start_cluster 1 0 {tags {external:skip cluster hotkeys}} {
         assert_match "*Invalid or out of range slot*" $err
     }
 
-    test {HOTKEYS GET - selected-slots field} {
+    test {HOTKEYS GET - selected-slots field with individual slots} {
         assert_equal {OK} [R 0 hotkeys start METRICS 2 CPU NET SLOTS 2 0 5]
         assert_equal {OK} [R 0 hotkeys stop]
 
-        set result [R 0 hotkeys get]
+        set result [lindex [R 0 hotkeys get] 0]
         if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
             set result [hotkeys_array_to_dict $result]
         }
         set slots [dict get $result "selected-slots"]
+        # Two individual slots should return two 1-element arrays
         assert_equal 2 [llength $slots]
-        assert_equal 0 [lindex $slots 0]
-        assert_equal 5 [lindex $slots 1]
+        assert_equal {0} [lindex $slots 0]
+        assert_equal {5} [lindex $slots 1]
+
+        assert_equal {OK} [R 0 hotkeys reset]
+    }
+
+    test {HOTKEYS GET - selected-slots with unordered input slots are sorted} {
+        # Slots 10,5,1,0,6,2 should become [[0,2], [5,6], [10]]
+        assert_equal {OK} [R 0 hotkeys start METRICS 1 CPU SLOTS 6 10 5 1 0 6 2]
+        assert_equal {OK} [R 0 hotkeys stop]
+
+        set result [lindex [R 0 hotkeys get] 0]
+        if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
+            set result [hotkeys_array_to_dict $result]
+        }
+        set slots [dict get $result "selected-slots"]
+        assert_equal 3 [llength $slots]
+        assert_equal {0 2} [lindex $slots 0]
+        assert_equal {5 6} [lindex $slots 1]
+        assert_equal {10} [lindex $slots 2]
+
+        assert_equal {OK} [R 0 hotkeys reset]
+    }
+
+    test {HOTKEYS GET - selected-slots returns node's slot ranges when no SLOTS specified in cluster mode} {
+        # In a 1-node cluster, the node owns all slots [0-16383]
+        assert_equal {OK} [R 0 hotkeys start METRICS 1 CPU]
+        assert_equal {OK} [R 0 hotkeys stop]
+
+        set result [lindex [R 0 hotkeys get] 0]
+        if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
+            set result [hotkeys_array_to_dict $result]
+        }
+        set slots [dict get $result "selected-slots"]
+        # 1-node cluster owns all slots, should return [[0, 16383]]
+        assert_equal 1 [llength $slots]
+        set range [lindex $slots 0]
+        assert_equal 2 [llength $range]
+        assert_equal 0 [lindex $range 0]
+        assert_equal 16383 [lindex $range 1]
 
         assert_equal {OK} [R 0 hotkeys reset]
     }
@@ -507,7 +565,7 @@ start_cluster 1 0 {tags {external:skip cluster hotkeys}} {
         R 0 set "{06S}key1" value1
         assert_equal {OK} [R 0 hotkeys stop]
 
-        set result [R 0 hotkeys get]
+        set result [lindex [R 0 hotkeys get] 0]
         if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
             set result [hotkeys_array_to_dict $result]
         }
@@ -526,7 +584,7 @@ start_cluster 1 0 {tags {external:skip cluster hotkeys}} {
         R 0 set "{06S}key1" value1
         assert_equal {OK} [R 0 hotkeys stop]
 
-        set result [R 0 hotkeys get]
+        set result [lindex [R 0 hotkeys get] 0]
         if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
             set result [hotkeys_array_to_dict $result]
         }
@@ -561,7 +619,7 @@ start_cluster 1 0 {tags {external:skip cluster hotkeys}} {
 
         assert_equal {OK} [R 0 hotkeys stop]
 
-        set result [R 0 hotkeys get]
+        set result [lindex [R 0 hotkeys get] 0]
         if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
             set result [hotkeys_array_to_dict $result]
         }
@@ -600,7 +658,7 @@ start_cluster 1 0 {tags {external:skip cluster hotkeys}} {
 
         assert_equal {OK} [R 0 hotkeys stop]
 
-        set result [R 0 hotkeys get]
+        set result [lindex [R 0 hotkeys get] 0]
         if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
             set result [hotkeys_array_to_dict $result]
         }
@@ -643,7 +701,47 @@ start_cluster 2 0 {tags {external:skip cluster hotkeys}} {
         assert_match "*slot 8192 not handled by this node*" $err
         catch {R 1 hotkeys start METRICS 1 CPU SLOTS 1 0} err
         assert_match "*slot 0 not handled by this node*" $err
+    }
 
+    test {HOTKEYS GET - selected-slots returns each node's slot ranges in multi-node cluster} {
+        # In a 2-master cluster:
+        # Node 0 handles slots 0-8191
+        # Node 1 handles slots 8192-16383
+
+        # Test node 0
+        assert_equal {OK} [R 0 hotkeys start METRICS 1 CPU]
+        assert_equal {OK} [R 0 hotkeys stop]
+
+        set result [lindex [R 0 hotkeys get] 0]
+        if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
+            set result [hotkeys_array_to_dict $result]
+        }
+        set slots [dict get $result "selected-slots"]
+        # Node 0 should return [[0, 8191]]
+        assert_equal 1 [llength $slots]
+        set range [lindex $slots 0]
+        assert_equal 2 [llength $range]
+        assert_equal 0 [lindex $range 0]
+        assert_equal 8191 [lindex $range 1]
+
+        assert_equal {OK} [R 0 hotkeys reset]
+
+        # Test node 1
+        assert_equal {OK} [R 1 hotkeys start METRICS 1 CPU]
+        assert_equal {OK} [R 1 hotkeys stop]
+
+        set result [lindex [R 1 hotkeys get] 0]
+        if {[llength $result] > 0 && [lindex $result 0] ne "tracking-active"} {
+            set result [hotkeys_array_to_dict $result]
+        }
+        set slots [dict get $result "selected-slots"]
+        # Node 1 should return [[8192, 16383]]
+        assert_equal 1 [llength $slots]
+        set range [lindex $slots 0]
+        assert_equal 2 [llength $range]
+        assert_equal 8192 [lindex $range 0]
+        assert_equal 16383 [lindex $range 1]
+
+        assert_equal {OK} [R 1 hotkeys reset]
     }
 }
-
