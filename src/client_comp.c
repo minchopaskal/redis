@@ -131,6 +131,10 @@ void clientDestroyCompressionState(client *c) {
               " (slave)" : "");
 }
 
+/* Enable client compression and create compression state if not present.
+ * Currently only valid for primary/replica clients.
+ * Return 0 if compression state was not created and failed to be initialized,
+ * 1 if compression was enabled. */
 int clientEnableCompression(client *c, compressionDirection dir) {
     if (!clientCreateCompressionState(c, dir)) {
         return 0;
@@ -140,15 +144,17 @@ int clientEnableCompression(client *c, compressionDirection dir) {
     return 1;
 }
 
+/* Disable compression without destroying compression state. If compression was
+ * not initialized does nothing. */
 void clientDisableCompression(client *c) {
     c->io_flags &= ~CLIENT_IO_COMPRESSION_ENABLED;
 }
 
-/* Write any available data in the compressed buffer. If compression_max_latency
- * has passed since last write we flush the buffer so we write to the socket
- * ASAP.
- * Return the number of bytes written to socket. Return -1 on socket error.
- * On decompression error the compression state is destroyed and -1 returned. */
+/* Compress any data send for compression by consumeAndTryWriteCompressed and
+ * write to socket. Zlib may not return compressed data immediately so this
+ * call may not write anything to socket.
+ * Force flushes the compressed buffer according to compression_max_latency.
+ * Return number of bytes written to socket or -1 on socket write error. */
 int compressAndWrite(client *c) {
     if (c->compression_level <= 0)
         return 0;
@@ -222,11 +228,13 @@ int compressAndWrite(client *c) {
     return tot_written;
 }
 
-/* Copy the data we need to send to internal buffers, pass to zlib for
- * compression and try to send as much as possible to the socket. Return how
- * much bytes we read from `data` or -1 on zlib error;
- */
-int consumeAndTryWriteCompressed(client *c, char *data, size_t len,
+/* Consume bytes from the `data` buffer, then try to compress and write to the
+ * client's connection. Zlib may not return compressed data immediately so this
+ * call may not write anything to socket.
+ * Return number of bytes consumed from `data`. `nwritten` must be a valid
+ * pointer - it is incremented by the number of bytes written to socket or set
+ * to -1 on socket write error. */
+int consumeAndTryWriteCompressed(client *c, const char *data, size_t len,
                                  ssize_t *nwritten) {
     serverAssert(nwritten);
 
@@ -343,16 +351,24 @@ int decompressInto(client *c, char *buf, size_t buflen) {
     return consumed;
 }
 
-int readFromSocketAndDecompress(client *c, char *buf, size_t buflen, int *tot_read) {
+/* Read data from client connection and decompress it immediately. The result is
+ * written into buf.
+ * Return number of bytes decompressed. *nread stores number of bytes read from
+ * the socket or -1 on socket read error.
+ * Note, that we may have enough compressed data on the socket that decompressing
+ * it will exceed buflen. To handle decompressed data without readQueryFromClient
+ * being called from a read handler, the readQueryFromClient is called in an
+ * IO-thread cron with the client->flag & CLIENT_IO_READ_DECOMPRESSED_CRON. With
+ * that flag raised we don't read from socket - we only read any available
+ * decompressed data. */
+int readFromSocketAndDecompress(client *c, char *buf, size_t buflen, int *net_read) {
     compressionState *state = c->compression_state;
-    if (!state) {
-        *tot_read = -1;
-        return -1;
-    }
 
     int tot_decompressed = 0;
-    *tot_read = 0;
 
+    /* Defaulting to -1 since we first try to decompress any available data.
+     * If anything fails -1 indicates we haven't read anything from socket. */
+    *net_read = -1;
     if (c->io_flags & CLIENT_IO_READ_DECOMPRESSED_CRON &&
         (state->zlib.next_out - (state->uncompressed.data + state->uncompressed.used) <= 0))
     {
@@ -362,7 +378,6 @@ int readFromSocketAndDecompress(client *c, char *buf, size_t buflen, int *tot_re
     /* Try to read any available decompressed data */
     int written = decompressInto(c, buf, buflen);
     if (written == -1) {
-        *tot_read = -1;
         return -1;
     }
     tot_decompressed += written;
@@ -375,6 +390,9 @@ int readFromSocketAndDecompress(client *c, char *buf, size_t buflen, int *tot_re
         return tot_decompressed;
     }
 
+    /* Now we start reading from socket so reset to 0 in order to properly count
+     * how many bytes were read. */
+    *net_read = 0;
     do {
         /* Read data from socket and save it inside the compressed buffer */
         int nread =
@@ -382,11 +400,8 @@ int readFromSocketAndDecompress(client *c, char *buf, size_t buflen, int *tot_re
                     ZLIB_TEMP_BUF_SIZE - state->compressed.used);
 
         if (nread <= 0) {
-            if (nread < 0 && c->conn->state == CONN_STATE_ERROR) {
+            if (nread < 0 && connGetState(c->conn) == CONN_STATE_ERROR) {
                 serverLog(LL_NOTICE, "Compressed read error: %s", strerror(errno));
-                clientDestroyCompressionState(c);
-                freeClientAsync(c);
-                *tot_read = -1;
                 return -1;
             }
 
@@ -404,7 +419,7 @@ int readFromSocketAndDecompress(client *c, char *buf, size_t buflen, int *tot_re
 
         state->compressed.used += nread;
         state->zlib.avail_in += nread;
-        *tot_read += nread;
+        *net_read += nread;
 
         int decompressed = decompressInto(c, buf + tot_decompressed,
                                           buflen - tot_decompressed);
@@ -413,12 +428,14 @@ int readFromSocketAndDecompress(client *c, char *buf, size_t buflen, int *tot_re
         tot_decompressed += decompressed;
     } while ((size_t)tot_decompressed < buflen && state->zlib.avail_in > 0);
 
-    if (*tot_read == 0 && c->conn->state == CONN_STATE_CONNECTED)
-        *tot_read = -1;
+    if (*net_read == 0 && c->conn->state == CONN_STATE_CONNECTED)
+        *net_read = -1;
 
     return tot_decompressed;
 }
 
+/* Same as readFromSocketAndDecompress but reads from `input_buf` instead of
+ * socket. */
 int readFromBufAndDecompress(struct client *c, char *input_buf, size_t input_len,
                              char *output_buf, size_t output_len, size_t *consumed)
 {

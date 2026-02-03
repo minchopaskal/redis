@@ -2606,6 +2606,37 @@ static inline int _writeToClientNonSlave(client *c, ssize_t *nwritten) {
     return C_OK;
 }
 
+static inline int _writeToClientSlaveIOThread(client *c, ssize_t *nwritten) {
+    replBufBlock *o = listNodeValue(c->io_curr_repl_node);
+    /* The IO thread must not send data beyond the bound position. */
+    size_t pos = c->io_curr_repl_node == c->io_bound_repl_node ?
+                 c->io_bound_block_pos : o->used;
+    if (pos > c->io_curr_block_pos) {
+        int consumed = 0;
+        if (c->compression_state && c->io_flags & CLIENT_IO_COMPRESSION_ENABLED) {
+            consumed = consumeAndTryWriteCompressed(c, o->buf + c->io_curr_block_pos,
+                                                    pos-c->io_curr_block_pos, nwritten);
+        } else {
+            consumed = connWrite(c->conn, o->buf+c->io_curr_block_pos,
+                                pos-c->io_curr_block_pos);
+            *nwritten += consumed;
+        }
+        if (consumed <= 0) return C_ERR;
+
+        /* Advance the block position with consumed, because that's how much
+         * bytes were read from the repl buffer node. *nwritten stores how
+         * much bytes were written to the socket, which for the compression
+         * case would most certainly be a different number. */
+        c->io_curr_block_pos += consumed;
+    }
+    /* If we fully sent the object and there are more nodes to send, go to the next one. */
+    if (c->io_curr_block_pos == pos && c->io_curr_repl_node != c->io_bound_repl_node) {
+        c->io_curr_repl_node = listNextNode(c->io_curr_repl_node);
+        c->io_curr_block_pos = 0;
+    }
+    return C_OK;
+}
+
 /* This function does actual writing output buffers for slave client types,
  * it is called by writeToClient.
  * If we write successfully, it returns C_OK, otherwise, C_ERR is returned,
@@ -2616,34 +2647,7 @@ static inline int _writeToClientSlave(client *c, ssize_t *nwritten) {
     serverAssert(c->bufpos == 0 && listLength(c->reply) == 0);
 
     if (c->running_tid != IOTHREAD_MAIN_THREAD_ID) {
-        replBufBlock *o = listNodeValue(c->io_curr_repl_node);
-        /* The IO thread must not send data beyond the bound position. */
-        size_t pos = c->io_curr_repl_node == c->io_bound_repl_node ?
-                     c->io_bound_block_pos : o->used;
-        if (pos > c->io_curr_block_pos) {
-            int consumed = 0;
-            if (c->compression_state && c->io_flags & CLIENT_IO_COMPRESSION_ENABLED) {
-                consumed = consumeAndTryWriteCompressed(c, o->buf + c->io_curr_block_pos,
-                                                        pos-c->io_curr_block_pos, nwritten);
-            } else {
-                consumed = connWrite(c->conn, o->buf+c->io_curr_block_pos,
-                                    pos-c->io_curr_block_pos);
-                *nwritten += consumed;
-            }
-            if (consumed <= 0) return C_ERR;
-
-            /* Advance the block position with consumed, because that's how much
-             * bytes were read from the repl buffer node. *nwritten stores how
-             * much bytes were written to the socket, which for the compression
-             * case would most certainly be a different number. */
-            c->io_curr_block_pos += consumed;
-        }
-        /* If we fully sent the object and there are more nodes to send, go to the next one. */
-        if (c->io_curr_block_pos == pos && c->io_curr_repl_node != c->io_bound_repl_node) {
-            c->io_curr_repl_node = listNextNode(c->io_curr_repl_node);
-            c->io_curr_block_pos = 0;
-        }
-        return C_OK;
+        return _writeToClientSlaveIOThread(c, nwritten);
     }
 
     replBufBlock *o = listNodeValue(c->ref_repl_buf_node);
@@ -3718,10 +3722,6 @@ void readQueryFromClient(connection *conn) {
         atomicSetWithSync(c->pending_read, 0);
     }
 
-    if (!(c->io_flags & CLIENT_IO_READ_ENABLED)) return;
-    if (pending_compression_read) {
-        return;
-    }
     c->read_error = 0;
 
     /* Update the number of reads of io threads on server */
@@ -3805,21 +3805,15 @@ void readQueryFromClient(connection *conn) {
     if (c->compression_state && c->flags & CLIENT_MASTER) {
         nread = readFromSocketAndDecompress(c, c->querybuf + qblen, readlen,
                                             &network_read);
-
-        /* Ignore network_read when only reading decompressed data as we never
-         * read from socket.
-         * We only care if we actually had any decompressed data to read */
-        if (c->io_flags & CLIENT_IO_READ_DECOMPRESSED_CRON) {
-            if (nread <= 0) {
-                goto done;
-            }
-        }
     } else {
         nread = connRead(c->conn, c->querybuf+qblen, readlen);
         network_read = nread;
     }
 
-    if (nread <= 0) {
+    if (network_read <= 0) {
+        if (c->io_flags & CLIENT_IO_READ_DECOMPRESSED_CRON)
+            goto done;
+
         if (network_read == -1) {
             if (connGetState(conn) == CONN_STATE_CONNECTED) {
                 goto done;
@@ -3854,7 +3848,7 @@ void readQueryFromClient(connection *conn) {
             /* Same comment as for c->io_lastinteraction */
             c->io_read_reploff += nread;
         }
-        atomicIncr(server.stat_net_repl_input_bytes, nread);
+        atomicIncr(server.stat_net_repl_input_bytes, network_read);
     } else {
         atomicIncr(server.stat_net_input_bytes, network_read);
     }
