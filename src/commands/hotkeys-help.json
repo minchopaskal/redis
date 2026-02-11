@@ -8,8 +8,8 @@
         "container": "HOTKEYS",
         "function": "hotkeysCommand",
         "command_flags": [
-            "ADMIN",
-            "NOSCRIPT"
+            "LOADING",
+            "STALE"
         ],
         "reply_schema": {
             "type": "array",
