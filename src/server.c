@@ -6725,9 +6725,9 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
     {
         if (sections++) info = sdscat(info,"\r\n"); 
 
+        info = sdscatprintf(info, "# Hotkeys\r\n");
         if (server.hotkeys) {
             info = sdscatprintf(info,
-                "# Hotkeys\r\n"
                 "hotkeys-tracking-active:%d\r\n"
                 "hotkeys-cmd-cpu-time:%lld\r\n",
                 server.hotkeys->active ? 1 : 0,
