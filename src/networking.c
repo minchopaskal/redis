@@ -3810,7 +3810,7 @@ void readQueryFromClient(connection *conn) {
         network_read = nread;
     }
 
-    if (network_read <= 0) {
+    if (nread <= 0) {
         if (c->io_flags & CLIENT_IO_READ_DECOMPRESSED_CRON)
             goto done;
 
