@@ -892,11 +892,14 @@ void IOThreadCompressionCron(IOThread *t) {
         if (c->io_flags & CLIENT_IO_CLOSE_ASAP) continue;
         serverAssert(c->compression_state);
 
-        /* Usually writeCompressed will be called at the end of compressAndWrite
-         * but when compression maximum latency ms have passed we want to force
-         * flush to the compression buffer so we don't have much delays between
-         * writes to the socket */
-        if (c->flags & CLIENT_SLAVE) {
+        /* Usually compressAndWrite will be called at the end of
+         * consumeAndTryWriteCompressed but when compression maximum latency ms
+         * have passed we want to force flush to the compression buffer so we
+         * don't have much delays between writes to the socket */
+        if (clientHasPendingCompressionFlush(c)) {
+            /* Only master/replica clients support client compression for now. */
+            serverAssert(c->flags & CLIENT_SLAVE);
+
             int nwritten = compressAndWrite(c);
             if (nwritten < 0) {
                 if (connGetState(c->conn) != CONN_STATE_CONNECTED)
@@ -908,10 +911,9 @@ void IOThreadCompressionCron(IOThread *t) {
                 c->net_output_bytes += nwritten;
                 atomicIncr(server.stat_net_repl_output_bytes, nwritten);
             }
-        } else {
+        } else if (clientHasPendingCompressedData(c)) {
             /* Only master/replica clients support client compression for now. */
             serverAssert(c->flags & CLIENT_MASTER);
-
             c->io_flags |= CLIENT_IO_READ_DECOMPRESSED_CRON;
             readQueryFromClient(c->conn);
             c->io_flags &= ~CLIENT_IO_READ_DECOMPRESSED_CRON;

@@ -399,15 +399,9 @@ int readFromSocketAndDecompress(client *c, char *buf, size_t buflen, int *net_re
             connRead(c->conn, state->compressed.data + state->compressed.used,
                     ZLIB_TEMP_BUF_SIZE - state->compressed.used);
 
-        if (nread <= 0) {
-            if (nread < 0 && connGetState(c->conn) == CONN_STATE_ERROR) {
-                serverLog(LL_NOTICE, "Compressed read error: %s", strerror(errno));
-                return -1;
-            }
-
-            /* If no error just continue - we may have some more data to
-             * decompress even if the connection was closed. */
-            nread = 0;
+        if (nread < 0 && connGetState(c->conn) == CONN_STATE_ERROR) {
+            serverLog(LL_NOTICE, "Compressed read error: %s", strerror(errno));
+            return -1;
         }
 
         // if (nread > 0) {
@@ -417,9 +411,12 @@ int readFromSocketAndDecompress(client *c, char *buf, size_t buflen, int *net_re
         //     printf("\nNREAD: %s\n", buf);
         // }
 
-        state->compressed.used += nread;
-        state->zlib.avail_in += nread;
-        *net_read += nread;
+        /* We can continue decompressing in case of non-fatal error */
+        if (nread > 0) {
+            state->compressed.used += nread;
+            state->zlib.avail_in += nread;
+            *net_read += nread;
+        }
 
         int decompressed = decompressInto(c, buf + tot_decompressed,
                                           buflen - tot_decompressed);
@@ -428,7 +425,9 @@ int readFromSocketAndDecompress(client *c, char *buf, size_t buflen, int *net_re
         tot_decompressed += decompressed;
     } while ((size_t)tot_decompressed < buflen && state->zlib.avail_in > 0);
 
-    if (*net_read == 0 && c->conn->state == CONN_STATE_CONNECTED)
+    /* connRead may return -1 with EAGAIN in which case *net_read will not be
+     * updated. We strive to return the same as connRead so we fix it here. */
+    if (*net_read == 0 && connGetState(c->conn) == CONN_STATE_CONNECTED)
         *net_read = -1;
 
     return tot_decompressed;
@@ -436,7 +435,7 @@ int readFromSocketAndDecompress(client *c, char *buf, size_t buflen, int *net_re
 
 /* Same as readFromSocketAndDecompress but reads from `input_buf` instead of
  * socket. */
-int readFromBufAndDecompress(struct client *c, char *input_buf, size_t input_len,
+int readFromBufAndDecompress(client *c, char *input_buf, size_t input_len,
                              char *output_buf, size_t output_len, size_t *consumed)
 {
     compressionState *state = c->compression_state;
@@ -468,5 +467,23 @@ int readFromBufAndDecompress(struct client *c, char *input_buf, size_t input_len
 
     return tot_decompressed;
 
+}
+
+int clientHasPendingCompressionFlush(client *c) {
+    compressionState *state = c->compression_state;
+    if (!state) return 0;
+    if (!state->deflate_inited) return 0;
+
+    // return state->zlib.avail_out > 0 || (state->zlib.next_out - (state->compressed.data + state->compressed.used) > 0);
+    return mstime() - state->last_write >= server.compression_max_latency;
+}
+
+int clientHasPendingCompressedData(client *c) {
+    compressionState *state = c->compression_state;
+    if (!state) return 0;
+    if (!state->inflate_inited) return 0;
+
+    return state->zlib.avail_in > 0 ||
+           state->zlib.next_out > state->uncompressed.data + state->uncompressed.used;
 }
 
