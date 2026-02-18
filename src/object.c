@@ -1180,11 +1180,19 @@ int getRangeLongFromObjectOrReply(client *c, robj *o, long min, long max, long *
     return C_OK;
 }
 
-int getPositiveLongFromObjectOrReply(client *c, robj *o, long *target, const char *msg) {
+int getNonNegativeLongFromObjectOrReply(client *c, robj *o, long *target, const char *msg) {
     if (msg) {
         return getRangeLongFromObjectOrReply(c, o, 0, LONG_MAX, target, msg);
     } else {
-        return getRangeLongFromObjectOrReply(c, o, 0, LONG_MAX, target, "value is out of range, must be positive");
+        return getRangeLongFromObjectOrReply(c, o, 0, LONG_MAX, target, "value is out of range, can't be negative");
+    }
+}
+
+int getPositiveLongFromObjectOrReply(client *c, robj *o, long *target, const char *msg) {
+    if (msg) {
+        return getRangeLongFromObjectOrReply(c, o, 1, LONG_MAX, target, msg);
+    } else {
+        return getRangeLongFromObjectOrReply(c, o, 1, LONG_MAX, target, "value is out of range, must be positive");
     }
 }
 

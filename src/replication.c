@@ -4726,7 +4726,7 @@ void waitaofCommand(client *c) {
     /* Argument parsing. */
     if (getRangeLongFromObjectOrReply(c,c->argv[1],0,1,&numlocal,NULL) != C_OK)
         return;
-    if (getPositiveLongFromObjectOrReply(c,c->argv[2],&numreplicas,NULL) != C_OK)
+    if (getNonNegativeLongFromObjectOrReply(c,c->argv[2],&numreplicas,NULL) != C_OK)
         return;
     if (getTimeoutFromObjectOrReply(c,c->argv[3],&timeout,UNIT_MILLISECONDS) != C_OK)
         return;

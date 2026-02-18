@@ -163,6 +163,7 @@ robj *createZsetListpackObject(void);
 robj *createStreamObject(void);
 robj *createModuleObject(struct RedisModuleType *mt, void *value);
 int getLongFromObjectOrReply(struct client *c, robj *o, long *target, const char *msg);
+int getNonNegativeLongFromObjectOrReply(struct client *c, robj *o, long *target, const char *msg);
 int getPositiveLongFromObjectOrReply(struct client *c, robj *o, long *target, const char *msg);
 int getRangeLongFromObjectOrReply(struct client *c, robj *o, long min, long max, long *target, const char *msg);
 int checkType(struct client *c, robj *o, int type);

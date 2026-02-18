@@ -2975,7 +2975,7 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
                        !strcasecmp(c->argv[j]->ptr, "limit"))
             {
                 j++; remaining--;
-                if (getPositiveLongFromObjectOrReply(c, c->argv[j], &limit,
+                if (getNonNegativeLongFromObjectOrReply(c, c->argv[j], &limit,
                                                      "LIMIT can't be negative") != C_OK)
                 {
                     zfree(src);
@@ -4363,7 +4363,7 @@ void zpopMinMaxCommand(client *c, int where) {
     }
 
     long count = -1; /* -1 for plain single pop. */
-    if (c->argc == 3 && getPositiveLongFromObjectOrReply(c, c->argv[2], &count, NULL) != C_OK)
+    if (c->argc == 3 && getNonNegativeLongFromObjectOrReply(c, c->argv[2], &count, NULL) != C_OK)
         return;
 
     /* Respond with a single (flat) array in RESP2 or if count is -1
@@ -4749,8 +4749,8 @@ void zmpopGenericCommand(client *c, int numkeys_idx, int is_block) {
     long count = -1;       /* Reply will consist of up to count elements, depending on the zset's length. */
 
     /* Parse the numkeys. */
-    if (getRangeLongFromObjectOrReply(c, c->argv[numkeys_idx], 1, LONG_MAX,
-                                      &numkeys, "numkeys should be greater than 0") != C_OK)
+    if (getPositiveLongFromObjectOrReply(c, c->argv[numkeys_idx], &numkeys,
+                                         "numkeys should be greater than 0") != C_OK)
         return;
 
     /* Parse the where. where_idx: the index of where in the c->argv. */
@@ -4775,8 +4775,8 @@ void zmpopGenericCommand(client *c, int numkeys_idx, int is_block) {
 
         if (count == -1 && !strcasecmp(opt, "COUNT") && moreargs) {
             j++;
-            if (getRangeLongFromObjectOrReply(c, c->argv[j], 1, LONG_MAX,
-                                              &count,"count should be greater than 0") != C_OK)
+            if (getPositiveLongFromObjectOrReply(c, c->argv[j], &count,
+                                                 "count should be greater than 0") != C_OK)
                 return;
         } else {
             addReplyErrorObject(c, shared.syntaxerr);

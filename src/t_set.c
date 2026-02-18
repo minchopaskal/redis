@@ -826,7 +826,7 @@ void spopWithCountCommand(client *c) {
     size_t oldsize = 0;
 
     /* Get the count argument */
-    if (getPositiveLongFromObjectOrReply(c,c->argv[2],&l,NULL) != C_OK) return;
+    if (getNonNegativeLongFromObjectOrReply(c,c->argv[2],&l,NULL) != C_OK) return;
     count = (unsigned long) l;
 
     /* Make sure a key with the name inputted exists, and that it's type is
@@ -1601,8 +1601,8 @@ void sinterCardCommand(client *c) {
     long numkeys = 0; /* Number of keys. */
     long limit = 0;   /* 0 means not limit. */
 
-    if (getRangeLongFromObjectOrReply(c, c->argv[1], 1, LONG_MAX,
-                                      &numkeys, "numkeys should be greater than 0") != C_OK)
+    if (getPositiveLongFromObjectOrReply(c, c->argv[1], &numkeys,
+                                         "numkeys should be greater than 0") != C_OK)
         return;
     if (numkeys > (c->argc - 2)) {
         addReplyError(c, "Number of keys can't be greater than number of args");
@@ -1615,7 +1615,7 @@ void sinterCardCommand(client *c) {
 
         if (!strcasecmp(opt, "LIMIT") && moreargs) {
             j++;
-            if (getPositiveLongFromObjectOrReply(c, c->argv[j], &limit,
+            if (getNonNegativeLongFromObjectOrReply(c, c->argv[j], &limit,
                                                  "LIMIT can't be negative") != C_OK)
                 return;
         } else {

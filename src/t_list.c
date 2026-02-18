@@ -819,7 +819,7 @@ void popGenericCommand(client *c, int where) {
         return;
     } else if (hascount) {
         /* Parse the optional count argument. */
-        if (getPositiveLongFromObjectOrReply(c,c->argv[2],&count,NULL) != C_OK) 
+        if (getNonNegativeLongFromObjectOrReply(c,c->argv[2],&count,NULL) != C_OK) 
             return;
     }
 
@@ -1025,12 +1025,12 @@ void lposCommand(client *c) {
             }
         } else if (!strcasecmp(opt,"COUNT") && moreargs) {
             j++;
-            if (getPositiveLongFromObjectOrReply(c, c->argv[j], &count,
+            if (getNonNegativeLongFromObjectOrReply(c, c->argv[j], &count,
               "COUNT can't be negative") != C_OK)
                 return;
         } else if (!strcasecmp(opt,"MAXLEN") && moreargs) {
             j++;
-            if (getPositiveLongFromObjectOrReply(c, c->argv[j], &maxlen, 
+            if (getNonNegativeLongFromObjectOrReply(c, c->argv[j], &maxlen, 
               "MAXLEN can't be negative") != C_OK)
                 return;
         } else {
@@ -1419,8 +1419,8 @@ void lmpopGenericCommand(client *c, int numkeys_idx, int is_block) {
     long count = -1;       /* Reply will consist of up to count elements, depending on the list's length. */
 
     /* Parse the numkeys. */
-    if (getRangeLongFromObjectOrReply(c, c->argv[numkeys_idx], 1, LONG_MAX,
-                                      &numkeys, "numkeys should be greater than 0") != C_OK)
+    if (getPositiveLongFromObjectOrReply(c, c->argv[numkeys_idx],
+                                         &numkeys, "numkeys should be greater than 0") != C_OK)
         return;
 
     /* Parse the where. where_idx: the index of where in the c->argv. */
@@ -1439,8 +1439,8 @@ void lmpopGenericCommand(client *c, int numkeys_idx, int is_block) {
 
         if (count == -1 && !strcasecmp(opt, "COUNT") && moreargs) {
             j++;
-            if (getRangeLongFromObjectOrReply(c, c->argv[j], 1, LONG_MAX,
-                                              &count,"count should be greater than 0") != C_OK)
+            if (getPositiveLongFromObjectOrReply(c, c->argv[j], &count,
+                                                 "count should be greater than 0") != C_OK)
                 return;
         } else {
             addReplyErrorObject(c, shared.syntaxerr);

@@ -1224,8 +1224,8 @@ static int streamParseAckDelArgsOrReply(client *c, int start_pos, streamAckDelAr
             j++;
         } else if (!strcasecmp(opt, "IDS") && j+1 < c->argc) {
             /* Parse the number of IDs */
-            if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 1, LONG_MAX,
-                &args->numids, "Number of IDs must be a positive integer") != C_OK)
+            if (getPositiveLongFromObjectOrReply(c, c->argv[j+1], &args->numids,
+                "Number of IDs must be a positive integer") != C_OK)
             {
                 return 0;
             }

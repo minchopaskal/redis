@@ -2690,8 +2690,8 @@ void hgetdelCommand(client *c) {
     }
 
     /* Read number of fields */
-    if (getRangeLongFromObjectOrReply(c, c->argv[3], 1, LONG_MAX, &num_fields,
-                                      "Number of fields must be a positive integer") != C_OK)
+    if (getPositiveLongFromObjectOrReply(c, c->argv[3], &num_fields,
+                                         "Number of fields must be a positive integer") != C_OK)
         return;
 
     /* Verify `numFields` is consistent with number of arguments */
@@ -3644,8 +3644,8 @@ static void httlGenericCommand(client *c, const char *cmd, long long basetime, i
     }
 
     /* Read number of fields */
-    if (getRangeLongFromObjectOrReply(c, c->argv[numFieldsAt], 1, LONG_MAX,
-                                      &numFields, "Number of fields must be a positive integer") != C_OK)
+    if (getPositiveLongFromObjectOrReply(c, c->argv[numFieldsAt], &numFields,
+                                         "Number of fields must be a positive integer") != C_OK)
         return;
 
     /* Verify `numFields` is consistent with number of arguments */
@@ -3959,8 +3959,8 @@ void hpersistCommand(client *c) {
     }
 
     /* Read number of fields */
-    if (getRangeLongFromObjectOrReply(c, c->argv[numFieldsAt], 1, LONG_MAX,
-                                      &numFields, "Number of fields must be a positive integer") != C_OK)
+    if (getPositiveLongFromObjectOrReply(c, c->argv[numFieldsAt], &numFields,
+                                         "Number of fields must be a positive integer") != C_OK)
         return;
 
     /* Verify `numFields` is consistent with number of arguments */

@@ -754,7 +754,7 @@ NULL
         robj *key, *val;
         char buf[128];
 
-        if (getPositiveLongFromObjectOrReply(c, c->argv[2], &keys, NULL) != C_OK)
+        if (getNonNegativeLongFromObjectOrReply(c, c->argv[2], &keys, NULL) != C_OK)
             return;
 
         if (server.loading || server.async_loading) {
@@ -767,7 +767,7 @@ NULL
             return;
         }
         long valsize = 0;
-        if ( c->argc == 5 && getPositiveLongFromObjectOrReply(c, c->argv[4], &valsize, NULL) != C_OK ) 
+        if ( c->argc == 5 && getNonNegativeLongFromObjectOrReply(c, c->argv[4], &valsize, NULL) != C_OK ) 
             return;
 
         for (j = 0; j < keys; j++) {
