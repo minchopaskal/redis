@@ -2,6 +2,7 @@
 #include "client_comp.h"
 #include <zlib.h>
 
+/* Main compression state struct */
 #define ZLIB_TEMP_BUF_SIZE 16 * 1024
 
 typedef struct {
@@ -16,9 +17,283 @@ struct compressionState {
     z_stream zlib;        /* Zlib state */
     mstime_t last_write;  /* Time since last write. Used to check if it's time
                            * to flush the buffer */
-    int inflate_inited;
-    int deflate_inited;
+    compressionDirection dir;
 };
+
+/* Compression connection */
+typedef struct compressionConnection {
+    connection base;
+    connection *underlying;
+    listNode *pending_list_node;
+    size_t last_read;
+    int handle_pending;
+} compressionConnection;
+
+int decompressInto(compressionState *state, char *buf, size_t buflen);
+
+int connCompressionRead(struct connection *conn, void *buf, size_t buf_len) {
+    compressionConnection *cc = (compressionConnection*)conn;
+    client *c = connGetPrivateData(conn);
+    compressionState *state = c->compression_state;
+    if (!state || state->dir != DECOMPRESS)
+        return connRead(cc->underlying, buf, buf_len);
+
+    cc->last_read = 0;
+    size_t decompressed = 0;
+    do {
+        int curr = decompressInto(state, (char*)buf + decompressed, buf_len - decompressed);
+        /* Decompression error, we should close the connection */
+        if (curr < 0) {
+            cc->underlying->state = CONN_STATE_CLOSED;
+            break;
+        }
+        decompressed += curr;
+
+        int nread = 0;
+        if (!cc->handle_pending) {
+            nread = cc->underlying->type->read(
+                cc->underlying,
+                state->compressed.data + state->compressed.used,
+                ZLIB_TEMP_BUF_SIZE - state->compressed.used);
+
+            if (nread > 0) {
+                char *buf = zmalloc(nread + 1);
+                memcpy(buf, state->compressed.data+state->compressed.used, nread);
+                buf[nread] = 0;
+                printf("\nNREAD: %s\n", buf);
+                zfree(buf);
+            }
+
+            if (nread < 0 && connGetState(cc->underlying) == CONN_STATE_ERROR) {
+                cc->last_read = -1;
+                return -1;
+            }
+            /* Even if nread == 0 we continue the loop until decompressInto has
+             * nothing more it can do. */
+            if (nread > 0) {
+                cc->last_read += nread;
+                state->compressed.used += nread;
+                state->zlib.avail_in += nread;
+            }
+        }
+
+        if (curr <= 0 && nread <= 0) break;
+    } while (decompressed <= buf_len);
+
+    if (decompressed == 0 && connGetState(cc->underlying) == CONN_STATE_CONNECTED)
+        return -1;
+
+    return decompressed;
+}
+
+static const char *connCompressionGetType(connection *conn) {
+    UNUSED(conn);
+    return CONN_TYPE_COMPRESSION;
+}
+
+static void connCompressionAeHandler(aeEventLoop *el, int fd, void *clientData, int mask) {
+    compressionConnection *cc = (compressionConnection *)clientData;
+    cc->underlying->type->ae_handler(el, fd, clientData, mask);
+}
+
+static int connCompressionAddr(connection *conn, char *ip, size_t ip_len, int *port, int remote) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->type->addr(cc->underlying, ip, ip_len, port, remote);
+}
+
+static int connCompressionIsLocal(connection *conn) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->type->is_local(cc->underlying);
+}
+
+static void connCompressionShutdown(connection *conn) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    cc->underlying->type->shutdown(cc->underlying);
+}
+
+static void connCompressionClose(connection *conn) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    if (cc->pending_list_node) {
+        list *l = cc->underlying->el->privdata[2];
+        if (l) listDelNode(l, cc->pending_list_node);
+    }
+    cc->underlying->type->close(cc->underlying);
+    zfree(conn);
+}
+
+static int connCompressionConnect(connection *conn, const char *addr, int port, const char *source_addr, ConnectionCallbackFunc connect_handler) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->type->connect(cc->underlying, addr, port, source_addr, connect_handler);
+}
+
+static int connCompressionBlockingConnect(connection *conn, const char *addr, int port, long long timeout) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->type->blocking_connect(cc->underlying, addr, port, timeout);
+}
+
+static int connCompressionAccept(connection *conn, ConnectionCallbackFunc accept_handler) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->type->accept(cc->underlying, accept_handler);
+}
+
+static int connCompressionWrite(connection *conn, const void *data, size_t data_len) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->type->write(cc->underlying, data, data_len);
+}
+
+static int connCompressionWritev(connection *conn, const struct iovec *iov, int iovcnt) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->type->writev(cc->underlying, iov, iovcnt);
+}
+
+static int connCompressionSetWriteHandler(connection *conn, ConnectionCallbackFunc handler, int barrier) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->type->set_write_handler(cc->underlying, handler, barrier);
+}
+
+static int connCompressionSetReadHandler(connection *conn, ConnectionCallbackFunc handler) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->type->set_read_handler(cc->underlying, handler);
+}
+
+static const char *connCompressionGetLastError(connection *conn) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->type->get_last_error(cc->underlying);
+}
+
+static ssize_t connCompressionSyncWrite(connection *conn, char *ptr, ssize_t size, long long timeout) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->type->sync_write(cc->underlying, ptr, size, timeout);
+}
+
+static ssize_t connCompressionSyncRead(connection *conn, char *ptr, ssize_t size, long long timeout) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->type->sync_read(cc->underlying, ptr, size, timeout);
+}
+
+static ssize_t connCompressionSyncReadLine(connection *conn, char *ptr, ssize_t size, long long timeout) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->type->sync_readline(cc->underlying, ptr, size, timeout);
+}
+
+static size_t connCompressionGetLastRead(connection *conn) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->last_read;
+}
+
+static int connCompressionRebindEventLoop(connection *conn, aeEventLoop *el) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->type->rebind_event_loop(cc->underlying, el);
+}
+
+static aeEventLoop *connCompressionGetEventLoop(connection *conn) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->el;
+}
+
+static void connCompressionUnsetEventLoop(connection *conn) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    cc->underlying->el = NULL;
+}
+
+static int connCompressionGetFd(connection *conn) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->fd;
+}
+
+static int connCompressionGetIovcnt(connection *conn) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->iovcnt;
+}
+
+static int connCompressionGetState(connection *conn) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->state;
+}
+
+static int connCompressionGetLastErrno(connection *conn) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->last_errno;
+}
+
+static int connCompressionHasReadHandler(connection *conn) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->read_handler != NULL;
+}
+
+static int connCompressionHasWriteHandler(connection *conn) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->write_handler != NULL;
+}
+
+static void connCompressionSetPrivateData(connection *conn, void *data) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    cc->underlying->private_data = data;
+}
+
+static void *connCompressionGetPrivateData(connection *conn) {
+    compressionConnection *cc = (compressionConnection *)conn;
+    return cc->underlying->private_data;
+}
+
+/* Compression connection */
+static ConnectionType CT_Compression = {
+    /* connection type */
+    .get_type = connCompressionGetType,
+
+    /* ae & accept & listen & error & address handler */
+    .ae_handler = connCompressionAeHandler,
+    .addr = connCompressionAddr,
+    .is_local = connCompressionIsLocal,
+
+    /* shutdown/close connection */
+    .shutdown = connCompressionShutdown,
+    .close = connCompressionClose,
+
+    /* connect & accept */
+    .connect = connCompressionConnect,
+    .blocking_connect = connCompressionBlockingConnect,
+    .accept = connCompressionAccept,
+
+    /* event loop */
+    .unbind_event_loop = NULL,
+    .rebind_event_loop = connCompressionRebindEventLoop,
+
+    /* IO */
+    .read = connCompressionRead,
+    .write = connCompressionWrite,
+    .writev = connCompressionWritev,
+    .set_write_handler = connCompressionSetWriteHandler,
+    .set_read_handler = connCompressionSetReadHandler,
+    .get_last_error = connCompressionGetLastError,
+    .sync_write = connCompressionSyncWrite,
+    .sync_read = connCompressionSyncRead,
+    .sync_readline = connCompressionSyncReadLine,
+    .get_last_read = connCompressionGetLastRead,
+
+    /* pending data */
+    .has_pending_data = NULL,
+    .process_pending_data = NULL,
+
+    .get_peer_cert = NULL,
+    .get_peer_username = NULL,
+
+    /* connection accessors */
+    .get_event_loop = connCompressionGetEventLoop,
+    .unset_event_loop = connCompressionUnsetEventLoop,
+    .get_fd = connCompressionGetFd,
+    .get_iovcnt = connCompressionGetIovcnt,
+    .get_state = connCompressionGetState,
+    .get_last_errno = connCompressionGetLastErrno,
+    .has_read_handler = connCompressionHasReadHandler,
+    .has_write_handler = connCompressionHasWriteHandler,
+    .set_private_data = connCompressionSetPrivateData,
+    .get_private_data = connCompressionGetPrivateData,
+};
+
+int RedisRegisterConnectionTypeCompression(void) {
+    return connTypeRegister(&CT_Compression);
+}
 
 static void *zlib_alloc_wrapper(void *opaque, unsigned int items,
                                 unsigned int size) {
@@ -39,7 +314,7 @@ int compressionStateCreate(client *c) {
     st->zlib.zfree = zlib_free_wrapper;
 
     st->last_write = 0;
-    st->inflate_inited = st->deflate_inited = 0;
+    st->dir = CD_INVALID;
 
     c->compression_state = st;
 
@@ -50,10 +325,10 @@ int compressionStateCreate(client *c) {
 void compressionStateDestroy(compressionState *state) {
     if (state == NULL) return;
 
-    if (state->inflate_inited) {
+    if (state->dir == DECOMPRESS) {
         inflateEnd(&state->zlib);
     }
-    if (state->deflate_inited) {
+    if (state->dir == COMPRESS) {
         deflateEnd(&state->zlib);
     }
 
@@ -86,7 +361,7 @@ int clientCreateCompressionState(client *c, compressionDirection dir) {
         st->zlib.next_in = st->uncompressed.data;
         st->uncompressed.used = 0;
 
-        st->deflate_inited = 1;
+        st->dir = COMPRESS;
 
         serverLog(LL_NOTICE, "Initialized compression at level %d for client #%llu...",
                 c->compression_level, (unsigned long long)c->id);
@@ -107,7 +382,16 @@ int clientCreateCompressionState(client *c, compressionDirection dir) {
         st->zlib.next_in = st->compressed.data;
         st->uncompressed.used = 0;
 
-        st->inflate_inited = 1;
+        st->dir = DECOMPRESS;
+
+        compressionConnection *cc = zmalloc(sizeof(compressionConnection));
+        cc->base.type = &CT_Compression;
+        cc->underlying = c->conn;
+        cc->pending_list_node = NULL;
+        cc->last_read = 0;
+        cc->handle_pending = 0;
+
+        c->conn = (connection*)cc;
 
         serverLog(LL_NOTICE, "Decompression for master client initialized.");
     } else {
@@ -119,6 +403,17 @@ int clientCreateCompressionState(client *c, compressionDirection dir) {
 
 void clientDestroyCompressionState(client *c) {
     if (c->compression_state == NULL) return;
+
+    if (c->compression_state->dir == DECOMPRESS && c->conn) {
+        compressionConnection *cc = (compressionConnection*)c->conn;
+        c->conn = cc->underlying;
+
+        if (cc->pending_list_node) {
+            list *l = cc->base.el ? cc->base.el->privdata[2] : NULL;
+            if (l) listDelNode(l, cc->pending_list_node);
+        }
+        zfree(cc);
+    }
 
     compressionStateDestroy(c->compression_state);
     c->compression_state = NULL;
@@ -202,6 +497,7 @@ int compressAndWrite(client *c) {
         //     memcpy(buf, state->compressed.data+state->compressed.used, written);
         //     buf[written] = 0;
         //     printf("\nWRITTEN: %s\n", buf);
+        //     zfree(buf);
         // }
 
         if (written > 0) {
@@ -282,12 +578,9 @@ int consumeAndTryWriteCompressed(client *c, const char *data, size_t len,
     return consumed;
 }
 
-int decompressInto(client *c, char *buf, size_t buflen) {
+int decompressInto(compressionState *state, char *buf, size_t buflen) {
     if (buflen == 0)
       return 0;
-
-    compressionState *state = c->compression_state;
-    serverAssert(state);
 
     int consumed = 0;
 
@@ -309,8 +602,6 @@ int decompressInto(client *c, char *buf, size_t buflen) {
             int err = inflate(&state->zlib, Z_SYNC_FLUSH);
             if (err != Z_OK && err != Z_BUF_ERROR) {
                 serverLog(LL_NOTICE, "Decompress error: %s (%d)", state->zlib.msg, err);
-                clientDestroyCompressionState(c);
-                freeClientAsync(c);
                 return -1;
             }
         }
@@ -376,7 +667,7 @@ int readFromSocketAndDecompress(client *c, char *buf, size_t buflen, int *net_re
     }
 
     /* Try to read any available decompressed data */
-    int written = decompressInto(c, buf, buflen);
+    int written = decompressInto(state, buf, buflen);
     if (written == -1) {
         return -1;
     }
@@ -418,7 +709,7 @@ int readFromSocketAndDecompress(client *c, char *buf, size_t buflen, int *net_re
             *net_read += nread;
         }
 
-        int decompressed = decompressInto(c, buf + tot_decompressed,
+        int decompressed = decompressInto(state, buf + tot_decompressed,
                                           buflen - tot_decompressed);
         if (decompressed <= 0)
             break;
@@ -445,20 +736,29 @@ int readFromBufAndDecompress(client *c, char *input_buf, size_t input_len,
 
     int tot_decompressed = 0;
     *consumed = 0;
-    while (*consumed < input_len && (size_t)tot_decompressed < output_len) {
+    while (*consumed <= input_len && (size_t)tot_decompressed < output_len) {
         int to_consume =
             min(ZLIB_TEMP_BUF_SIZE - state->compressed.used,
                 (int)(input_len - *consumed));
 
-        memcpy(state->compressed.data + state->compressed.used,
-               input_buf + *consumed, to_consume);
+        if (to_consume)
+            memcpy(state->compressed.data + state->compressed.used,
+                   input_buf + *consumed, to_consume);
+
+        // if (to_consume > 0) {
+        //     char *buf = zmalloc(to_consume + 1);
+        //     memcpy(buf, state->compressed.data+state->compressed.used, to_consume);
+        //     buf[to_consume] = 0;
+        //     printf("\nNREAD: %s\n", buf);
+        //     zfree(buf);
+        // }
 
         *consumed += to_consume;
 
         state->compressed.used += to_consume;
         state->zlib.avail_in += to_consume;
 
-        int decompressed = decompressInto(c, output_buf + tot_decompressed,
+        int decompressed = decompressInto(state, output_buf + tot_decompressed,
                                           output_len - tot_decompressed);
         if (decompressed <= 0)
             break;
@@ -466,13 +766,12 @@ int readFromBufAndDecompress(client *c, char *input_buf, size_t input_len,
     }
 
     return tot_decompressed;
-
 }
 
 int clientHasPendingCompressionFlush(client *c) {
     compressionState *state = c->compression_state;
     if (!state) return 0;
-    if (!state->deflate_inited) return 0;
+    if (state->dir != COMPRESS) return 0;
 
     // return state->zlib.avail_out > 0 || (state->zlib.next_out - (state->compressed.data + state->compressed.used) > 0);
     return mstime() - state->last_write >= server.compression_max_latency;
@@ -481,9 +780,20 @@ int clientHasPendingCompressionFlush(client *c) {
 int clientHasPendingCompressedData(client *c) {
     compressionState *state = c->compression_state;
     if (!state) return 0;
-    if (!state->inflate_inited) return 0;
+    if (state->dir != DECOMPRESS) return 0;
 
-    return state->zlib.avail_in > 0 ||
+    return state->zlib.avail_in > 0 &&
            state->zlib.next_out > state->uncompressed.data + state->uncompressed.used;
 }
 
+int clientProcessPendingCompressedData(struct client *c) {
+    if (!connHasReadHandler(c->conn)) return 0;
+    if (!clientHasPendingCompressedData(c)) return 0;
+
+    compressionConnection *cc = (compressionConnection*)c->conn;
+    cc->handle_pending = 1;
+    cc->underlying->read_handler(cc->underlying);
+    cc->handle_pending = 0;
+
+    return 1;
+}

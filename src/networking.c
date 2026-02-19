@@ -1863,7 +1863,7 @@ void unlinkClient(client *c) {
              * the main process is stale. SSL_shutdown() involves a handshake,
              * and it may block the caller when used with stale TLS state.*/
             if (c->flags & CLIENT_REPL_RDB_CHANNEL)
-                shutdown(c->conn->fd, SHUT_RDWR);
+                shutdown(connGetFd(c->conn), SHUT_RDWR);
             else
                 connShutdown(c->conn);
         }
@@ -2447,7 +2447,7 @@ static payloadHeader *processSentDataInEncodedBuffer(client *c, char *start_ptr,
  * and 'nwritten' is an output parameter, it means how many bytes server write
  * to client. */
 static int _writevToClient(client *c, ssize_t *nwritten) {
-    int iovmax = min(IOV_MAX, c->conn->iovcnt);
+    int iovmax = min(IOV_MAX, connGetIovcnt(c->conn));
     struct iovec iov[iovmax];
     ReplyIOV reply_iov = {iov, iovmax};
 
@@ -3793,40 +3793,19 @@ void readQueryFromClient(connection *conn) {
         /* Read as much as possible from the socket to save read(2) system calls. */
         readlen = sdsavail(c->querybuf);
     }
-
-    /* If we enabled client compression for replication make sure to decompress
-     * the data we've read before processing it.
-     * Note that the bytes read from socket will be <= decompressed data.
-     * Decompressed data will be written inside querybuf so in that case nread
-     * will still be the number of bytes written inside querybuf.
-     * network_read is how much we've read from socket and nread is the amount
-     * of decompressed data. For non-compression case these values are the same. */
-    int network_read = 0;
-    if (c->compression_state && c->flags & CLIENT_MASTER) {
-        nread = readFromSocketAndDecompress(c, c->querybuf + qblen, readlen,
-                                            &network_read);
-    } else {
-        nread = connRead(c->conn, c->querybuf+qblen, readlen);
-        network_read = nread;
-    }
-
-    if (nread <= 0) {
-        if (c->io_flags & CLIENT_IO_READ_DECOMPRESSED_CRON)
+    nread = connRead(c->conn, c->querybuf+qblen, readlen);
+    if (nread == -1) {
+        if (connGetState(conn) == CONN_STATE_CONNECTED) {
             goto done;
-
-        if (network_read == -1) {
-            if (connGetState(conn) == CONN_STATE_CONNECTED) {
-                goto done;
-            } else {
-                c->read_error = CLIENT_READ_CONN_DISCONNECTED;
-                freeClientAsync(c);
-                goto done;
-            }
-        } else if (network_read == 0) {
-            c->read_error = CLIENT_READ_CONN_CLOSED;
+        } else {
+            c->read_error = CLIENT_READ_CONN_DISCONNECTED;
             freeClientAsync(c);
             goto done;
         }
+    } else if (nread == 0) {
+        c->read_error = CLIENT_READ_CONN_CLOSED;
+        freeClientAsync(c);
+        goto done;
     }
 
     sdsIncrLen(c->querybuf,nread);
@@ -3840,6 +3819,11 @@ void readQueryFromClient(connection *conn) {
          * client's data. If this is a master running in IO thread the value of
          * c->lastinteraction will be updated during processClientsFromIOThread */
         c->io_lastinteraction = server.unixtime;
+
+    size_t network_read;
+    if (!connCheckLastRead(c->conn, &network_read)) {
+        network_read = nread;
+    }
 
     if (c->flags & CLIENT_MASTER) {
         if (c->running_tid == IOTHREAD_MAIN_THREAD_ID) {
