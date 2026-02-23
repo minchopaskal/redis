@@ -149,6 +149,9 @@ proc wait_replica_online {r {replica_id 0} {maxtries 50} {delay 100}} {
     if {$::tsan} {
         set maxtries [expr {$maxtries * 2}]
     }
+    if {$::compression} {
+        set maxtries [expr {$maxtries * 3}]
+    }
 
     wait_for_condition $maxtries $delay {
         [string match "*slave$replica_id:*,state=online*" [$r info replication]]
@@ -163,6 +166,9 @@ proc wait_for_ofs_sync {r1 r2} {
     # wait time here JIC
     if {$::tsan} {
         set maxtries 100
+    }
+    if {$::compression} {
+        set maxtries 150
     }
     wait_for_condition $maxtries 100 {
         [status $r1 master_repl_offset] eq [status $r2 master_repl_offset]
@@ -220,6 +226,9 @@ proc verify_log_message {srv_idx pattern from_line} {
 # wait for pattern to be found in server's stdout after certain line number
 # return value is a list containing the line that matched the pattern and the line number
 proc wait_for_log_messages {srv_idx patterns from_line maxtries delay} {
+    if {$::compression} {
+        set maxtries [expr {$maxtries * 3}]
+    }
     set retry $maxtries
     set next_line [expr $from_line + 1] ;# searching form the line after
     set stdout [srv $srv_idx stdout]

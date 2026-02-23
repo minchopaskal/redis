@@ -83,6 +83,7 @@ typedef struct ConnectionType {
     ssize_t (*sync_read)(struct connection *conn, char *ptr, ssize_t size, long long timeout);
     ssize_t (*sync_readline)(struct connection *conn, char *ptr, ssize_t size, long long timeout);
     size_t (*get_last_read)(struct connection *conn);
+    size_t (*get_last_written)(struct connection *conn);
 
     /* event loop */
     void (*unbind_event_loop)(struct connection *conn);
@@ -275,6 +276,14 @@ static inline ssize_t connSyncReadLine(connection *conn, char *ptr, ssize_t size
 static inline int connCheckLastRead(connection *conn, size_t *last_read) {
     if (!conn->type->get_last_read) return 0;
     *last_read = conn->type->get_last_read(conn);
+    return 1;
+}
+
+/* If connection type has a special way to get last written bytes to connection
+ * save the value in last_written and return 1. Otherwise return 0. */
+static inline int connCheckLastWritten(connection *conn, size_t *last_written) {
+    if (!conn->type->get_last_written) return 0;
+    *last_written = conn->type->get_last_written(conn);
     return 1;
 }
 

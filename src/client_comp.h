@@ -30,13 +30,7 @@ int clientEnableCompression(struct client *c, compressionDirection dir);
 
 void clientDisableCompression(struct client *c);
 
-int compressAndWrite(struct client *c);
-
-int consumeAndTryWriteCompressed(struct client *c, const char *data, size_t len,
-                                 ssize_t *nwritten);
-
-int readFromSocketAndDecompress(struct client *c, char *buf, size_t buflen,
-                                int *nread);
+int compressAndWrite(struct client *c, int *tot_written);
 
 int readFromBufAndDecompress(struct client *c, char *input_buf, size_t input_len,
                              char *output_buf, size_t output_len,

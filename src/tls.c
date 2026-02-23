@@ -1234,6 +1234,7 @@ static ConnectionType CT_TLS = {
     .sync_read = connTLSSyncRead,
     .sync_readline = connTLSSyncReadLine,
     .get_last_read = NULL,
+    .get_last_written = NULL,
 
     /* pending data */
     .has_pending_data = tlsHasPendingData,

@@ -424,6 +424,7 @@ static ConnectionType CT_Socket = {
     .sync_read = connSocketSyncRead,
     .sync_readline = connSocketSyncReadLine,
     .get_last_read = NULL,
+    .get_last_written = NULL,
 
     /* pending data */
     .has_pending_data = NULL,

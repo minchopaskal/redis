@@ -147,7 +147,7 @@ void putReplicasInPendingClientsToIOThreads(void) {
         if (replica->flags & CLIENT_PENDING_WRITE ||
             clientHasPendingReplies(replica) ||
             replicaFromIOThreadHasPendingRead(replica) ||
-            (replica->compression_state && mstime() - replica->lastinteraction > server.compression_max_latency))
+            clientHasPendingCompressionFlush(replica))
         {
             enqueuePendingClienstToIOThreads(replica);
         }

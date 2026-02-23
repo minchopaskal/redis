@@ -131,7 +131,6 @@ start_server {} {
             $offset == [status $replica master_repl_offset] &&
             $offset == [status $sub_replica master_repl_offset]
         } else {
-            show_cluster_status
             fail "Replicas and master offsets were unable to match *exactly*."
         }
 

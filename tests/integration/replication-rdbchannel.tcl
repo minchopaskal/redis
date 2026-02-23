@@ -449,7 +449,11 @@ start_server {tags {"repl external:skip debug_defrag:skip"}} {
             }
 
             # Generate replication traffic of ~20mb to disconnect the slave on obuf limit
-            populate 20 master 1000000 -1
+            if {$::compression} {
+                populate 200 master 1000000 -1 false 0 true
+            } else {
+                populate 20 master 1000000 -1
+            }
 
             wait_for_log_messages -1 {"*Client * closed * for overcoming of output buffer limits.*"} $loglines 1000 10
             $replica config set key-load-delay 0

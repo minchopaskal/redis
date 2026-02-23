@@ -817,32 +817,14 @@ int processClientsFromMainThread(IOThread *t) {
     return processed;
 }
 
-int IOThreadProcessPendingCompressedData(IOThread *t) {
-    int still_has_pending = 0;
-    listIter li;
-    listNode *ln;
-    listRewind(t->compression_clients, &li);
-    while ((ln = listNext(&li))) {
-        client *c = listNodeValue(ln);
-        if (c->io_flags & CLIENT_IO_CLOSE_ASAP) continue;
-        serverAssert(c->compression_state);
-        clientProcessPendingCompressedData(c);
-        still_has_pending += clientHasPendingCompressedData(c);
-    }
-
-    return !!still_has_pending;
-}
-
 void IOThreadBeforeSleep(struct aeEventLoop *el) {
     IOThread *t = el->privdata[0];
 
     /* Handle pending data(typical TLS). */
     connTypeProcessPendingData(el);
 
-    int has_pending_compressed = IOThreadProcessPendingCompressedData(t);
-
     /* If any connection type(typical TLS) still has pending unread data don't sleep at all. */
-    int dont_sleep = connTypeHasPendingData(el) || has_pending_compressed;
+    int dont_sleep = connTypeHasPendingData(el);
 
     /* Process clients from main thread, since the main thread may deliver clients
      * without notification during IO thread processing events. */
@@ -918,22 +900,18 @@ void IOThreadCompressionCron(IOThread *t) {
             /* Only master/replica clients support client compression for now. */
             serverAssert(c->flags & CLIENT_SLAVE);
 
-            int nwritten = compressAndWrite(c);
-            if (nwritten < 0) {
+            int written = 0;
+            int err = compressAndWrite(c, &written);
+            if (err) {
                 if (connGetState(c->conn) != CONN_STATE_CONNECTED)
                     freeClientAsync(c);
                 continue;
             }
 
-            if (nwritten > 0) {
-                c->net_output_bytes += nwritten;
-                atomicIncr(server.stat_net_repl_output_bytes, nwritten);
+            if (written > 0) {
+                c->net_output_bytes += written;
+                atomicIncr(server.stat_net_repl_output_bytes, written);
             }
-        } else if (clientHasPendingCompressedData(c)) {
-            /* We will do that in beforeSleep but since we are already iterating
-             * on t->compression_clients we take advantage of that to also
-             * process pending data here. */
-            clientProcessPendingCompressedData(c);
         }
     }
 }

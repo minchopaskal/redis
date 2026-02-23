@@ -2612,13 +2612,16 @@ static inline int _writeToClientSlaveIOThread(client *c, ssize_t *nwritten) {
     size_t pos = c->io_curr_repl_node == c->io_bound_repl_node ?
                  c->io_bound_block_pos : o->used;
     if (pos > c->io_curr_block_pos) {
-        int consumed = 0;
-        if (c->compression_state && c->io_flags & CLIENT_IO_COMPRESSION_ENABLED) {
-            consumed = consumeAndTryWriteCompressed(c, o->buf + c->io_curr_block_pos,
-                                                    pos-c->io_curr_block_pos, nwritten);
+        int consumed = connWrite(c->conn, o->buf+c->io_curr_block_pos,
+                                 pos-c->io_curr_block_pos);
+
+        /* Note, that consumed is how much bytes we've read from the repl buffer,
+         * where as the bytes we've written into the socket may be different if
+         * connCheckLastWritten returns so (f.e compression case) */
+        size_t last_written = 0;
+        if (connCheckLastWritten(c->conn, &last_written)) {
+            *nwritten += last_written;
         } else {
-            consumed = connWrite(c->conn, o->buf+c->io_curr_block_pos,
-                                pos-c->io_curr_block_pos);
             *nwritten += consumed;
         }
         if (consumed <= 0) return C_ERR;
