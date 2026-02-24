@@ -54,7 +54,7 @@
                 },
                 {
                     "type": "number",
-                    "description": "Retry after: seconds after which caller should retry"
+                    "description": "Retry after: seconds after which caller should retry. Always -1 if not limited"
                 },
                 {
                     "type": "number",
@@ -73,7 +73,7 @@
                 "type": "integer"
             },
             {
-                "name": "tokens-per-period",
+                "name": "requests-per-period",
                 "type": "integer"
             },
             {
@@ -81,7 +81,7 @@
                 "type": "double"
             },
             {
-                "name": "tokens",
+                "name": "count",
                 "type": "integer",
                 "token": "NUM_TOKENS",
                 "optional": true

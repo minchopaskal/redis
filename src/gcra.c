@@ -80,9 +80,9 @@ void gcraCommand(client *c) {
 
     /* microsecond accuracy */
     long long period_us = period * 1000000;
-    long long rate_us = period_us / tokens_per_period;
-    long long increment_us = rate_us * num_tokens;
-    long long variance_us = rate_us * max_burst;
+    long long emission_interval_us = period_us / tokens_per_period;
+    long long increment_us = emission_interval_us * num_tokens;
+    long long variance_us = emission_interval_us * max_burst;
     long long ttl_us;
 
     if (server.ustime > tat_us) {
@@ -114,8 +114,8 @@ void gcraCommand(client *c) {
 
     long long next_us = variance_us - ttl_us;
     remaining = 0;
-    if (next_us > -rate_us) {
-        remaining = next_us / rate_us;
+    if (next_us > -emission_interval_us) {
+        remaining = next_us / emission_interval_us;
     }
     reset_after_s = ttl_us / 1000000;
 
