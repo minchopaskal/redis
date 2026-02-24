@@ -360,7 +360,8 @@ void hotkeysCommand(client *c) {
                 j += 2;
             } else if (moreargs && !strcasecmp(c->argv[j]->ptr, "SAMPLE")) {
                 long ratio_val;
-                if (getPositiveLongFromObjectOrReply(c, c->argv[j+1], &ratio_val, "SAMPLE ratio must be positive") != C_OK)
+                if (getRangeLongFromObjectOrReply(c, c->argv[j+1], 1, INT_MAX,
+                        &ratio_val, "SAMPLE ratio must be positive") != C_OK)
                 {
                     slotRangeArrayFree(slots);
                     return;
