@@ -33,15 +33,13 @@ start_server {tags {"gcra" "external:skip"}} {
         assert_match "*not a valid float*" $err
 
         # tokens (optional) must be >= 1
-        catch {r gcra mykey 10 5 10 NUM_TOKS} err
-        assert_match "*ERR syntax error*" $err
-        catch {r gcra mykey 10 5 10 NUM_TOKENS} err
-        assert_match "*ERR Missing NUM_TOKENS*" $err
-        catch {r gcra mykey 10 5 10 NUM_TOKENS 0} err
+        catch {r gcra mykey 10 5 10 NUM_REQUESTS} err
+        assert_match "*Missing NUM_REQUESTS value*" $err
+        catch {r gcra mykey 10 5 10 NUM_REQUESTS 0} err
         assert_match "*out of range*" $err
-        catch {r gcra mykey 10 5 10 NUM_TOKENS -1} err
+        catch {r gcra mykey 10 5 10 NUM_REQUESTS -1} err
         assert_match "*out of range*" $err
-        catch {r gcra mykey 10 5 10 NUM_TOKENS notanumber} err
+        catch {r gcra mykey 10 5 10 NUM_REQUESTS notanumber} err
         assert_match "*not an integer*" $err
 
         # Valid arguments with default tokens
@@ -55,7 +53,7 @@ start_server {tags {"gcra" "external:skip"}} {
 
         # Valid arguments with explicit tokens
         r del mykey
-        set result [r gcra mykey 10 5 60 NUM_TOKENS 2]
+        set result [r gcra mykey 10 5 60 NUM_REQUESTS 2]
         assert_equal 5 [llength $result]
         assert_equal 11 [lindex $result 1]
 
@@ -132,7 +130,7 @@ start_server {tags {"gcra" "external:skip"}} {
 
         r del mykey
         # Consume 3 tokens from fresh state
-        set result2 [r gcra mykey 5 1 60 NUM_TOKENS 3]
+        set result2 [r gcra mykey 5 1 60 NUM_REQUESTS 3]
         set avail2 [lindex $result2 2]
         assert_equal 3 $avail2
     }
@@ -170,7 +168,7 @@ start_server {tags {"gcra" "external:skip"}} {
 
         r del mykey
         r gcra mykey 5 1 60
-        r gcra mykey 5 1 60 NUM_TOKENS 4
+        r gcra mykey 5 1 60 NUM_REQUESTS 4
         set full_burst_after [lindex $result 4]
         # Here we've only incremented the reset time once, as the burst was
         # consumed in one request

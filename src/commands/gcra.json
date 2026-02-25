@@ -83,7 +83,7 @@
             {
                 "name": "count",
                 "type": "integer",
-                "token": "NUM_TOKENS",
+                "token": "NUM_REQUESTS",
                 "optional": true
             }
         ]

@@ -18,7 +18,7 @@
  */
 void gcraCommand(client *c) {
     robj *key = c->argv[1];
-    long max_burst, tokens_per_period;
+    long max_burst, requests_per_period;
     long num_tokens = 1;
     double period;
 
@@ -32,7 +32,7 @@ void gcraCommand(client *c) {
     }
     max_burst += 1;
 
-    if (getRangeLongFromObjectOrReply(c, c->argv[3], 1, LONG_MAX, &tokens_per_period, NULL) != C_OK) {
+    if (getRangeLongFromObjectOrReply(c, c->argv[3], 1, LONG_MAX, &requests_per_period, NULL) != C_OK) {
         return;
     }
 
@@ -45,12 +45,12 @@ void gcraCommand(client *c) {
     }
 
     if (c->argc >= 6) {
-        if (strcasecmp("NUM_TOKENS", c->argv[5]->ptr)) {
+        if (strcasecmp("NUM_REQUESTS", c->argv[5]->ptr)) {
             addReplyErrorObject(c, shared.syntaxerr);
             return;
         }
         if (c->argc == 6) {
-            addReplyError(c, "Missing NUM_TOKENS value");
+            addReplyError(c, "Missing NUM_REQUESTS value");
             return;
         }
         if (getRangeLongFromObjectOrReply(c, c->argv[6], 1, LONG_MAX, &num_tokens, NULL) != C_OK) {
@@ -80,7 +80,7 @@ void gcraCommand(client *c) {
 
     /* microsecond accuracy */
     long long period_us = period * 1000000;
-    long long emission_interval_us = period_us / tokens_per_period;
+    long long emission_interval_us = period_us / requests_per_period;
     long long increment_us = emission_interval_us * num_tokens;
     long long variance_us = emission_interval_us * max_burst;
     long long ttl_us;
