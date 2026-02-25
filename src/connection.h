@@ -103,7 +103,7 @@ typedef struct ConnectionType {
     void (*unset_event_loop)(connection *conn);
     int (*get_fd)(connection *conn);
     int (*get_iovcnt)(connection *conn);
-    int (*get_state)(connection *conn);
+    ConnectionState (*get_state)(connection *conn);
     int (*get_last_errno)(connection *conn);
     int (*has_read_handler)(connection *conn);
     int (*has_write_handler)(connection *conn);
@@ -345,7 +345,7 @@ static inline int connIsLocal(connection *conn) {
     return -1;
 }
 
-static inline int connGetState(connection *conn) {
+static inline ConnectionState connGetState(connection *conn) {
     return conn->type->get_state ? conn->type->get_state(conn) : conn->state;
 }
 

@@ -293,7 +293,7 @@ static int connCompressionGetIovcnt(connection *conn) {
     return cc->underlying->iovcnt;
 }
 
-static int connCompressionGetState(connection *conn) {
+static ConnectionState connCompressionGetState(connection *conn) {
     compressionConnection *cc = (compressionConnection*)conn;
     return cc->underlying->state;
 }
