@@ -117,7 +117,7 @@ static int connCompressionRead(struct connection *conn, void *buf, size_t buf_le
         int nread = 0;
         /* If the handle_pending flag is raised we only decompress whatever data
          * we have read from the socket without reading anything more. Socket
-         * reading will happend when the event loop handles read event in which
+         * reading will happened when the event loop handles read event in which
          * case the handle_pending flags wouldn't be raised. */
         if (!cc->handle_pending) {
             nread = cc->underlying->type->read(
