@@ -886,6 +886,9 @@ void IOThreadCompressionCron(IOThread *t) {
     listIter li;
     listNode *ln;
     listRewind(t->compression_clients, &li);
+    /* TODO: if compression is generalized for all types of clients this cron
+     * will need to only process a portion of the clients (similar to
+     * IOThreadClientsCron) for performance reasons */
     while ((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
 

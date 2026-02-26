@@ -2618,6 +2618,8 @@ static inline int _writeToClientSlaveIOThread(client *c, ssize_t *nwritten) {
         /* Note, that consumed is how much bytes we've read from the repl buffer,
          * where as the bytes we've written into the socket may be different if
          * connCheckLastWritten returns so (f.e compression case) */
+        /* TODO: if compression is generalized for all types of clients we will
+         * need to add this check in writeToClientNonSlave also */
         size_t last_written = 0;
         if (connCheckLastWritten(c->conn, &last_written)) {
             *nwritten += last_written;

@@ -272,7 +272,10 @@ static inline ssize_t connSyncReadLine(connection *conn, char *ptr, ssize_t size
 }
 
 /* If connection type has a special way to get last read bytes from connection
- * save the value in last_read and return 1. Otherwise return 0. */
+ * save the value in last_read and return 1. Otherwise return 0.
+ * F.e when compression is enabled we read compressed data from socket inside
+ * connRead but it returns the number of bytes decompressed. In order to get the
+ * number of bytes read from socket we call connCheckLastRead. */
 static inline int connCheckLastRead(connection *conn, size_t *last_read) {
     if (!conn->type->get_last_read) return 0;
     *last_read = conn->type->get_last_read(conn);

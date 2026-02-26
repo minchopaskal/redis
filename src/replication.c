@@ -3238,7 +3238,7 @@ void syncWithMaster(connection *conn) {
     }
 
     if (server.repl_state == REPL_STATE_RECEIVE_CLIENT_COMP && server.repl_compression <= 0)
-      server.repl_state = REPL_STATE_RECEIVE_CAPA_REPLY;
+        server.repl_state = REPL_STATE_RECEIVE_CAPA_REPLY;
 
     if (server.repl_state == REPL_STATE_RECEIVE_CLIENT_COMP) {
         err = receiveSynchronousResponse(conn);
