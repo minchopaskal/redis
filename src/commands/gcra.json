@@ -2,13 +2,14 @@
     "GCRA": {
         "summary": "Rate limit via GCRA (Generic Cell Rate Algorithm).",
         "complexity": "O(1)",
-        "group": "generic",
+        "group": "string",
         "since": "8.8.0",
         "arity": -5,
         "function": "gcraCommand",
         "command_flags": [
             "WRITE",
-            "DENYOOM"
+            "DENYOOM",
+            "FAST"
         ],
         "acl_categories": [
             "STRING"
@@ -53,11 +54,11 @@
                     "description": "Number of requests available immediately"
                 },
                 {
-                    "type": "number",
+                    "type": "integer",
                     "description": "Retry after: seconds after which caller should retry. Always -1 if not limited"
                 },
                 {
-                    "type": "number",
+                    "type": "integer",
                     "description": "Full burst after: seconds after which a full burst will be allowed"
                 }
             ]

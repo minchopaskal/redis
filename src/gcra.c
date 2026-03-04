@@ -7,19 +7,20 @@
  * GNU Affero General Public License v3 (AGPLv3).
  */
 #include "server.h"
+#include <math.h>
 
-/* GCRA key max_burst tokens_per_period period [num_tokens]
+/* GCRA key max_burst requests_per_period period [NUM_REQUESTS count]
  *
  * key: Key related to specific rate limiting case
  * max_burst: Maximum tokens allowed as burst (in addition to sustained rate)
- * tokens_per_period: Number of tokens allowed per period
+ * requests_per_period: Number of requests allowed per period
  * period: Period in seconds for calculating sustained rate
- * num_tokens: Optional, number of tokens for this request (default: 1)
+ * num_requests: Optional, cost of this request (default: 1)
  */
 void gcraCommand(client *c) {
     robj *key = c->argv[1];
     long max_burst, requests_per_period;
-    long num_tokens = 1;
+    long num_requests = 1;
     double period;
 
     if (c->argc > 7) {
@@ -30,7 +31,7 @@ void gcraCommand(client *c) {
     if (getPositiveLongFromObjectOrReply(c, c->argv[2], &max_burst, NULL) != C_OK) {
         return;
     }
-    max_burst += 1;
+    if (likely(max_burst < LONG_MAX)) max_burst += 1;
 
     if (getRangeLongFromObjectOrReply(c, c->argv[3], 1, LONG_MAX, &requests_per_period, NULL) != C_OK) {
         return;
@@ -53,10 +54,12 @@ void gcraCommand(client *c) {
             addReplyError(c, "Missing NUM_REQUESTS value");
             return;
         }
-        if (getRangeLongFromObjectOrReply(c, c->argv[6], 1, LONG_MAX, &num_tokens, NULL) != C_OK) {
+        if (getRangeLongFromObjectOrReply(c, c->argv[6], 1, LONG_MAX, &num_requests, NULL) != C_OK) {
             return;
         }
     }
+
+    ustime_t now = commandTimeSnapshot() * 1000;
 
     long long tat_us, new_tat_us;
     dictEntryLink link;
@@ -71,7 +74,7 @@ void gcraCommand(client *c) {
             return;
         }
     } else {
-        tat_us = server.ustime;
+        tat_us = now;
     }
 
     /* Variables used in the reply */
@@ -79,29 +82,30 @@ void gcraCommand(client *c) {
     long long remaining = 0, reset_after_s = 0, retry_after_s = -1;
 
     /* microsecond accuracy */
-    long long period_us = period * 1000000;
-    long long emission_interval_us = period_us / requests_per_period;
-    long long increment_us = emission_interval_us * num_tokens;
+    double period_us = period * 1000000.;
+    long long emission_interval_us = (long long)(period_us / requests_per_period);
+    if (unlikely(emission_interval_us == 0)) emission_interval_us = 1;
+    long long increment_us = emission_interval_us * num_requests;
     long long variance_us = emission_interval_us * max_burst;
     long long ttl_us;
 
-    if (server.ustime > tat_us) {
-        new_tat_us = server.ustime + increment_us;
+    if (now > tat_us) {
+        new_tat_us = now + increment_us;
     } else {
         new_tat_us = tat_us + increment_us;
     }
 
     long long allow_at = new_tat_us - variance_us;
-    long long diff_us = server.ustime - allow_at;
+    long long diff_us = now - allow_at;
     if (diff_us < 0) {
         limited = 1;
         if (increment_us < variance_us) {
-            retry_after_s = (-diff_us) / 1000000;
+            retry_after_s = ceil((-diff_us) / 1000000.);
         }
-        ttl_us = tat_us - server.ustime;
+        ttl_us = tat_us - now;
     } else {
         limited = 0;
-        ttl_us = new_tat_us - server.ustime;
+        ttl_us = new_tat_us - now;
         robj *tatobj = createStringObjectFromLongLong(new_tat_us);
         if (kv) {
             setKeyByLink(c, c->db, key, &tatobj, SETKEY_ALREADY_EXIST, &link);
@@ -117,7 +121,7 @@ void gcraCommand(client *c) {
     if (next_us > -emission_interval_us) {
         remaining = next_us / emission_interval_us;
     }
-    reset_after_s = ttl_us / 1000000;
+    reset_after_s = ceil(ttl_us / 1000000.);
 
     addReplyArrayLen(c, 5);
     addReply(c, limited ? shared.cone : shared.czero);

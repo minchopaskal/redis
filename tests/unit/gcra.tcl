@@ -168,11 +168,9 @@ start_server {tags {"gcra" "external:skip"}} {
 
         r del mykey
         r gcra mykey 5 1 60
-        r gcra mykey 5 1 60 NUM_REQUESTS 4
+        set result [r gcra mykey 5 1 60 NUM_REQUESTS 4]
         set full_burst_after [lindex $result 4]
-        # Here we've only incremented the reset time once, as the burst was
-        # consumed in one request
-        assert {$full_burst_after >= 119}
+        assert {$full_burst_after >= 299}
     }
 
     test {GCRA - different keys are independent} {
@@ -202,5 +200,17 @@ start_server {tags {"gcra" "external:skip"}} {
         # Second request should be limited
         set result [r gcra mykey 0 1 1]
         assert_equal 1 [lindex $result 0] "Second request limited"
+    }
+
+    test {GCRA - wrong type error} {
+        r del mykey
+        r lpush mykey "value"
+        catch {r gcra mykey 5 1 60} err
+        assert_match "*WRONGTYPE*" $err
+
+        r del mykey
+        r sadd mykey "value"
+        catch {r gcra mykey 5 1 60} err
+        assert_match "*WRONGTYPE*" $err
     }
 }
