@@ -68,7 +68,6 @@ void gcraCommand(client *c) {
         return;
     }
     if (kv != NULL) {
-        /* TODO: should we validate the key was created by the GCRA command? */
         if (getLongLongFromObject(kv, &tat_us) != C_OK) {
             addReplyError(c, "Invalid GCRA key");
             return;
