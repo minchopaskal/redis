@@ -1,23 +1,283 @@
 #include "server.h"
 #include "client_comp.h"
 #include <zlib.h>
+#include <zstd.h>
 
-/* Main compression state struct */
 #define ZLIB_TEMP_BUF_SIZE 16 * 1024
 
+typedef struct compressionType {
+    int (*init_compress)(struct compressionState *st, int level);
+    int (*init_decompress)(struct compressionState *st);
+    int (*compress)(struct compressionState *st, int flush);
+    int (*decompress)(struct compressionState *st);
+    void (*end)(struct compressionState *st);
+} compressionType;
+
 typedef struct {
-    unsigned char data[ZLIB_TEMP_BUF_SIZE];
-    int used;
+    unsigned char *data;
+    int size;
+    int written;
+    int consumed;
 } tempBuf;
 
+/* Main compression state struct */
 struct compressionState {
-    client *client;
-    tempBuf compressed;   /* Buffer holding compressed data */
-    tempBuf uncompressed; /* Buffer holding uncompressed(decompressed) data */
-    z_stream zlib;        /* Zlib state */
+    const compressionType *type;
+    tempBuf input;  /* Buffer holding compressed data */
+    tempBuf output; /* Buffer holding uncompressed(decompressed) data */
+    union {
+        z_stream zlib;            /* Zlib state */
+        ZSTD_CStream *zstdCCtx;  /* Zstd compression ctx */
+        ZSTD_DStream *zstdDCtx;  /* Zstd decompression ctx */
+    };
+    int write_flush_pending;    /* zstd: flush not yet completed, keep calling with ZSTD_e_flush */
+    int read_flush_pending;    /* zstd: flush not yet completed, keep calling with ZSTD_e_flush */
     mstime_t last_write;  /* Time since last write. Used to check if it's time
                            * to flush the buffer */
     compressionDirection dir;
+};
+
+/* --- zlib --- */
+static void *zlib_alloc_wrapper(void *opaque, unsigned int items,
+                                unsigned int size) {
+    UNUSED(opaque);
+    return zmalloc(items * size);
+}
+
+static void zlib_free_wrapper(void *opaque, void *address) {
+    UNUSED(opaque);
+    zfree(address);
+}
+
+static int zlibInitCompress(compressionState *st, int level) {
+    st->zlib.zalloc = zlib_alloc_wrapper;
+    st->zlib.zfree = zlib_free_wrapper;
+
+    if (deflateInit(&st->zlib, level) != Z_OK) {
+        serverLog(LL_NOTICE, "Failed to initialize zlib compression: %s", st->zlib.msg);
+        return -1;
+    }
+
+    st->output.data = zmalloc(ZLIB_TEMP_BUF_SIZE);
+    st->output.size = ZLIB_TEMP_BUF_SIZE;
+    st->output.written = 0;
+    st->output.consumed = 0;
+    st->zlib.avail_out = ZLIB_TEMP_BUF_SIZE;
+    st->zlib.next_out = st->output.data;
+
+    st->input.data = zmalloc(ZLIB_TEMP_BUF_SIZE);
+    st->input.size = ZLIB_TEMP_BUF_SIZE;
+    st->input.written = 0;
+    st->input.consumed = 0;
+    st->zlib.avail_in = 0;
+    st->zlib.next_in = st->input.data;
+
+    return 0;
+}
+
+static int zlibInitDecompress(compressionState *st) {
+    st->zlib.zalloc = zlib_alloc_wrapper;
+    st->zlib.zfree = zlib_free_wrapper;
+    if (inflateInit(&st->zlib) != Z_OK) {
+        serverLog(LL_NOTICE, "Failed to initialize zlib decompression: %s", st->zlib.msg);
+        return -1;
+    }
+
+    st->input.data = zmalloc(ZLIB_TEMP_BUF_SIZE);
+    st->input.size = ZLIB_TEMP_BUF_SIZE;
+    st->input.written = 0;
+    st->input.consumed = 0;
+    st->zlib.avail_in = 0;
+    st->zlib.next_in = st->input.data;
+
+    st->output.data = zmalloc(ZLIB_TEMP_BUF_SIZE);
+    st->output.size = ZLIB_TEMP_BUF_SIZE;
+    st->output.written = 0;
+    st->output.consumed = 0;
+    st->zlib.avail_out = ZLIB_TEMP_BUF_SIZE;
+    st->zlib.next_out = st->output.data;
+
+    return 0;
+}
+
+static int zlibCompress(compressionState *st, int flush) {
+    st->zlib.next_out = st->output.data + st->output.written;
+    st->zlib.avail_out = st->output.size - st->output.written;
+    st->zlib.next_in = st->input.data + st->input.consumed;
+    st->zlib.avail_in =  st->input.written - st->input.consumed;
+
+    int err = deflate(&st->zlib, flush ? Z_SYNC_FLUSH : Z_NO_FLUSH);
+    if (err != Z_OK && err != Z_BUF_ERROR) {
+        serverLog(LL_WARNING, "zlib compress error: %s (%d)", st->zlib.msg, err);
+        return -1;
+    }
+
+    st->output.written = st->zlib.next_out - st->output.data;
+    st->input.consumed = st->zlib.next_in - st->input.data;
+
+    return 0;
+}
+
+static int zlibDecompress(compressionState *st) {
+    st->zlib.next_in = st->input.data + st->input.consumed;
+    st->zlib.avail_in = st->input.written - st->input.consumed;
+    st->zlib.next_out = st->output.data + st->output.written;
+    st->zlib.avail_out = st->output.size - st->output.written;
+
+    int err = inflate(&st->zlib, Z_SYNC_FLUSH);
+    if (err != Z_OK && err != Z_BUF_ERROR) {
+        serverLog(LL_NOTICE, "zlib decompress error: %s (%d)", st->zlib.msg, err);
+        return -1;
+    }
+
+    st->output.written = st->zlib.next_out - st->output.data;
+    st->input.consumed = st->zlib.next_in - st->input.data;
+
+    return 0;
+}
+
+static void zlibEnd(compressionState *st) {
+    if (st->dir == COMPRESS)
+        deflateEnd(&st->zlib);
+    else if (st->dir == DECOMPRESS)
+        inflateEnd(&st->zlib);
+}
+
+static const compressionType zlibType = {
+    .init_compress = zlibInitCompress,
+    .init_decompress = zlibInitDecompress,
+    .compress = zlibCompress,
+    .decompress = zlibDecompress,
+    .end = zlibEnd,
+};
+
+/* --- zstd --- */
+
+static int zstdInitCompress(compressionState *st, int level) {
+    st->zstdCCtx = ZSTD_createCStream();
+    if (!st->zstdCCtx) {
+        serverLog(LL_NOTICE, "Failed to create ZSTD compression context");
+        return -1;
+    }
+    ZSTD_CCtx_setParameter(st->zstdCCtx, ZSTD_c_compressionLevel, level);
+
+    size_t outSize = ZSTD_CStreamOutSize();
+    st->output.data = zmalloc(outSize);
+    st->output.size = outSize;
+    st->output.written = 0;
+    st->output.consumed = 0;
+
+    size_t inSize = ZSTD_CStreamInSize();
+    st->input.data = zmalloc(inSize);
+    st->input.size = inSize;
+    st->input.written = 0;
+    st->input.consumed = 0;
+
+    st->write_flush_pending = 0;
+
+    return 0;
+}
+
+static int zstdInitDecompress(compressionState *st) {
+    st->zstdDCtx = ZSTD_createDStream();
+    if (!st->zstdDCtx) {
+        serverLog(LL_NOTICE, "Failed to create ZSTD decompression context");
+        return -1;
+    }
+
+    size_t inSize = ZSTD_DStreamInSize();
+    st->input.data = zmalloc(inSize);
+    st->input.size = inSize;
+    st->input.written = 0;
+    st->input.consumed = 0;
+
+    size_t outSize = ZSTD_DStreamOutSize();
+    st->output.data = zmalloc(outSize);
+    st->output.size = outSize;
+    st->output.written = 0;
+    st->output.consumed = 0;
+
+    st->read_flush_pending = 0;
+
+    return 0;
+}
+
+static int zstdCompress(compressionState *st, int flush) {
+    ZSTD_inBuffer input = {
+        .src  = st->input.data,
+        .size = st->input.written,
+        .pos  = st->input.consumed
+    };
+    ZSTD_outBuffer output = {
+        .dst  = st->output.data,
+        .size = st->output.size,
+        .pos  = st->output.written
+    };
+
+    ZSTD_EndDirective directive;
+    if (flush || st->write_flush_pending)
+        directive = ZSTD_e_flush;
+    else
+        directive = ZSTD_e_continue;
+
+    size_t ret;
+    do {
+        ret = ZSTD_compressStream2(st->zstdCCtx, &output, &input, directive);
+        if (ZSTD_isError(ret)) {
+            serverLog(LL_WARNING, "zstd compress error: %s", ZSTD_getErrorName(ret));
+            return -1;
+        }
+    } while (directive == ZSTD_e_flush && ret > 0 && output.pos < output.size);
+
+    st->write_flush_pending = (directive == ZSTD_e_flush && ret > 0);
+
+    st->input.consumed = input.pos;
+    st->output.written = output.pos;
+
+    return 0;
+}
+
+static int zstdDecompress(compressionState *st) {
+    ZSTD_inBuffer input = {
+        .src  = st->input.data,
+        .size = st->input.written,
+        .pos  = st->input.consumed
+    };
+    ZSTD_outBuffer output = {
+        .dst  = st->output.data,
+        .size = st->output.size,
+        .pos  = st->output.written
+    };
+
+    size_t ret = ZSTD_decompressStream(st->zstdDCtx, &output, &input);
+    if (ZSTD_isError(ret)) {
+        serverLog(LL_NOTICE, "zstd decompress error: %s", ZSTD_getErrorName(ret));
+        return -1;
+    }
+
+    /* Don't try to flush again if we already tried, no more progress can be
+     * made without additional input. */
+    st->read_flush_pending = !st->read_flush_pending && (ret > 0);
+
+    st->input.consumed = input.pos;
+    st->output.written = output.pos;
+
+    return 0;
+}
+
+static void zstdEnd(compressionState *st) {
+    if (st->dir == COMPRESS && st->zstdCCtx)
+        ZSTD_freeCStream(st->zstdCCtx);
+    else if (st->dir == DECOMPRESS && st->zstdDCtx)
+        ZSTD_freeDStream(st->zstdDCtx);
+}
+
+static const compressionType zstdType = {
+    .init_compress = zstdInitCompress,
+    .init_decompress = zstdInitDecompress,
+    .compress = zstdCompress,
+    .decompress = zstdDecompress,
+    .end = zstdEnd,
 };
 
 /* Compression connection */
@@ -122,12 +382,12 @@ static int connCompressionRead(struct connection *conn, void *buf, size_t buf_le
         if (!cc->handle_pending) {
             nread = cc->underlying->type->read(
                 cc->underlying,
-                state->compressed.data + state->compressed.used,
-                ZLIB_TEMP_BUF_SIZE - state->compressed.used);
+                state->input.data + state->input.written,
+                state->input.size - state->input.written);
 
             // if (nread > 0) {
             //     char *buf = zmalloc(nread + 1);
-            //     memcpy(buf, state->compressed.data+state->compressed.used, nread);
+            //     memcpy(buf, state->input.data+state->input.written, nread);
             //     buf[nread] = 0;
             //     printf("\nNREAD: %s\n", buf);
             //     zfree(buf);
@@ -141,8 +401,7 @@ static int connCompressionRead(struct connection *conn, void *buf, size_t buf_le
              * nothing more it can do. */
             if (nread > 0) {
                 cc->last_read += nread;
-                state->compressed.used += nread;
-                state->zlib.avail_in += nread;
+                state->input.written += nread;
             }
         }
 
@@ -152,7 +411,7 @@ static int connCompressionRead(struct connection *conn, void *buf, size_t buf_le
     if (decompressed == 0 && connGetState(cc->underlying) == CONN_STATE_CONNECTED)
         return -1;
 
-    if (clientHasPendingCompressedData(c)) {
+    if (connGetState(conn) == CONN_STATE_CONNECTED && clientHasPendingCompressedData(c)) {
         compressionPendingAdd(cc);
     } else {
         compressionPendingRemove(cc);
@@ -174,22 +433,22 @@ static int connCompressionWrite(connection *conn, const void *data, size_t len) 
     cc->last_written = 0;
     while ((size_t)consumed != len) {
         int to_consume =
-            min(ZLIB_TEMP_BUF_SIZE - state->uncompressed.used, (int)(len - consumed));
+            min(state->input.size - state->input.written, (int)(len - consumed));
         serverAssert(to_consume >= 0);
 
-        memcpy(state->uncompressed.data + state->uncompressed.used,
+        memcpy(state->input.data + state->input.written,
                (char*)data + consumed, to_consume);
 
         // if (to_consume > 0) {
         //     char *buf = zmalloc(to_consume + 1);
-        //     memcpy(buf, data+consumed, to_consume);
+        //     memcpy(buf, (char*)data+consumed, to_consume);
         //     buf[to_consume] = 0;
         //     printf("\nCONSUMED: %s\n", buf);
+        //     zfree(buf);
         // }
 
-        state->uncompressed.used += to_consume;
+        state->input.written += to_consume;
         consumed += to_consume;
-        state->zlib.avail_in += to_consume;
 
         /* Write whatever we have available in the compressed buffer */
         int written = 0;
@@ -202,7 +461,7 @@ static int connCompressionWrite(connection *conn, const void *data, size_t len) 
             return consumed;
         }
 
-        if (written == 0)
+        if (written == 0 && state->output.written == state->output.consumed)
             break;
     }
 
@@ -341,7 +600,7 @@ static int compressionProcessPendingData(struct aeEventLoop *el) {
     listRewind(pending_list,&li);
     while((ln = listNext(&li))) {
         compressionConnection *cc = listNodeValue(ln);
-        if (!connHasReadHandler((connection*)cc)) continue;
+        if (!cc || !connHasReadHandler((connection*)cc)) continue;
 
         cc->handle_pending = 1;
         cc->underlying->read_handler(cc->underlying);
@@ -412,25 +671,12 @@ int RedisRegisterConnectionTypeCompression(void) {
     return connTypeRegister(&CT_Compression);
 }
 
-static void *zlib_alloc_wrapper(void *opaque, unsigned int items,
-                                unsigned int size) {
-    UNUSED(opaque);
-    return zmalloc(items * size);
-}
-
-static void zlib_free_wrapper(void *opaque, void *address) {
-    UNUSED(opaque);
-    zfree(address);
-}
-
 int compressionStateCreate(client *c) {
     compressionState *st = zmalloc(sizeof(compressionState));
-    st->client = c;
-
-    st->zlib.zalloc = zlib_alloc_wrapper;
-    st->zlib.zfree = zlib_free_wrapper;
-
+    st->type = &zstdType;
     st->last_write = 0;
+    st->write_flush_pending = 0;
+    st->read_flush_pending = 0;
     st->dir = CD_INVALID;
 
     c->compression_state = st;
@@ -438,17 +684,12 @@ int compressionStateCreate(client *c) {
     return 1;
 }
 
-#include <stdlib.h>
 void compressionStateDestroy(compressionState *state) {
     if (state == NULL) return;
 
-    if (state->dir == DECOMPRESS) {
-        inflateEnd(&state->zlib);
-    }
-    if (state->dir == COMPRESS) {
-        deflateEnd(&state->zlib);
-    }
-
+    state->type->end(state);
+    zfree(state->input.data);
+    zfree(state->output.data);
     zfree(state);
 }
 
@@ -464,19 +705,10 @@ int clientCreateCompressionState(client *c, compressionDirection dir) {
     if (dir == COMPRESS) {
         serverAssert(c->compression_level > 0 && c->flags & CLIENT_SLAVE);
 
-        if (deflateInit(&st->zlib, c->compression_level) != Z_OK) {
-            serverLog(LL_NOTICE, "Failed to initialize compression: %s", st->zlib.msg);
+        if (st->type->init_compress(st, c->compression_level) == -1) {
             compressionStateDestroy(c->compression_state);
             return 0;
         }
-
-        st->zlib.avail_out = ZLIB_TEMP_BUF_SIZE;
-        st->zlib.next_out = st->compressed.data;
-        st->compressed.used = 0;
-
-        st->zlib.avail_in = 0;
-        st->zlib.next_in = st->uncompressed.data;
-        st->uncompressed.used = 0;
 
         st->dir = COMPRESS;
 
@@ -485,20 +717,11 @@ int clientCreateCompressionState(client *c, compressionDirection dir) {
     } else if (dir == DECOMPRESS) {
         serverAssert(server.repl_master_compression_level > 0);
 
-        if (inflateInit(&st->zlib) != Z_OK) {
-            serverLog(LL_NOTICE, "Failed to initialize decompression: %s", st->zlib.msg);
+        if (st->type->init_decompress(st) == -1) {
             compressionStateDestroy(c->compression_state);
             return 0;
         }
-
-        st->zlib.avail_out = ZLIB_TEMP_BUF_SIZE;
-        st->zlib.next_out = st->uncompressed.data;
-        st->compressed.used = 0;
-
-        st->zlib.avail_in = 0;
-        st->zlib.next_in = st->compressed.data;
-        st->uncompressed.used = 0;
-
+ 
         st->dir = DECOMPRESS;
 
         serverLog(LL_NOTICE, "Decompression for master client initialized.");
@@ -521,7 +744,7 @@ int clientCreateCompressionState(client *c, compressionDirection dir) {
 void clientDestroyCompressionState(client *c) {
     if (c->compression_state == NULL) return;
 
-    if (c->compression_state->dir == DECOMPRESS && c->conn) {
+    if (c->conn) {
         compressionConnection *cc = (compressionConnection*)c->conn;
         c->conn = cc->underlying;
 
@@ -572,23 +795,20 @@ int compressAndWrite(client *c, int *tot_written) {
 
     /* All available uncompressed data was consumed so we need to reset the
      * uncompressed buffer */
-    if (state->uncompressed.used == ZLIB_TEMP_BUF_SIZE &&
-        state->zlib.avail_in == 0)
+    if (state->input.written == state->input.size &&
+        state->input.consumed == state->input.size)
     {
-        state->uncompressed.used = 0;
-        state->zlib.next_in = state->uncompressed.data;
+        state->input.written = 0;
+        state->input.consumed = 0;
     }
 
-    if (state->zlib.avail_out > 0) {
+    if (state->output.written < state->output.size) {
         /* Force flush after `compression_max_latency` ms have passed.
          * Note, this only makes sense when we have enough space for compressing
          * data. */
         int flush = mstime() - state->last_write > server.compression_max_latency;
         // if (flush) serverLog(LL_NOTICE, "Flushing client %llu", c->id);
-        int err = deflate(&state->zlib, flush ? Z_SYNC_FLUSH : Z_NO_FLUSH);
-        if (err != Z_OK && err != Z_BUF_ERROR) {
-            serverLog(LL_WARNING, "Flush compress error: %s (%d)",
-                      state->zlib.msg, err);
+        if (state->type->compress(state, flush) == -1) {
             clientDestroyCompressionState(c);
             return 1;
         }
@@ -599,36 +819,35 @@ int compressAndWrite(client *c, int *tot_written) {
     /* Try to write all the data available in the compressed buffer. */
     *tot_written = 0;
     int towrite =
-        state->zlib.next_out - (state->compressed.data + state->compressed.used);
-    while (towrite > 0) {
+        state->output.written - state->output.consumed;
+    do {
         int written = connWrite(
-            cc->underlying, state->compressed.data + state->compressed.used, towrite);
+            cc->underlying, state->output.data + state->output.consumed, towrite);
         if (written < 0) {
             return 1;
         }
 
         // if (written > 0) {
         //     char *buf = zmalloc(written + 1);
-        //     memcpy(buf, state->compressed.data+state->compressed.used, written);
+        //     memcpy(buf, state->output.data+state->output.consumed, written);
         //     buf[written] = 0;
-        //     printf("", buf);
+        //     printf("WRITTEN COMPRESSED: %s\n", buf);
         //     zfree(buf);
         // }
 
-        state->compressed.used += written;
+        state->output.consumed += written;
         *tot_written += written;
         towrite -= written;
 
         /* All of the compressed data was send to the socket so we need to reset
          * the compression buffer. */
-        if (state->compressed.used == ZLIB_TEMP_BUF_SIZE) {
-            serverAssert(towrite == 0 && state->zlib.avail_out == 0);
+        if (state->output.consumed == state->output.size) {
+            serverAssert(towrite == 0 && state->output.written == state->output.size);
 
-            state->compressed.used = 0;
-            state->zlib.next_out = state->compressed.data;
-            state->zlib.avail_out = ZLIB_TEMP_BUF_SIZE;
+            state->output.written = 0;
+            state->output.consumed = 0;
         }
-    }
+    } while (towrite > 0);
 
     if (*tot_written > 0)
         state->last_write = mstime();
@@ -644,56 +863,53 @@ int decompressInto(compressionState *state, char *buf, size_t buflen) {
 
     /* Decompress as much data as possible */
     while ((size_t)consumed < buflen &&
-           (state->zlib.avail_in > 0 ||
-            state->zlib.next_out > state->uncompressed.data + state->uncompressed.used))
+           (state->read_flush_pending ||
+            state->input.written > state->input.consumed ||
+            state->output.written > state->output.consumed))
     {
         /* Reset the decompressed buffer if all the available data is consumed */
-        if (state->uncompressed.used == ZLIB_TEMP_BUF_SIZE &&
-            state->zlib.avail_out == 0)
-        {
-            state->uncompressed.used = 0;
-            state->zlib.next_out = state->uncompressed.data;
-            state->zlib.avail_out = ZLIB_TEMP_BUF_SIZE;
+        if (state->output.consumed == state->output.size) {
+            state->output.written = 0;
+            state->output.consumed = 0;
         }
 
-        if (state->zlib.avail_in > 0) {
-            int err = inflate(&state->zlib, Z_SYNC_FLUSH);
-            if (err != Z_OK && err != Z_BUF_ERROR) {
-                serverLog(LL_NOTICE, "Decompress error: %s (%d)", state->zlib.msg, err);
+        if ((state->read_flush_pending && state->output.size > state->output.written) ||
+            state->input.written > state->input.consumed)
+        {
+            if (state->type->decompress(state) == -1) {
                 return -1;
             }
         }
 
         /* Copy the decompressed data to the output buffer */
-        if (state->zlib.next_out >
-            state->uncompressed.data + state->uncompressed.used)
-        {
-            int avail_decompressed =
-                ZLIB_TEMP_BUF_SIZE - state->zlib.avail_out;
-            int to_consume =
-                min(buflen - consumed,
-                    (size_t)(avail_decompressed - state->uncompressed.used));
-            memcpy(buf + consumed,
-                state->uncompressed.data + state->uncompressed.used, to_consume);
+        if (state->output.written > state->output.consumed) {
+            size_t nonconsumed_decompressed = state->output.written - state->output.consumed;
+            int to_consume = min(buflen - consumed, nonconsumed_decompressed);
+            memcpy(buf + consumed, state->output.data + state->output.consumed, to_consume);
 
             // if (to_consume > 0) {
-            //     char *buf = zmalloc(to_consume + 1);
-            //     memcpy(buf, state->uncompressed.data+state->uncompressed.used, to_consume);
-            //     buf[to_consume] = 0;
-            //     printf("\nDECOMPRESSED: %s\n", buf);
+            //     char *res = zmalloc(to_consume + 1);
+            //     memcpy(res, buf+consumed, to_consume);
+            //     res[to_consume] = 0;
+            //     printf("\nDECOMPRESSED: %s\n", res);
+            //     zfree(res);
             // }
 
-            state->uncompressed.used += to_consume;
+            state->output.consumed += to_consume;
             consumed += to_consume;
         }
     }
 
-    /* Reset the compressed buffer if we decompressed all the available data */
-    if (state->compressed.used == ZLIB_TEMP_BUF_SIZE &&
-        state->zlib.avail_in == 0)
+    if (state->output.consumed == state->output.size)
     {
-        state->compressed.used = 0;
-        state->zlib.next_in = state->compressed.data;
+        state->output.written = 0;
+        state->output.consumed = 0;
+    }
+
+    /* Reset the compressed buffer if we decompressed all the available data */
+    if (state->input.consumed == state->input.size) {
+        state->input.written = 0;
+        state->input.consumed = 0;
     }
 
     serverAssert((size_t)consumed <= buflen);
@@ -719,16 +935,16 @@ int readFromBufAndDecompress(client *c, char *input_buf, size_t input_len,
     *consumed = 0;
     while (*consumed <= input_len && (size_t)tot_decompressed < output_len) {
         int to_consume =
-            min(ZLIB_TEMP_BUF_SIZE - state->compressed.used,
+            min(state->input.size - state->input.written,
                 (int)(input_len - *consumed));
 
         if (to_consume)
-            memcpy(state->compressed.data + state->compressed.used,
+            memcpy(state->input.data + state->input.written,
                    input_buf + *consumed, to_consume);
 
         // if (to_consume > 0) {
         //     char *buf = zmalloc(to_consume + 1);
-        //     memcpy(buf, state->compressed.data+state->compressed.used, to_consume);
+        //     memcpy(buf, state->input.data+state->input.written, to_consume);
         //     buf[to_consume] = 0;
         //     printf("\nNREAD: %s\n", buf);
         //     zfree(buf);
@@ -736,8 +952,7 @@ int readFromBufAndDecompress(client *c, char *input_buf, size_t input_len,
 
         *consumed += to_consume;
 
-        state->compressed.used += to_consume;
-        state->zlib.avail_in += to_consume;
+        state->input.written += to_consume;
 
         int decompressed = decompressInto(state, output_buf + tot_decompressed,
                                           output_len - tot_decompressed);
@@ -754,8 +969,7 @@ int clientHasPendingCompressionFlush(client *c) {
     if (!state) return 0;
     if (state->dir != COMPRESS) return 0;
 
-    // return state->zlib.avail_out > 0 || (state->zlib.next_out - (state->compressed.data + state->compressed.used) > 0);
-    return mstime() - state->last_write >= server.compression_max_latency;
+    return state->write_flush_pending || (mstime() - state->last_write >= server.compression_max_latency);
 }
 
 int clientHasPendingCompressedData(client *c) {
@@ -763,18 +977,8 @@ int clientHasPendingCompressedData(client *c) {
     if (!state) return 0;
     if (state->dir != DECOMPRESS) return 0;
 
-    return state->zlib.avail_in > 0 &&
-           state->zlib.next_out > state->uncompressed.data + state->uncompressed.used;
+    return state->read_flush_pending ||
+           state->input.written > state->input.consumed ||
+           state->output.written > state->output.consumed;
 }
 
-int clientProcessPendingCompressedData(struct client *c) {
-    if (!connHasReadHandler(c->conn)) return 0;
-    if (!clientHasPendingCompressedData(c)) return 0;
-
-    compressionConnection *cc = (compressionConnection*)c->conn;
-    cc->handle_pending = 1;
-    cc->underlying->read_handler(cc->underlying);
-    cc->handle_pending = 0;
-
-    return 1;
-}

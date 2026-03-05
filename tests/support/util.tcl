@@ -666,11 +666,15 @@ proc populate {num {prefix key:} {size 3} {idx 0} {prints false} {expires 0} {ra
     r $idx deferred 1
     if {$num > 16} {set pipeline 16} else {set pipeline $num}
     if {$random} {
-        set val [randstring $size $size]
+        set baseval [randstring $size $size]
     } else {
         set val [string repeat A $size]
     }
     for {set j 0} {$j < $pipeline} {incr j} {
+        if {$random} {
+            set jstr [format "%08d" $j]
+            set val [string replace $baseval 0 7 $jstr]
+        }
         if {$expires > 0} {
             r $idx set $prefix$j $val ex $expires
         } else {
@@ -679,6 +683,10 @@ proc populate {num {prefix key:} {size 3} {idx 0} {prints false} {expires 0} {ra
         if {$prints} {puts $j}
     }
     for {} {$j < $num} {incr j} {
+        if {$random} {
+            set jstr [format "%08d" $j]
+            set val [string replace $baseval 0 7 $jstr]
+        }
         if {$expires > 0} {
             r $idx set $prefix$j $val ex $expires
         } else {

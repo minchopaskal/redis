@@ -888,7 +888,9 @@ void IOThreadCompressionCron(IOThread *t) {
     listRewind(t->compression_clients, &li);
     /* TODO: if compression is generalized for all types of clients this cron
      * will need to only process a portion of the clients (similar to
-     * IOThreadClientsCron) for performance reasons */
+     * IOThreadClientsCron) for performance reasons. I.e in such case the
+     * clientHasPendingCompressionFlush check may be moved directly to
+     * IOThreadClientsCron. */
     while ((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
 

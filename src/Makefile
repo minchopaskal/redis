@@ -150,6 +150,18 @@ endif
 FINAL_CFLAGS=$(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(REDIS_CFLAGS)
 FINAL_LDFLAGS=$(LDFLAGS) $(OPT) $(REDIS_LDFLAGS) $(DEBUG)
 FINAL_LIBS=-lm -lstdc++ -lz
+
+# Detect libzstd via pkg-config, fall back to -lzstd
+LIBZSTD_PKGCONFIG := $(shell $(PKG_CONFIG) --exists libzstd 2>/dev/null && echo $$?)
+ifeq ($(LIBZSTD_PKGCONFIG),0)
+	LIBZSTD_CFLAGS=$(shell $(PKG_CONFIG) --cflags libzstd)
+	LIBZSTD_LIBS=$(shell $(PKG_CONFIG) --libs libzstd)
+else
+	LIBZSTD_CFLAGS=
+	LIBZSTD_LIBS=-lzstd
+endif
+FINAL_CFLAGS+=$(LIBZSTD_CFLAGS)
+FINAL_LIBS+=$(LIBZSTD_LIBS)
 DEBUG=-g -ggdb
 
 # Linux ARM32 needs -latomic at linking time

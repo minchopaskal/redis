@@ -351,13 +351,13 @@ start_server {tags {"repl external:skip"}} {
             # In case of compression generate a command stream that is not well
             # compressed so we can reach the buffer limits easier.
             if {$::compression} {
-                populate 20 master 64000 0 false 0 true
+                populate 1000 master 500000 0 false 0 true
             } else {
                 populate 100 master 100000
             }
 
             # Wait for replica's buffer limit reached
-            wait_for_log_messages -1 {"*Replication buffer limit has been reached*"} 0 1000 10
+            wait_for_log_messages -1 {"*Replication buffer limit has been reached*"} 0 100 10
 
             # Speed up loading
             $replica config set key-load-delay 0

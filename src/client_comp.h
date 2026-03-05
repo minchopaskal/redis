@@ -39,6 +39,4 @@ int readFromBufAndDecompress(struct client *c, char *input_buf, size_t input_len
 int clientHasPendingCompressionFlush(struct client *c);
 int clientHasPendingCompressedData(struct client *c);
 
-int clientProcessPendingCompressedData(struct client *c);
-
 #endif /* __CLIENT_COMP_H */
