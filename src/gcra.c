@@ -101,8 +101,16 @@ void gcraCommand(client *c) {
 
     long long ttl_us;
     if (now > tat_us) {
+        if (LLONG_MAX - now < increment_us) {
+            addReplyError(c, "GCRA limiting uses microsecond accuracy. Combination of period, requests_per_period and num_requests would cause an overflow");
+            return;
+        }
         new_tat_us = now + increment_us;
     } else {
+        if (LLONG_MAX - tat_us < increment_us) {
+            addReplyError(c, "GCRA limiting uses microsecond accuracy. Combination of period, requests_per_period and num_requests would cause an overflow");
+            return;
+        }
         new_tat_us = tat_us + increment_us;
     }
 
