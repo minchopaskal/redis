@@ -29,7 +29,7 @@ struct compressionState {
         z_stream zlib;            /* Zlib state */
         ZSTD_CStream *zstdCCtx;  /* Zstd compression ctx */
         ZSTD_DStream *zstdDCtx;  /* Zstd decompression ctx */
-    };
+    } ctx;
     int write_flush_pending;    /* zstd: flush not yet completed, keep calling with ZSTD_e_flush */
     int read_flush_pending;    /* zstd: flush not yet completed, keep calling with ZSTD_e_flush */
     mstime_t last_write;  /* Time since last write. Used to check if it's time
@@ -50,11 +50,11 @@ static void zlib_free_wrapper(void *opaque, void *address) {
 }
 
 static int zlibInitCompress(compressionState *st, int level) {
-    st->zlib.zalloc = zlib_alloc_wrapper;
-    st->zlib.zfree = zlib_free_wrapper;
+    st->ctx.zlib.zalloc = zlib_alloc_wrapper;
+    st->ctx.zlib.zfree = zlib_free_wrapper;
 
-    if (deflateInit(&st->zlib, level) != Z_OK) {
-        serverLog(LL_NOTICE, "Failed to initialize zlib compression: %s", st->zlib.msg);
+    if (deflateInit(&st->ctx.zlib, level) != Z_OK) {
+        serverLog(LL_NOTICE, "Failed to initialize zlib compression: %s", st->ctx.zlib.msg);
         return -1;
     }
 
@@ -62,24 +62,24 @@ static int zlibInitCompress(compressionState *st, int level) {
     st->output.size = ZLIB_TEMP_BUF_SIZE;
     st->output.written = 0;
     st->output.consumed = 0;
-    st->zlib.avail_out = ZLIB_TEMP_BUF_SIZE;
-    st->zlib.next_out = st->output.data;
+    st->ctx.zlib.avail_out = ZLIB_TEMP_BUF_SIZE;
+    st->ctx.zlib.next_out = st->output.data;
 
     st->input.data = zmalloc(ZLIB_TEMP_BUF_SIZE);
     st->input.size = ZLIB_TEMP_BUF_SIZE;
     st->input.written = 0;
     st->input.consumed = 0;
-    st->zlib.avail_in = 0;
-    st->zlib.next_in = st->input.data;
+    st->ctx.zlib.avail_in = 0;
+    st->ctx.zlib.next_in = st->input.data;
 
     return 0;
 }
 
 static int zlibInitDecompress(compressionState *st) {
-    st->zlib.zalloc = zlib_alloc_wrapper;
-    st->zlib.zfree = zlib_free_wrapper;
-    if (inflateInit(&st->zlib) != Z_OK) {
-        serverLog(LL_NOTICE, "Failed to initialize zlib decompression: %s", st->zlib.msg);
+    st->ctx.zlib.zalloc = zlib_alloc_wrapper;
+    st->ctx.zlib.zfree = zlib_free_wrapper;
+    if (inflateInit(&st->ctx.zlib) != Z_OK) {
+        serverLog(LL_NOTICE, "Failed to initialize zlib decompression: %s", st->ctx.zlib.msg);
         return -1;
     }
 
@@ -87,60 +87,60 @@ static int zlibInitDecompress(compressionState *st) {
     st->input.size = ZLIB_TEMP_BUF_SIZE;
     st->input.written = 0;
     st->input.consumed = 0;
-    st->zlib.avail_in = 0;
-    st->zlib.next_in = st->input.data;
+    st->ctx.zlib.avail_in = 0;
+    st->ctx.zlib.next_in = st->input.data;
 
     st->output.data = zmalloc(ZLIB_TEMP_BUF_SIZE);
     st->output.size = ZLIB_TEMP_BUF_SIZE;
     st->output.written = 0;
     st->output.consumed = 0;
-    st->zlib.avail_out = ZLIB_TEMP_BUF_SIZE;
-    st->zlib.next_out = st->output.data;
+    st->ctx.zlib.avail_out = ZLIB_TEMP_BUF_SIZE;
+    st->ctx.zlib.next_out = st->output.data;
 
     return 0;
 }
 
 static int zlibCompress(compressionState *st, int flush) {
-    st->zlib.next_out = st->output.data + st->output.written;
-    st->zlib.avail_out = st->output.size - st->output.written;
-    st->zlib.next_in = st->input.data + st->input.consumed;
-    st->zlib.avail_in =  st->input.written - st->input.consumed;
+    st->ctx.zlib.next_out = st->output.data + st->output.written;
+    st->ctx.zlib.avail_out = st->output.size - st->output.written;
+    st->ctx.zlib.next_in = st->input.data + st->input.consumed;
+    st->ctx.zlib.avail_in =  st->input.written - st->input.consumed;
 
-    int err = deflate(&st->zlib, flush ? Z_SYNC_FLUSH : Z_NO_FLUSH);
+    int err = deflate(&st->ctx.zlib, flush ? Z_SYNC_FLUSH : Z_NO_FLUSH);
     if (err != Z_OK && err != Z_BUF_ERROR) {
-        serverLog(LL_WARNING, "zlib compress error: %s (%d)", st->zlib.msg, err);
+        serverLog(LL_WARNING, "zlib compress error: %s (%d)", st->ctx.zlib.msg, err);
         return -1;
     }
 
-    st->output.written = st->zlib.next_out - st->output.data;
-    st->input.consumed = st->zlib.next_in - st->input.data;
+    st->output.written = st->ctx.zlib.next_out - st->output.data;
+    st->input.consumed = st->ctx.zlib.next_in - st->input.data;
 
     return 0;
 }
 
 static int zlibDecompress(compressionState *st) {
-    st->zlib.next_in = st->input.data + st->input.consumed;
-    st->zlib.avail_in = st->input.written - st->input.consumed;
-    st->zlib.next_out = st->output.data + st->output.written;
-    st->zlib.avail_out = st->output.size - st->output.written;
+    st->ctx.zlib.next_in = st->input.data + st->input.consumed;
+    st->ctx.zlib.avail_in = st->input.written - st->input.consumed;
+    st->ctx.zlib.next_out = st->output.data + st->output.written;
+    st->ctx.zlib.avail_out = st->output.size - st->output.written;
 
-    int err = inflate(&st->zlib, Z_SYNC_FLUSH);
+    int err = inflate(&st->ctx.zlib, Z_SYNC_FLUSH);
     if (err != Z_OK && err != Z_BUF_ERROR) {
-        serverLog(LL_NOTICE, "zlib decompress error: %s (%d)", st->zlib.msg, err);
+        serverLog(LL_NOTICE, "zlib decompress error: %s (%d)", st->ctx.zlib.msg, err);
         return -1;
     }
 
-    st->output.written = st->zlib.next_out - st->output.data;
-    st->input.consumed = st->zlib.next_in - st->input.data;
+    st->output.written = st->ctx.zlib.next_out - st->output.data;
+    st->input.consumed = st->ctx.zlib.next_in - st->input.data;
 
     return 0;
 }
 
 static void zlibEnd(compressionState *st) {
     if (st->dir == COMPRESS)
-        deflateEnd(&st->zlib);
+        deflateEnd(&st->ctx.zlib);
     else if (st->dir == DECOMPRESS)
-        inflateEnd(&st->zlib);
+        inflateEnd(&st->ctx.zlib);
 }
 
 static const compressionType zlibType = {
@@ -154,12 +154,12 @@ static const compressionType zlibType = {
 /* --- zstd --- */
 
 static int zstdInitCompress(compressionState *st, int level) {
-    st->zstdCCtx = ZSTD_createCStream();
-    if (!st->zstdCCtx) {
+    st->ctx.zstdCCtx = ZSTD_createCStream();
+    if (!st->ctx.zstdCCtx) {
         serverLog(LL_NOTICE, "Failed to create ZSTD compression context");
         return -1;
     }
-    ZSTD_CCtx_setParameter(st->zstdCCtx, ZSTD_c_compressionLevel, level);
+    ZSTD_CCtx_setParameter(st->ctx.zstdCCtx, ZSTD_c_compressionLevel, level);
 
     size_t outSize = ZSTD_CStreamOutSize();
     st->output.data = zmalloc(outSize);
@@ -179,8 +179,8 @@ static int zstdInitCompress(compressionState *st, int level) {
 }
 
 static int zstdInitDecompress(compressionState *st) {
-    st->zstdDCtx = ZSTD_createDStream();
-    if (!st->zstdDCtx) {
+    st->ctx.zstdDCtx = ZSTD_createDStream();
+    if (!st->ctx.zstdDCtx) {
         serverLog(LL_NOTICE, "Failed to create ZSTD decompression context");
         return -1;
     }
@@ -222,7 +222,7 @@ static int zstdCompress(compressionState *st, int flush) {
 
     size_t ret;
     do {
-        ret = ZSTD_compressStream2(st->zstdCCtx, &output, &input, directive);
+        ret = ZSTD_compressStream2(st->ctx.zstdCCtx, &output, &input, directive);
         if (ZSTD_isError(ret)) {
             serverLog(LL_WARNING, "zstd compress error: %s", ZSTD_getErrorName(ret));
             return -1;
@@ -249,7 +249,7 @@ static int zstdDecompress(compressionState *st) {
         .pos  = st->output.written
     };
 
-    size_t ret = ZSTD_decompressStream(st->zstdDCtx, &output, &input);
+    size_t ret = ZSTD_decompressStream(st->ctx.zstdDCtx, &output, &input);
     if (ZSTD_isError(ret)) {
         serverLog(LL_NOTICE, "zstd decompress error: %s", ZSTD_getErrorName(ret));
         return -1;
@@ -266,10 +266,10 @@ static int zstdDecompress(compressionState *st) {
 }
 
 static void zstdEnd(compressionState *st) {
-    if (st->dir == COMPRESS && st->zstdCCtx)
-        ZSTD_freeCStream(st->zstdCCtx);
-    else if (st->dir == DECOMPRESS && st->zstdDCtx)
-        ZSTD_freeDStream(st->zstdDCtx);
+    if (st->dir == COMPRESS && st->ctx.zstdCCtx)
+        ZSTD_freeCStream(st->ctx.zstdCCtx);
+    else if (st->dir == DECOMPRESS && st->ctx.zstdDCtx)
+        ZSTD_freeDStream(st->ctx.zstdDCtx);
 }
 
 static const compressionType zstdType = {
