@@ -84,19 +84,20 @@ void gcraCommand(client *c) {
     double period_us = period * 1000000.;
     long long emission_interval_us = (long long)(period_us / requests_per_period);
     if (unlikely(emission_interval_us == 0)) emission_interval_us = 1;
-    long long increment_us = emission_interval_us * num_requests;
-    long long variance_us = emission_interval_us * max_burst;
 
     /* overflow checks. In normal circumstances we shouldn't get these but the
      * user may have wrongfully specified very large values */
-    if (increment_us < emission_interval_us) {
+    if (emission_interval_us > LLONG_MAX / num_requests) {
         addReplyError(c, "GCRA limiting uses microsecond accuracy. Combination of period, requests_per_period and num_requests would cause an overflow");
         return;
     }
-    if (variance_us < emission_interval_us) {
+    if (emission_interval_us > LLONG_MAX / max_burst) {
         addReplyError(c, "GCRA limiting uses microsecond accuracy. Combination of period, requests_per_period and max_burst would cause an overflow");
         return;
     }
+
+    long long increment_us = emission_interval_us * num_requests;
+    long long variance_us = emission_interval_us * max_burst;
 
     long long ttl_us;
     if (now > tat_us) {

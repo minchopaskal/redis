@@ -222,5 +222,9 @@ start_server {tags {"gcra" "external:skip"}} {
         r del mykey
         catch {r gcra mykey 200000000 1 86400} err
         assert_match "*would cause an overflow*" $err
+
+        r del mykey
+        catch {r gcra mykey 1 1 2147483647 NUM_REQUESTS 2147483647} err
+        assert_match "*would cause an overflow*" $err
     }
 }
