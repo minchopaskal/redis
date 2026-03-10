@@ -672,6 +672,8 @@ int RedisRegisterConnectionTypeCompression(void) {
 }
 
 int compressionStateCreate(client *c) {
+    UNUSED(zlibType);
+
     compressionState *st = zmalloc(sizeof(compressionState));
     st->type = &zstdType;
     st->last_write = 0;
