@@ -159,7 +159,12 @@ static int zstdInitCompress(compressionState *st, int level) {
         serverLog(LL_NOTICE, "Failed to create ZSTD compression context");
         return -1;
     }
-    ZSTD_CCtx_setParameter(st->ctx.zstdCCtx, ZSTD_c_compressionLevel, level);
+    size_t res = ZSTD_CCtx_setParameter(st->ctx.zstdCCtx, ZSTD_c_compressionLevel, level);
+    if (ZSTD_isError(res)) {
+        ZSTD_freeCStream(st->ctx.zstdCCtx);
+        serverLog(LL_NOTICE, "Failed to set compression level for ZSTD compression context");
+        return -1;
+    }
 
     size_t outSize = ZSTD_CStreamOutSize();
     st->output.data = zmalloc(outSize);
@@ -215,8 +220,14 @@ static int zstdCompress(compressionState *st, int flush) {
     };
 
     ZSTD_EndDirective directive;
+    /* We use ZSTD_e_end instead of ZSTD_e_flush when we want to flush zstd's.
+     * This flushes zstd's internal buffers but also ends the current frame.
+     * This of couse lowers the compression ratio but massively increases speed
+     * on the decompression side also, as it doesnt need to wait for more data.
+     * The resulting compression ratio is still very good (tested with default
+     * compression level). */
     if (flush || st->write_flush_pending)
-        directive = ZSTD_e_flush;
+        directive = ZSTD_e_end;
     else
         directive = ZSTD_e_continue;
 
@@ -227,9 +238,13 @@ static int zstdCompress(compressionState *st, int flush) {
             serverLog(LL_WARNING, "zstd compress error: %s", ZSTD_getErrorName(ret));
             return -1;
         }
-    } while (directive == ZSTD_e_flush && ret > 0 && output.pos < output.size);
+    } while (/*directive == ZSTD_e_end && */ret > 0 && output.pos < output.size);
 
-    st->write_flush_pending = (directive == ZSTD_e_flush && ret > 0);
+    /* If we pass a directive differnt than ZSTD_e_continue to zstd we want to
+     * keep using that directive until compressStream2 returns 0. By keeping
+     * this flag raised we know we are in the process of flushing data, i.e we
+     * cannot use ZSTD_e_continue before we have flushed it all. */
+    st->write_flush_pending = (directive == ZSTD_e_end && ret > 0);
 
     st->input.consumed = input.pos;
     st->output.written = output.pos;
@@ -266,10 +281,32 @@ static int zstdDecompress(compressionState *st) {
 }
 
 static void zstdEnd(compressionState *st) {
-    if (st->dir == COMPRESS && st->ctx.zstdCCtx)
+    if (st->dir == COMPRESS && st->ctx.zstdCCtx) {
+        if (st->write_flush_pending) {
+            size_t sz = ZSTD_CStreamOutSize();
+            char *tmp = zmalloc(sz);
+            ZSTD_inBuffer input = {
+                .src  = NULL,
+                .size = 0,
+                .pos  = 0
+            };
+            ZSTD_outBuffer output = {
+                .dst  = tmp,
+                .size = sz,
+                .pos  = 0
+            };
+            while (ZSTD_compressStream2(st->ctx.zstdCCtx, &output, &input, ZSTD_e_end) > 0) {
+                /* Just ignore the output, we are closing the compression state
+                 * anyways */
+                output.pos = 0;
+            }
+        }
         ZSTD_freeCStream(st->ctx.zstdCCtx);
-    else if (st->dir == DECOMPRESS && st->ctx.zstdDCtx)
+        st->ctx.zstdCCtx = NULL;
+    } else if (st->dir == DECOMPRESS && st->ctx.zstdDCtx) {
         ZSTD_freeDStream(st->ctx.zstdDCtx);
+        st->ctx.zstdDCtx = NULL;
+    }
 }
 
 static const compressionType zstdType = {
@@ -295,8 +332,9 @@ int decompressInto(compressionState *state, char *buf, size_t buflen);
 static void compressionPendingAdd(compressionConnection *cc) {
     if (cc->pending_data_node) return;
 
-    if (!cc->underlying->el->privdata[2])
+    if (!cc->underlying->el->privdata[2]) {
         cc->underlying->el->privdata[2] = listCreate();
+    }
 
     list *l = cc->underlying->el->privdata[2];
     listAddNodeTail(l, cc);
@@ -304,9 +342,14 @@ static void compressionPendingAdd(compressionConnection *cc) {
 }
 
 static void compressionPendingRemove(compressionConnection *cc) {
+    if (!cc->pending_data_node) return;
+
     list *l = cc->underlying->el->privdata[2];
-    if (!l || listLength(l) == 0) return;
-    listDelNode(l, cc->pending_data_node);
+    if (l && listLength(l) > 0 && listSearchKey(l, cc) == cc->pending_data_node) {
+        listDelNode(l, cc->pending_data_node);
+    } else if (cc->pending_data_node) {
+        zfree(cc->pending_data_node);
+    }
     cc->pending_data_node = NULL;
 }
 
@@ -411,10 +454,14 @@ static int connCompressionRead(struct connection *conn, void *buf, size_t buf_le
     if (decompressed == 0 && connGetState(cc->underlying) == CONN_STATE_CONNECTED)
         return -1;
 
-    if (connGetState(conn) == CONN_STATE_CONNECTED && clientHasPendingCompressedData(c)) {
-        compressionPendingAdd(cc);
-    } else {
-        compressionPendingRemove(cc);
+    /* No need to give pending work to main thread as the client must be send to
+     * IO-thread soon enough. */
+    if (c->running_tid != IOTHREAD_MAIN_THREAD_ID) {
+        if (connGetState(conn) == CONN_STATE_CONNECTED && clientHasPendingCompressedData(c)) {
+            compressionPendingAdd(cc);
+        } else if (cc->pending_data_node) {
+            compressionPendingRemove(cc);
+        }
     }
 
     return decompressed;
@@ -521,9 +568,10 @@ static void connCompressionUnbindEventLoop(connection *conn) {
         int mask = aeGetFileEvents(el, cc->underlying->fd);
         if (mask & AE_READABLE) aeDeleteFileEvent(el, fd, AE_READABLE);
         if (mask & AE_WRITABLE) aeDeleteFileEvent(el, fd, AE_WRITABLE);
-    }
-    if (cc->pending_data_node) {
-        compressionPendingRemove(cc);
+
+        if (cc->pending_data_node) {
+            compressionPendingRemove(cc);
+        }
     }
 }
 
@@ -600,7 +648,7 @@ static int compressionProcessPendingData(struct aeEventLoop *el) {
     listRewind(pending_list,&li);
     while((ln = listNext(&li))) {
         compressionConnection *cc = listNodeValue(ln);
-        if (!cc || !connHasReadHandler((connection*)cc)) continue;
+        if (!cc || !cc->underlying || !connHasReadHandler((connection*)cc)) continue;
 
         cc->handle_pending = 1;
         cc->underlying->read_handler(cc->underlying);
@@ -728,6 +776,7 @@ int clientCreateCompressionState(client *c, compressionDirection dir) {
 
         serverLog(LL_NOTICE, "Decompression for master client initialized.");
     } else {
+        /* Inaccessible */
         serverAssert(0);
     }
 
@@ -876,7 +925,7 @@ int decompressInto(compressionState *state, char *buf, size_t buflen) {
         }
 
         if ((state->read_flush_pending && state->output.size > state->output.written) ||
-            state->input.written > state->input.consumed)
+             state->input.written > state->input.consumed)
         {
             if (state->type->decompress(state) == -1) {
                 return -1;
@@ -979,7 +1028,7 @@ int clientHasPendingCompressedData(client *c) {
     if (!state) return 0;
     if (state->dir != DECOMPRESS) return 0;
 
-    return state->read_flush_pending ||
+    return (state->read_flush_pending && state->output.size > state->output.written) ||
            state->input.written > state->input.consumed ||
            state->output.written > state->output.consumed;
 }

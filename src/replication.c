@@ -4556,11 +4556,6 @@ void replicationCacheMaster(client *c) {
     resetClient(c, -1);
     resetClientQbufState(c);
 
-    /* Make sure to destroy cached master's compression state as otherwise after
-     * resurrection its state would be invalid. The compression would be
-     * reinitialized next time we try to sync with the cached master. */
-    clientDestroyCompressionState(server.master);
-
     /* Save the master. Server.master will be set to null later by
      * replicationHandleMasterDisconnection(). */
     server.cached_master = server.master;
