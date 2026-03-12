@@ -216,6 +216,8 @@ void gcraCommand(client *c) {
         }
         long long when = new_tat_us / 1000;
         kv = setExpireByLink(c, c->db, key->ptr, when, link);
+
+        server.dirty++;
     }
 
     long long next_us = variance_us - ttl_us;
