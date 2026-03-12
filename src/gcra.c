@@ -10,14 +10,14 @@
 #include <math.h>
 
 /* GCRA algorithm for rate limiting.
- * Implementation is heavily based on the implmentation of (redis-cell)
+ * Implementation is heavily based on the implementation of (redis-cell)
  * [https://github.com/brandur/redis-cell] by (brandur)[https://github.com/brandur].
  *
  * It is a leaky-bucket type algorithm but instead of periodically dripping, we
  * calculate the next time the bucket has capacity - called
- * Theoretical arival time(TaT) by the algorithm. We allow requests at a
+ * Theoretical arrival time(TaT) by the algorithm. We allow requests at a
  * sustained rate (f.e 5 request per 10 seconds, i.e 1 request per 2 seconds)
- * but also allow bursts of multple request at one time.
+ * but also allow bursts of multiple request at one time.
  *
  * Explanation of the algorithm follows using the leaky-bucket analogy.
  *
@@ -30,7 +30,7 @@
  * If this time is in the past the request is allowed, otherwise we wait and TaT
  * is not updated. This only accounts for 1 request though. In order to allow
  * bursts we can imagine a full burst fully filling an empty bucket this
- * we need to calucate the time after which "the bucket will completely drain"
+ * we need to calculate the time after which "the bucket will completely drain"
  * the requests of the burst - this will be t = T * max_burst.
  * At last the allowance check will be:
  *
