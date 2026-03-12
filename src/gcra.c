@@ -151,11 +151,11 @@ void gcraCommand(client *c) {
 
     /* Emission interval is the minimum amount of time between requests.
      * Note on calculations:
-     * Even if emission_interval_us becomes less than 1us by adding 0.5, the
-     * cast to long long will ensure result is at least 1us. The API is already
-     * in seconds granularity so it is expected the user won't need a
-     * submicrosecond accuracy. */
+     * Even if emission_interval_us becomes less than 1us, we assume it's min
+     * 1ms. The API is already in seconds granularity so it is expected the user
+     * won't need a submicrosecond accuracy. */
     long long emission_interval_us = (long long)(period_us / requests_per_period + 0.5);
+    if (unlikely(emission_interval_us == 0)) emission_interval_us = 1;
 
     /* overflow checks. In normal circumstances we shouldn't get these but the
      * user may have wrongfully specified very large values.
