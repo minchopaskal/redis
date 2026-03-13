@@ -772,6 +772,10 @@ proc resume_process {pid} {
         after 100
     }
 
+    if {$attemp == $max_attempts} {
+        fail "system failed to initiate resuming of process"
+    }
+
     wait_for_condition 50 1000 {
         [string match "R*" [exec ps -o state= -p $pid]] ||
         [string match "S*" [exec ps -o state= -p $pid]]
