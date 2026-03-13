@@ -772,7 +772,7 @@ proc resume_process {pid} {
         after 100
     }
 
-    if {$attemp == $max_attempts} {
+    if {$attempt == $max_attempts} {
         fail "system failed to initiate resuming of process"
     }
 
