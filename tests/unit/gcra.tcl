@@ -228,3 +228,39 @@ start_server {tags {"gcra" "external:skip"}} {
         assert_match "*would cause an overflow*" $err
     }
 }
+
+start_server {tags {"gcra repl" "external:skip"}} {
+    set replica [srv 0 client]
+    set replica_host [srv 0 host]
+    set replica_port [srv 0 port]
+    set replica_log [srv 0 stdout]
+
+    start_server {tags {}} {
+        set master [srv 0 client]
+        set master_host [srv 0 host]
+        set master_port [srv 0 port]
+
+        $master flushdb
+        $replica flushdb
+
+        $replica replicaof $master_host $master_port
+        wait_for_condition 100 100 {
+            [s -1 master_link_status] eq "up"
+        } else {
+            fail "Master <-> Replica didn't finish sync"
+        }
+
+        set cmdinfo [$replica info commandstats]
+        assert_equal [lsearch -glob $cmdinfo "cmdstat_gcra:*"] -1
+        assert_equal [lsearch -glob $cmdinfo "cmdstat_set:*"] -1
+
+        $master del mykey
+        $master gcra mykey 2 1 1000 NUM_REQUESTS 2
+
+        wait_for_ofs_sync $master $replica
+
+        set cmdinfo [$replica info commandstats]
+        assert_equal [lsearch -glob $cmdinfo "cmdstat_gcra:*"] -1
+        assert_morethan_equal [lsearch -glob $cmdinfo "cmdstat_set:*"] 0
+    }
+}

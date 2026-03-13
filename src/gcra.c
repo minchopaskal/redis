@@ -29,7 +29,7 @@
  * calculate the time at which "the bucket dripped", which is TaT-T.
  * If this time is in the past the request is allowed, otherwise we wait and TaT
  * is not updated. This only accounts for 1 request though. In order to allow
- * bursts we can imagine a full burst fully filling an empty bucket this
+ * bursts we can imagine a full burst fully filling an empty bucket, thus
  * we need to calculate the time after which "the bucket will completely drain"
  * the requests of the burst - this will be t = T * max_burst.
  * At last the allowance check will be:
@@ -107,6 +107,10 @@ void gcraCommand(client *c) {
     }
     if (period <= 0) {
         addReplyError(c, "period must be > 0");
+        return;
+    }
+    if (period >= 1e12) {
+        addReplyError(c, "period must be < 1e12");
         return;
     }
 
@@ -198,10 +202,13 @@ void gcraCommand(client *c) {
      * time we ask (i.e now) we allow the request, otherwise we limit it and
      * calculate after how much time the user should retry. */
     long long allow_at = new_tat_us - variance_us;
-    long long diff_us = now - allow_at;
+    long long diff_us = now - allow_at; // variance - increment
     if (diff_us < 0) {
         limited = 1;
-        if (increment_us < variance_us) {
+        /* NOTE: if increment is more than variance, then number of requests is
+         * more than what is maximally allowed (i.e max_bursts + 1) so we leave
+         * retry_after_s to -1 in this case, as it should never be retried. */
+        if (increment_us <= variance_us) {
             retry_after_s = ceil((-diff_us) / 1000000.);
         }
         ttl_us = tat_us - now;
@@ -214,14 +221,23 @@ void gcraCommand(client *c) {
         } else {
             setKeyByLink(c, c->db, key, &tatobj, SETKEY_DOESNT_EXIST, &link);
         }
+        notifyKeyspaceEvent(NOTIFY_STRING,"set",key,c->db->id);
+
         long long when = new_tat_us / 1000;
         kv = setExpireByLink(c, c->db, key->ptr, when, link);
+        notifyKeyspaceEvent(NOTIFY_GENERIC,"expire",key,c->db->id);
+
+        /* Replicating the command directly would mess up TaT as we use
+         * commandTimeSnapshot. We instead rewrite the command as SET with the
+         * appropriate expire time. */
+        robj *pexat_obj = createStringObjectFromLongLong(when);
+        rewriteClientCommandVector(c, 5, shared.set, key, kv, shared.pxat, pexat_obj);
+        decrRefCount(pexat_obj);
 
         server.dirty++;
     }
 
     long long next_us = variance_us - ttl_us;
-    remaining = 0;
     if (next_us > -emission_interval_us) {
         remaining = next_us / emission_interval_us;
     }
