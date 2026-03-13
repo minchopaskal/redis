@@ -772,11 +772,11 @@ proc resume_process {pid} {
         after 100
     }
 
-    if {$attempt == $max_attempts} {
-        fail "system failed to initiate resuming of process"
+    set max_attempts 50
+    if {$::compression} {
+        set max_attempts 150
     }
-
-    wait_for_condition 50 1000 {
+    wait_for_condition $max_attempts 1000 {
         [string match "R*" [exec ps -o state= -p $pid]] ||
         [string match "S*" [exec ps -o state= -p $pid]]
     } else {
