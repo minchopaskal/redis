@@ -105,12 +105,8 @@ void gcraCommand(client *c) {
     if (getDoubleFromObjectOrReply(c, c->argv[4], &period, NULL) != C_OK) {
         return;
     }
-    if (period <= 0) {
-        addReplyError(c, "period must be > 0");
-        return;
-    }
-    if (period >= 1e12) {
-        addReplyError(c, "period must be < 1e12");
+    if (period <= 0 || period >= 1e12) {
+        addReplyError(c, "period must be > 0 and < 1e12");
         return;
     }
 
