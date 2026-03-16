@@ -142,6 +142,10 @@ void gcraCommand(client *c) {
             addReplyError(c, "Invalid GCRA key");
             return;
         }
+        if (tat_us <= 0) {
+            addReplyError(c, "Negative time is invalid value for GCRA");
+            return;
+        }
     } else {
         tat_us = now;
     }
@@ -178,7 +182,6 @@ void gcraCommand(client *c) {
      * Hence for multiple requests we multiple by their number. */
     long long increment_us = emission_interval_us * num_requests;
 
-    long long ttl_us;
     long long base_us = (now > tat_us) ? now : tat_us;
     if (LLONG_MAX - base_us < increment_us) {
         addReplyError(c, "GCRA limiting uses microsecond accuracy. Combination of period, requests_per_period and num_requests would cause an overflow");
@@ -191,7 +194,8 @@ void gcraCommand(client *c) {
      * time we ask (i.e now) we allow the request, otherwise we limit it and
      * calculate after how much time the user should retry. */
     long long allow_at = new_tat_us - variance_us;
-    long long diff_us = now - allow_at; // variance - increment
+    long long diff_us = now - allow_at;
+    long long ttl_us;
     if (diff_us < 0) {
         limited = 1;
         /* NOTE: if increment is more than variance, then number of requests is
