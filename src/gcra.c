@@ -179,19 +179,12 @@ void gcraCommand(client *c) {
     long long increment_us = emission_interval_us * num_requests;
 
     long long ttl_us;
-    if (now > tat_us) {
-        if (LLONG_MAX - now < increment_us) {
-            addReplyError(c, "GCRA limiting uses microsecond accuracy. Combination of period, requests_per_period and num_requests would cause an overflow");
-            return;
-        }
-        new_tat_us = now + increment_us;
-    } else {
-        if (LLONG_MAX - tat_us < increment_us) {
-            addReplyError(c, "GCRA limiting uses microsecond accuracy. Combination of period, requests_per_period and num_requests would cause an overflow");
-            return;
-        }
-        new_tat_us = tat_us + increment_us;
+    long long base_us = (now > tat_us) ? now : tat_us;
+    if (LLONG_MAX - base_us < increment_us) {
+        addReplyError(c, "GCRA limiting uses microsecond accuracy. Combination of period, requests_per_period and num_requests would cause an overflow");
+        return;
     }
+    new_tat_us = base_us + increment_us;
 
     /* Calculate the time a request is allowed. This is TaT, but because we allow
      * a burst we move that time in the past. If the allow time is before the
