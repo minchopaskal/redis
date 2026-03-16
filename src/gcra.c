@@ -212,11 +212,7 @@ void gcraCommand(client *c) {
         limited = 0;
         ttl_us = new_tat_us - now;
         robj *tatobj = createStringObjectFromLongLong(new_tat_us);
-        if (kv) {
-            setKeyByLink(c, c->db, key, &tatobj, SETKEY_ALREADY_EXIST, &link);
-        } else {
-            setKeyByLink(c, c->db, key, &tatobj, SETKEY_DOESNT_EXIST, &link);
-        }
+        setKeyByLink(c, c->db, key, &tatobj, kv ? SETKEY_ALREADY_EXIST : SETKEY_DOESNT_EXIST, &link);
         notifyKeyspaceEvent(NOTIFY_STRING,"set",key,c->db->id);
 
         long long when = new_tat_us / 1000;
