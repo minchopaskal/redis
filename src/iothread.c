@@ -10,9 +10,11 @@
 
 #include "server.h"
 
+#define IO_DEFAULT_HZ CONFIG_DEFAULT_HZ
+
 /* Replicates the behaviour of run_with_period used in serverCron but for
  * IO threads. IO threads use default Hz for now. */
-#define run_with_period_io(_t_, _ms_) _run_with_period((_t_)->cronloops, (_ms_), CONFIG_DEFAULT_HZ)
+#define run_with_period_io(_t_, _ms_) _run_with_period((_t_)->cronloops, (_ms_), IO_DEFAULT_HZ)
 
 /* IO threads. */
 static IOThread IOThreads[IO_THREADS_MAX_NUM];
@@ -864,7 +866,7 @@ void IOThreadClientsCron(IOThread *t) {
     /* Process at least a few clients while we are at it, even if we need
      * to process less than CLIENTS_CRON_MIN_ITERATIONS to meet our contract
      * of processing each client once per second. */
-    int iterations = listLength(t->clients) / CONFIG_DEFAULT_HZ;
+    int iterations = listLength(t->clients) / IO_DEFAULT_HZ;
     if (iterations < CLIENTS_CRON_MIN_ITERATIONS) {
         iterations = CLIENTS_CRON_MIN_ITERATIONS;
     }
@@ -921,7 +923,7 @@ void IOThreadCompressionCron(IOThread *t) {
     }
 }
 
-/* This is the IO thread timer interrupt, CONFIG_DEFAULT_HZ times per second.
+/* This is the IO thread timer interrupt, IO_DEFAULT_HZ times per second.
  * The current responsibility is to detect clients that have been stuck in the
  * IO thread for too long and hand them over to the main thread for handling. */
 int IOThreadCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
@@ -934,7 +936,7 @@ int IOThreadCron(struct aeEventLoop *eventLoop, long long id, void *clientData) 
     /* Run cron tasks for the clients in the IO thread. */
     IOThreadClientsCron(t);
 
-    return 1000/CONFIG_DEFAULT_HZ;
+    return 1000/IO_DEFAULT_HZ;
 }
 
 /* The main function of IO thread, it will run an event loop. The mian thread
