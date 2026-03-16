@@ -5,6 +5,7 @@
 
 #define ZLIB_TEMP_BUF_SIZE 16 * 1024
 
+/* Abstraction over compression library */
 typedef struct compressionType {
     int (*init_compress)(struct compressionState *st, int level);
     int (*init_decompress)(struct compressionState *st);
@@ -13,6 +14,8 @@ typedef struct compressionType {
     void (*end)(struct compressionState *st);
 } compressionType;
 
+/* Temporary buffer used by compression library to store compressed/decompressed
+ * data. */
 typedef struct {
     unsigned char *data;
     int size;
@@ -30,8 +33,8 @@ struct compressionState {
         ZSTD_CStream *zstdCCtx;  /* Zstd compression ctx */
         ZSTD_DStream *zstdDCtx;  /* Zstd decompression ctx */
     } ctx;
-    int write_flush_pending;    /* zstd: flush not yet completed, keep calling with ZSTD_e_flush */
-    int read_flush_pending;    /* zstd: flush not yet completed, keep calling with ZSTD_e_flush */
+    int write_flush_pending;    /* write flush not yet completed */
+    int read_flush_pending;    /* read flush not yet completed */
     mstime_t last_write;  /* Time since last write. Used to check if it's time
                            * to flush the buffer */
     compressionDirection dir;
@@ -166,12 +169,14 @@ static int zstdInitCompress(compressionState *st, int level) {
         return -1;
     }
 
+    /* temp buf storing compressed data */
     size_t outSize = ZSTD_CStreamOutSize();
     st->output.data = zmalloc(outSize);
     st->output.size = outSize;
     st->output.written = 0;
     st->output.consumed = 0;
 
+    /* temp buf storing uncompressed data */
     size_t inSize = ZSTD_CStreamInSize();
     st->input.data = zmalloc(inSize);
     st->input.size = inSize;
@@ -190,12 +195,14 @@ static int zstdInitDecompress(compressionState *st) {
         return -1;
     }
 
+    /* temp buf storing compressed data */
     size_t inSize = ZSTD_DStreamInSize();
     st->input.data = zmalloc(inSize);
     st->input.size = inSize;
     st->input.written = 0;
     st->input.consumed = 0;
 
+    /* temp buf storing decompressed data */
     size_t outSize = ZSTD_DStreamOutSize();
     st->output.data = zmalloc(outSize);
     st->output.size = outSize;
@@ -222,8 +229,8 @@ static int zstdCompress(compressionState *st, int flush) {
     ZSTD_EndDirective directive;
     /* We use ZSTD_e_end instead of ZSTD_e_flush when we want to flush zstd's.
      * This flushes zstd's internal buffers but also ends the current frame.
-     * This of couse lowers the compression ratio but massively increases speed
-     * on the decompression side also, as it doesnt need to wait for more data.
+     * This of course lowers the compression ratio but massively increases speed
+     * on the decompression side also, as it doesn't need to wait for more data.
      * The resulting compression ratio is still very good (tested with default
      * compression level). */
     if (flush || st->write_flush_pending)
@@ -238,9 +245,9 @@ static int zstdCompress(compressionState *st, int flush) {
             serverLog(LL_WARNING, "zstd compress error: %s", ZSTD_getErrorName(ret));
             return -1;
         }
-    } while (/*directive == ZSTD_e_end && */ret > 0 && output.pos < output.size);
+    } while (ret > 0 && output.pos < output.size);
 
-    /* If we pass a directive differnt than ZSTD_e_continue to zstd we want to
+    /* If we pass a directive different than ZSTD_e_continue to zstd we want to
      * keep using that directive until compressStream2 returns 0. By keeping
      * this flag raised we know we are in the process of flushing data, i.e we
      * cannot use ZSTD_e_continue before we have flushed it all. */
@@ -282,6 +289,7 @@ static int zstdDecompress(compressionState *st) {
 
 static void zstdEnd(compressionState *st) {
     if (st->dir == COMPRESS && st->ctx.zstdCCtx) {
+        /* Flush any pending data so context is in a good state before closing it */
         if (st->write_flush_pending) {
             size_t sz = ZSTD_CStreamOutSize();
             char *tmp = zmalloc(sz);
@@ -317,7 +325,11 @@ static const compressionType zstdType = {
     .end = zstdEnd,
 };
 
-/* Compression connection */
+/* Compression connection. It wraps over existing connection in order to add
+ * compression capability during read/write operations. The `base` member is only
+ * used for getting the ConnectionType but whenever we do any operation on the
+ * connection we use the underlying pointer which is the actual connection.
+ * See CT_Compression. */
 typedef struct compressionConnection {
     connection base;
     connection *underlying;
@@ -399,6 +411,13 @@ static int connCompressionAccept(connection *conn, ConnectionCallbackFunc accept
     return cc->underlying->type->accept(cc->underlying, accept_handler);
 }
 
+/* If decompression is initialized for a connection it reads compressed data
+ * from the underlying connection (i.e usually from socket) into a temp buffer
+ * and decompresses into the passed `buf`. Tries to read and decompress as much
+ * as possible.
+ * There are some scenarios though that we may still have pending data to process
+ * (see clientHasPendingCompressedData). In such cases the connection is added
+ * to the event-loop's pending data and processed via connProcessPendingData. */
 static int connCompressionRead(struct connection *conn, void *buf, size_t buf_len) {
     compressionConnection *cc = (compressionConnection*)conn;
     client *c = connGetPrivateData(conn);
@@ -427,14 +446,6 @@ static int connCompressionRead(struct connection *conn, void *buf, size_t buf_le
                 cc->underlying,
                 state->input.data + state->input.written,
                 state->input.size - state->input.written);
-
-            // if (nread > 0) {
-            //     char *buf = zmalloc(nread + 1);
-            //     memcpy(buf, state->input.data+state->input.written, nread);
-            //     buf[nread] = 0;
-            //     printf("\nNREAD: %s\n", buf);
-            //     zfree(buf);
-            // }
 
             if (nread < 0 && connGetState(cc->underlying) == CONN_STATE_ERROR) {
                 cc->last_read = -1;
@@ -467,6 +478,8 @@ static int connCompressionRead(struct connection *conn, void *buf, size_t buf_le
     return decompressed;
 }
 
+/* Compress all bytes from `data` and pass the compressed data to the underlying's
+ * connection write method. */
 static int connCompressionWrite(connection *conn, const void *data, size_t len) {
     compressionConnection *cc = (compressionConnection*)conn;
     client *c = connGetPrivateData(conn);
@@ -485,14 +498,6 @@ static int connCompressionWrite(connection *conn, const void *data, size_t len) 
 
         memcpy(state->input.data + state->input.written,
                (char*)data + consumed, to_consume);
-
-        // if (to_consume > 0) {
-        //     char *buf = zmalloc(to_consume + 1);
-        //     memcpy(buf, (char*)data+consumed, to_consume);
-        //     buf[to_consume] = 0;
-        //     printf("\nCONSUMED: %s\n", buf);
-        //     zfree(buf);
-        // }
 
         state->input.written += to_consume;
         consumed += to_consume;
@@ -637,6 +642,11 @@ static int compressionHasPendingData(struct aeEventLoop *el) {
     return listLength(pending_list) > 0;
 }
 
+/* Handling pending data involves calling the read handler of the underlying
+ * connection. We don't actually want to call connRead on it as we handle only
+ * pending data(i.e internal buffers of the compression library not yet flushed
+ * or non-consumed decompressed data in our temp buffers) and not any actual
+ * read events. */
 static int compressionProcessPendingData(struct aeEventLoop *el) {
     list *pending_list = el->privdata[2];
     if (!pending_list || listLength(pending_list) == 0)
@@ -659,7 +669,7 @@ static int compressionProcessPendingData(struct aeEventLoop *el) {
     return processed;
 }
 
-/* Compression connection */
+/* ConnectionType for the compression connection */
 static ConnectionType CT_Compression = {
     /* connection type */
     .get_type = connCompressionGetType,
@@ -719,6 +729,7 @@ int RedisRegisterConnectionTypeCompression(void) {
     return connTypeRegister(&CT_Compression);
 }
 
+/* Create compression state for the client */
 int compressionStateCreate(client *c) {
     UNUSED(zlibType);
 
@@ -743,6 +754,10 @@ void compressionStateDestroy(compressionState *state) {
     zfree(state);
 }
 
+/* Create and initialize a compression state for the client. No-op if already
+ * initialized. `dir` indicates the compression direction, i.e if the client
+ * will compress or decompress data.
+ * Currently only viable for master/replica clients. */
 int clientCreateCompressionState(client *c, compressionDirection dir) {
     /* Client compression already initialized */
     if (c->compression_state != NULL)
@@ -795,6 +810,8 @@ int clientCreateCompressionState(client *c, compressionDirection dir) {
 void clientDestroyCompressionState(client *c) {
     if (c->compression_state == NULL) return;
 
+    /* If the connection is not destroyed yet we need to switch back to the
+     * underlying connection. */
     if (c->conn) {
         compressionConnection *cc = (compressionConnection*)c->conn;
         c->conn = cc->underlying;
@@ -818,6 +835,7 @@ void clientDestroyCompressionState(client *c) {
  * Return 0 if compression state was not created and failed to be initialized,
  * 1 if compression was enabled. */
 int clientEnableCompression(client *c, compressionDirection dir) {
+    serverAssert((c->flags & CLIENT_MASTER) || (c->flags & CLIENT_SLAVE));
     if (!clientCreateCompressionState(c, dir)) {
         return 0;
     }
@@ -826,15 +844,14 @@ int clientEnableCompression(client *c, compressionDirection dir) {
     return 1;
 }
 
-/* Disable compression without destroying compression state. If compression was
- * not initialized does nothing. */
+/* Disable compression without destroying compression state. */
 void clientDisableCompression(client *c) {
     c->io_flags &= ~CLIENT_IO_COMPRESSION_ENABLED;
 }
 
 /* Compress any data send for compression (see connCompressionWrite) and
- * write to socket. Zlib may not return compressed data immediately so this
- * call may not write anything to socket.
+ * write to socket. Compression library may not return compressed data
+ * immediately so this call may not write anything to socket.
  * Force flushes the compressed buffer according to compression_max_latency.
  * Return number of bytes written to socket or -1 on socket write error. */
 int compressAndWrite(client *c, int *tot_written) {
@@ -858,7 +875,6 @@ int compressAndWrite(client *c, int *tot_written) {
          * Note, this only makes sense when we have enough space for compressing
          * data. */
         int flush = mstime() - state->last_write > server.compression_max_latency;
-        // if (flush) serverLog(LL_NOTICE, "Flushing client %llu", c->id);
         if (state->type->compress(state, flush) == -1) {
             clientDestroyCompressionState(c);
             return 1;
@@ -877,14 +893,6 @@ int compressAndWrite(client *c, int *tot_written) {
         if (written < 0) {
             return 1;
         }
-
-        // if (written > 0) {
-        //     char *buf = zmalloc(written + 1);
-        //     memcpy(buf, state->output.data+state->output.consumed, written);
-        //     buf[written] = 0;
-        //     printf("WRITTEN COMPRESSED: %s\n", buf);
-        //     zfree(buf);
-        // }
 
         state->output.consumed += written;
         *tot_written += written;
@@ -906,6 +914,10 @@ int compressAndWrite(client *c, int *tot_written) {
     return 0;
 }
 
+/* Decompress input compressed data and put it in `buf`. If decompressed data
+ * is more than buflen this function must be called again so output data can
+ * be consumed. If buflen is sufficiently large this function will decompress
+ * as much data as possible. */
 int decompressInto(compressionState *state, char *buf, size_t buflen) {
     if (buflen == 0)
       return 0;
@@ -937,14 +949,6 @@ int decompressInto(compressionState *state, char *buf, size_t buflen) {
             size_t nonconsumed_decompressed = state->output.written - state->output.consumed;
             int to_consume = min(buflen - consumed, nonconsumed_decompressed);
             memcpy(buf + consumed, state->output.data + state->output.consumed, to_consume);
-
-            // if (to_consume > 0) {
-            //     char *res = zmalloc(to_consume + 1);
-            //     memcpy(res, buf+consumed, to_consume);
-            //     res[to_consume] = 0;
-            //     printf("\nDECOMPRESSED: %s\n", res);
-            //     zfree(res);
-            // }
 
             state->output.consumed += to_consume;
             consumed += to_consume;
@@ -993,14 +997,6 @@ int readFromBufAndDecompress(client *c, char *input_buf, size_t input_len,
             memcpy(state->input.data + state->input.written,
                    input_buf + *consumed, to_consume);
 
-        // if (to_consume > 0) {
-        //     char *buf = zmalloc(to_consume + 1);
-        //     memcpy(buf, state->input.data+state->input.written, to_consume);
-        //     buf[to_consume] = 0;
-        //     printf("\nNREAD: %s\n", buf);
-        //     zfree(buf);
-        // }
-
         *consumed += to_consume;
 
         state->input.written += to_consume;
@@ -1015,6 +1011,10 @@ int readFromBufAndDecompress(client *c, char *input_buf, size_t input_len,
     return tot_decompressed;
 }
 
+/* Check if we need to flush compressed data. Compression library may wait for
+ * a lot of compressed data before it finishes a frame and gives it back to user.
+ * While this gives the best compression ratio it introduces a lot of latency so
+ * we make a compromise and flush periodically. */
 int clientHasPendingCompressionFlush(client *c) {
     compressionState *state = c->compression_state;
     if (!state) return 0;
@@ -1023,6 +1023,10 @@ int clientHasPendingCompressionFlush(client *c) {
     return state->write_flush_pending || (mstime() - state->last_write >= server.compression_max_latency);
 }
 
+/* Check if we still have pending compressed data. This may mean that either the
+ * compression library still has data in it's internal buffers, we still have
+ * compressed data that needs to be consumed by the library or we have stored
+ * decompressed data that we still have not consumed. */
 int clientHasPendingCompressedData(client *c) {
     compressionState *state = c->compression_state;
     if (!state) return 0;
