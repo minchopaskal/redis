@@ -514,6 +514,18 @@ robj *createStreamObject(void) {
     return o;
 }
 
+robj *createGCRAObject(long long value) {
+    /* NOTE: we can't use integer encoding here (as OBJ_STRING does) as the
+     * GCRA object is a unixtime value in microseconds. As of the time of writing
+     * of this function the unixtime in microseconds is already much more than
+     * LONG_MAX. We also can't really use the pointer assuming it's 8 bytes as
+     * we want to support 32-bit systems. */
+    long long *v = zmalloc(sizeof(long long));
+    *v = value;
+    robj *o = createObject(OBJ_GCRA,v);
+    return o;
+}
+
 robj *createModuleObject(moduleType *mt, void *value) {
     moduleValue *mv = zmalloc(sizeof(*mv));
     mv->type = mt;
@@ -586,6 +598,10 @@ void freeStreamObject(robj *o) {
     freeStream(o->ptr);
 }
 
+void freeGCRAObject(robj *o) {
+    zfree(o->ptr);
+}
+
 void incrRefCount(robj *o) {
     if (o->refcount < OBJ_FIRST_SPECIAL_REFCOUNT - 1) {
         o->refcount++;
@@ -629,6 +645,7 @@ void decrRefCount(robj *o) {
             case OBJ_HASH: freeHashObject(o); break;
             case OBJ_MODULE: freeModuleObject(o); break;
             case OBJ_STREAM: freeStreamObject(o); break;
+            case OBJ_GCRA: freeGCRAObject(o); break;
             default: serverPanic("Unknown object type"); break;
             }
         }
@@ -780,6 +797,13 @@ void dismissStreamObject(robj *o, size_t size_hint) {
     }
 }
 
+void dismissGCRAObject(robj *o, size_t size_hint) {
+    /* GCRA is a single allocation of a long long thus way smaller than a
+     * page-size. The dismiss mechanism is not needed for it - hence NOOP.*/
+    (void)o;
+    (void)size_hint;
+}
+
 /* When creating a snapshot in a fork child process, the main process and child
  * process share the same physical memory pages, and if / when the parent
  * modifies any keys due to write traffic, it'll cause CoW which consume
@@ -808,6 +832,7 @@ void dismissObject(robj *o, size_t size_hint) {
         case OBJ_ZSET: dismissZsetObject(o, size_hint); break;
         case OBJ_HASH: dismissHashObject(o, size_hint); break;
         case OBJ_STREAM: dismissStreamObject(o, size_hint); break;
+        case OBJ_GCRA: dismissGCRAObject(o, size_hint); break;
         default: break;
     }
 #else
@@ -929,6 +954,7 @@ size_t getObjectLength(robj *o) {
         case OBJ_ZSET: return zsetLength(o);
         case OBJ_HASH: return hashTypeLength(o, 0);
         case OBJ_STREAM: return streamLength(o);
+        case OBJ_GCRA: return gcraObjectLength(o);
         default: return 0;
     }
 }
@@ -1137,6 +1163,22 @@ int getLongLongFromObject(robj *o, long long *target) {
     return C_OK;
 }
 
+int getLongLongFromGCRAObject(robj *o, long long *target) {
+    long long res;
+    if (o == NULL) {
+        res = 0;
+    } else {
+        serverAssertWithInfo(NULL, o, o->type == OBJ_GCRA);
+        res = *((long long*)o->ptr);
+
+        if (res < 0) {
+            return C_ERR;
+        }
+    }
+    *target = res;
+    return C_OK;
+}
+
 int getLongLongFromObjectOrReply(client *c, robj *o, long long *target, const char *msg) {
     long long value;
     if (getLongLongFromObject(o, &value) != C_OK) {
@@ -1227,7 +1269,8 @@ size_t kvobjComputeSize(robj *key, kvobj *o, size_t sample_size, int dbid) {
         o->type == OBJ_SET ||
         o->type == OBJ_ZSET ||
         o->type == OBJ_HASH ||
-        o->type == OBJ_STREAM)
+        o->type == OBJ_STREAM ||
+        o->type == OBJ_GCRA)
     {
         return kvobjAllocSize(o);
     } else if (o->type == OBJ_MODULE) {
@@ -1253,10 +1296,22 @@ size_t kvobjAllocSize(kvobj *o) {
     } else if (o->type == OBJ_STREAM) {
         stream *s = o->ptr;
         asize += s->alloc_size;
+    } else if (o->type == OBJ_GCRA) {
+        asize += gcraTypeAllocSize();
     } else if (o->type == OBJ_MODULE) {
         /* TODO: Provide moduleGetAllocSize() module API for O(1) allocation size retrieval */
     }
     return asize;
+}
+
+size_t gcraTypeAllocSize(void) {
+    return sizeof(long long);
+}
+
+/* The gcra object is a single long long value */
+size_t gcraObjectLength(robj *o) {
+    (void)o;
+    return 1;
 }
 
 /* Release data obtained with getMemoryOverheadData(). */

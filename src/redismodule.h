@@ -89,6 +89,7 @@ typedef long long ustime_t;
 #define REDISMODULE_KEYTYPE_ZSET 5
 #define REDISMODULE_KEYTYPE_MODULE 6
 #define REDISMODULE_KEYTYPE_STREAM 7
+#define REDISMODULE_KEYTYPE_GCRA 8
 
 /* Reply types. */
 #define REDISMODULE_REPLY_UNKNOWN -1

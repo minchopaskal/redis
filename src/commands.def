@@ -11110,6 +11110,31 @@ struct COMMAND_ARG GCRA_Args[] = {
 {MAKE_ARG("count",ARG_TYPE_INTEGER,-1,"TOKENS",NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
 };
 
+/********** GCRARECORD ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* GCRARECORD history */
+#define GCRARECORD_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* GCRARECORD tips */
+#define GCRARECORD_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* GCRARECORD key specs */
+keySpec GCRARECORD_Keyspecs[1] = {
+{NULL,CMD_KEY_OW|CMD_KEY_UPDATE,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* GCRARECORD argument table */
+struct COMMAND_ARG GCRARECORD_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("tat",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
 /********** GET ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -12042,6 +12067,7 @@ struct COMMAND_STRUCT redisCommandTable[] = {
 {MAKE_CMD("delex","Conditionally removes the specified key based on value or digest comparison.","O(1) for IFEQ/IFNE, O(N) for IFDEQ/IFDNE where N is the length of the string value.","8.4.0",CMD_DOC_NONE,NULL,NULL,"string",COMMAND_GROUP_STRING,DELEX_History,0,DELEX_Tips,0,delexCommand,-2,CMD_WRITE|CMD_FAST,ACL_CATEGORY_STRING,DELEX_Keyspecs,1,delexGetKeys,2),.args=DELEX_Args},
 {MAKE_CMD("digest","Returns the XXH3 hash of a string value.","O(N) where N is the length of the string value.","8.4.0",CMD_DOC_NONE,NULL,NULL,"string",COMMAND_GROUP_STRING,DIGEST_History,0,DIGEST_Tips,0,digestCommand,2,CMD_READONLY|CMD_FAST,ACL_CATEGORY_STRING,DIGEST_Keyspecs,1,NULL,1),.args=DIGEST_Args},
 {MAKE_CMD("gcra","Rate limit via GCRA (Generic Cell Rate Algorithm).","O(1)","8.8.0",CMD_DOC_NONE,NULL,NULL,"string",COMMAND_GROUP_STRING,GCRA_History,0,GCRA_Tips,0,gcraCommand,-5,CMD_WRITE|CMD_DENYOOM|CMD_FAST,ACL_CATEGORY_STRING,GCRA_Keyspecs,1,NULL,5),.args=GCRA_Args},
+{MAKE_CMD("gcrarecord","An internal command for recording a GCRA TAT value during AOF rewrite.","O(1)","8.8.0",CMD_DOC_SYSCMD,NULL,NULL,"string",COMMAND_GROUP_STRING,GCRARECORD_History,0,GCRARECORD_Tips,0,gcraRecordCommand,3,CMD_WRITE|CMD_DENYOOM|CMD_FAST,ACL_CATEGORY_STRING,GCRARECORD_Keyspecs,1,NULL,2),.args=GCRARECORD_Args},
 {MAKE_CMD("get","Returns the string value of a key.","O(1)","1.0.0",CMD_DOC_NONE,NULL,NULL,"string",COMMAND_GROUP_STRING,GET_History,0,GET_Tips,0,getCommand,2,CMD_READONLY|CMD_FAST,ACL_CATEGORY_STRING,GET_Keyspecs,1,NULL,1),.args=GET_Args},
 {MAKE_CMD("getdel","Returns the string value of a key after deleting the key.","O(1)","6.2.0",CMD_DOC_NONE,NULL,NULL,"string",COMMAND_GROUP_STRING,GETDEL_History,0,GETDEL_Tips,0,getdelCommand,2,CMD_WRITE|CMD_FAST,ACL_CATEGORY_STRING,GETDEL_Keyspecs,1,NULL,1),.args=GETDEL_Args},
 {MAKE_CMD("getex","Returns the string value of a key after setting its expiration time.","O(1)","6.2.0",CMD_DOC_NONE,NULL,NULL,"string",COMMAND_GROUP_STRING,GETEX_History,0,GETEX_Tips,0,getexCommand,-2,CMD_WRITE|CMD_FAST,ACL_CATEGORY_STRING,GETEX_Keyspecs,1,NULL,2),.args=GETEX_Args},
