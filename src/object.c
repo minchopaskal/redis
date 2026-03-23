@@ -1174,13 +1174,13 @@ int getLongLongFromGCRAObject(robj *o, long long *target) {
         res = 0;
     } else {
         serverAssertWithInfo(NULL, o, o->type == OBJ_GCRA);
-        if (o->encoding == OBJ_ENCODING_RAW) {
-            res = *((long long*)o->ptr);
-        } else if (o->encoding == OBJ_ENCODING_INT) {
-            res = (long long)o->ptr;
-        } else {
-            serverPanic("Unknown GCRA encoding");
-        }
+#if UINTPTR_MAX == 0xffffffff
+        serverAssert(o->encoding == OBJ_ENCODING_RAW);
+        res = *((long long*)o->ptr);
+#else
+        serverAssert(o->encoding == OBJ_ENCODING_INT);
+        res = (long long)o->ptr;
+#endif
 
         if (unlikely(res < 0)) {
             return C_ERR;
