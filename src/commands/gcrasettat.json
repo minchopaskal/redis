@@ -1,21 +1,18 @@
 {
-    "GCRARECORD": {
+    "GCRASETTAT": {
         "summary": "An internal command for recording a GCRA TAT value during AOF rewrite.",
         "complexity": "O(1)",
         "group": "string",
         "since": "8.8.0",
         "arity": 3,
-        "function": "gcraRecordCommand",
-        "doc_flags": [
-            "SYSCMD"
-        ],
+        "function": "gcraSetTATCommand",
         "command_flags": [
             "WRITE",
             "DENYOOM",
             "FAST"
         ],
         "acl_categories": [
-            "STRING"
+            "RATE_LIMIT"
         ],
         "key_specs": [
             {

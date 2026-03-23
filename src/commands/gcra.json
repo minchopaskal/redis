@@ -12,7 +12,7 @@
             "FAST"
         ],
         "acl_categories": [
-            "STRING"
+            "RATE_LIMIT"
         ],
         "key_specs": [
             {

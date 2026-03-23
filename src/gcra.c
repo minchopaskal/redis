@@ -210,10 +210,10 @@ void gcraCommand(client *c) {
         /* Replicating the command directly would mess up TaT as we use
          * commandTimeSnapshot. We instead rewrite the command as SET with the
          * appropriate expire time. */
-        robj *gcrarecord = createStringObject("GCRARECORD", 10);
+        robj *gcrasettat= createStringObject("GCRASETTAT", 10);
         robj *newtatstr = createStringObjectFromLongLong(new_tat_us);
-        rewriteClientCommandVector(c, 3, gcrarecord, key, newtatstr);
-        decrRefCount(gcrarecord);
+        rewriteClientCommandVector(c, 3, gcrasettat, key, newtatstr);
+        decrRefCount(gcrasettat);
         decrRefCount(newtatstr);
 
         server.dirty++;
@@ -233,10 +233,10 @@ void gcraCommand(client *c) {
     addReplyLongLong(c, reset_after_s);
 }
 
-/* GCRARECORD key tat
+/* GCRASETTAT key tat
  *
  * Internal command used during AOF rewrite to record a GCRA TAT value. */
-void gcraRecordCommand(client *c) {
+void gcraSetTATCommand(client *c) {
     robj *key = c->argv[1];
     robj *tat = c->argv[2];
     long long when;

@@ -181,7 +181,7 @@ int collateStringObjects(const robj *a, const robj *b);
 int equalStringObjects(robj *a, robj *b);
 void trimStringObjectIfNeeded(robj *o, int trim_small_values);
 size_t kvobjAllocSize(kvobj *o);
-size_t gcraTypeAllocSize(void);
+size_t gcraTypeAllocSize(robj *o);
 size_t gcraObjectLength(robj *o);
 
 int objectSetLRUOrLFU(robj *val, long long lfu_freq, long long lru_idle,

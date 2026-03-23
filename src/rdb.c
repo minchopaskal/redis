@@ -1413,8 +1413,9 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid) {
         if ((n = rdbSaveLen(rdb,s->iids_duplicates)) == -1) return -1;
         nwritten += n;
     } else if (o->type == OBJ_GCRA) {
-        long long *t = o->ptr;
-        if ((n = rdbSaveGCRATime(rdb,*t)) == -1) return -1;
+        long long t;
+        getLongLongFromGCRAObject(o, &t);
+        if ((n = rdbSaveGCRATime(rdb,t)) == -1) return -1;
         nwritten += n;
     } else if (o->type == OBJ_MODULE) {
         /* Save a module-specific value. */

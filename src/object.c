@@ -515,14 +515,18 @@ robj *createStreamObject(void) {
 }
 
 robj *createGCRAObject(long long value) {
-    /* NOTE: we can't use integer encoding here (as OBJ_STRING does) as the
-     * GCRA object is a unixtime value in microseconds. As of the time of writing
-     * of this function the unixtime in microseconds is already much more than
-     * LONG_MAX. We also can't really use the pointer assuming it's 8 bytes as
-     * we want to support 32-bit systems. */
-    long long *v = zmalloc(sizeof(long long));
-    *v = value;
-    robj *o = createObject(OBJ_GCRA,v);
+    /* NOTE: for 32-bit systems we can't use integer encoding (as OBJ_STRING does)
+     * as the GCRA object is a unixtime value in microseconds, which as of the
+     * time of writing is already much more than LONG_MAX. */
+#if UINTPTR_MAX == 0xffffffff
+        long long *v = zmalloc(sizeof(long long));
+        *v = value;
+        return createObject(OBJ_GCRA,v);
+#endif
+
+    robj *o = createObject(OBJ_GCRA,NULL);
+    o->encoding = OBJ_ENCODING_INT;
+    o->ptr = (void*)value;
     return o;
 }
 
@@ -599,7 +603,8 @@ void freeStreamObject(robj *o) {
 }
 
 void freeGCRAObject(robj *o) {
-    zfree(o->ptr);
+    if (o->encoding == OBJ_ENCODING_RAW)
+        zfree(o->ptr);
 }
 
 void incrRefCount(robj *o) {
@@ -1169,9 +1174,15 @@ int getLongLongFromGCRAObject(robj *o, long long *target) {
         res = 0;
     } else {
         serverAssertWithInfo(NULL, o, o->type == OBJ_GCRA);
-        res = *((long long*)o->ptr);
+        if (o->encoding == OBJ_ENCODING_RAW) {
+            res = *((long long*)o->ptr);
+        } else if (o->encoding == OBJ_ENCODING_INT) {
+            res = (long long)o->ptr;
+        } else {
+            serverPanic("Unknown GCRA encoding");
+        }
 
-        if (res < 0) {
+        if (unlikely(res < 0)) {
             return C_ERR;
         }
     }
@@ -1297,14 +1308,17 @@ size_t kvobjAllocSize(kvobj *o) {
         stream *s = o->ptr;
         asize += s->alloc_size;
     } else if (o->type == OBJ_GCRA) {
-        asize += gcraTypeAllocSize();
+        asize += gcraTypeAllocSize(o);
     } else if (o->type == OBJ_MODULE) {
         /* TODO: Provide moduleGetAllocSize() module API for O(1) allocation size retrieval */
     }
     return asize;
 }
 
-size_t gcraTypeAllocSize(void) {
+size_t gcraTypeAllocSize(robj *o) {
+    /* Same as string with int encoding there is no allocation as the value is
+     * stored as void* in o->ptr */
+    if (o->encoding == OBJ_ENCODING_INT) return 0;
     return sizeof(long long);
 }
 

@@ -287,6 +287,7 @@ extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
 #define ACL_CATEGORY_CONNECTION (1ULL<<18)
 #define ACL_CATEGORY_TRANSACTION (1ULL<<19)
 #define ACL_CATEGORY_SCRIPTING (1ULL<<20)
+#define ACL_CATEGORY_RATE_LIMIT (1ULL<<21)
 
 /* Key-spec flags *
  * -------------- */
@@ -4471,7 +4472,7 @@ void resetCommand(client *c);
 void failoverCommand(client *c);
 void digestCommand(client *c);
 void gcraCommand(client *c);
-void gcraRecordCommand(client *c);
+void gcraSetTATCommand(client *c);
 
 #if defined(__GNUC__)
 void *calloc(size_t count, size_t size) __attribute__ ((deprecated));
