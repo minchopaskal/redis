@@ -522,12 +522,12 @@ robj *createGCRAObject(long long value) {
         long long *v = zmalloc(sizeof(long long));
         *v = value;
         return createObject(OBJ_GCRA,v);
-#endif
-
+#else
     robj *o = createObject(OBJ_GCRA,NULL);
     o->encoding = OBJ_ENCODING_INT;
     o->ptr = (void*)value;
     return o;
+#endif
 }
 
 robj *createModuleObject(moduleType *mt, void *value) {

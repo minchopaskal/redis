@@ -1165,7 +1165,7 @@ void defragKey(defragKeysCtx *ctx, dictEntry *de, dictEntryLink link) {
         defragStream(ctx, ob);
     } else if (ob->type == OBJ_GCRA) {
         /* GCRA object is just an allocation to a long long value */
-        if (ob->encoding == OBJOBJ_ENCODING_RAW) {
+        if (ob->encoding == OBJ_ENCODING_RAW) {
             void *newptr, *ptr = ob->ptr;
             if ((newptr = activeDefragAlloc(ptr)))
                 ob->ptr = newptr;
