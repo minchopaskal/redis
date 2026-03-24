@@ -1316,7 +1316,7 @@ void asmRdbChannelSyncWithSource(connection *conn) {
          * surface the error condition.
          * using shutdown() instead of connShutdown() because connTLSShutdown()
          * will free the connection directly, which is not what we want. */
-        shutdown(conn->fd, SHUT_RDWR);
+        shutdown(connGetFd(conn), SHUT_RDWR);
         connRead(conn, buf, 1);
     }
 
@@ -1467,7 +1467,7 @@ void asmSyncWithSource(connection *conn) {
     /* Check if the fail point is active for this channel and state */
     if (unlikely(asmDebugIsFailPointActive(ASM_IMPORT_MAIN_CHANNEL, task->state))) {
         char buf[1];
-        shutdown(conn->fd, SHUT_RDWR);
+        shutdown(connGetFd(conn), SHUT_RDWR);
         connRead(conn, buf, 1);
     }
 
@@ -1631,7 +1631,7 @@ void asmSlotSnapshotAndStreamStart(struct asmTask *task) {
     if (task == NULL || task->state != ASM_WAIT_BGSAVE_START) return;
 
     if (unlikely(asmDebugIsFailPointActive(ASM_MIGRATE_RDB_CHANNEL, task->state))) {
-        shutdown(task->rdb_channel_client->conn->fd, SHUT_RDWR);
+        shutdown(connGetFd(task->rdb_channel_client->conn), SHUT_RDWR);
         return;
     }
     task->main_channel_client->replstate = SLAVE_STATE_SEND_BULK_AND_STREAM;
@@ -2379,7 +2379,7 @@ static void asmSyncBufferReadFromConn(connection *conn) {
 
     /* ASM_ACCUMULATE_BUF and ASM_STREAMING_BUF fail points are handled here */
     if (unlikely(asmDebugIsFailPointActive(ASM_IMPORT_MAIN_CHANNEL, task->state)))
-        shutdown(conn->fd, SHUT_RDWR);
+        shutdown(connGetFd(conn), SHUT_RDWR);
 
     replDataBuf *buf = &task->sync_buffer;
     if (task->state == ASM_STREAMING_BUF) {
@@ -2481,7 +2481,7 @@ void asmSyncBufferStreamToDb(asmTask *task) {
                              task->dest_offset);
 
         if (unlikely(asmDebugIsFailPointActive(ASM_IMPORT_MAIN_CHANNEL, task->state)))
-            shutdown(task->main_channel_conn->fd, SHUT_RDWR); /* Simulate a failure */
+            shutdown(connGetFd(task->main_channel_conn), SHUT_RDWR); /* Simulate a failure */
 
         /* ACK offset after streaming buffer is done. */
         asmImportSendACK(task);
@@ -2507,7 +2507,7 @@ void asmSendStreamEofIfDrained(asmTask *task) {
         serverLog(LL_NOTICE, "Slot migration command stream drained, sending STREAM-EOF to the destination");
 
         if (unlikely(asmDebugIsFailPointActive(ASM_MIGRATE_MAIN_CHANNEL, task->state)))
-            shutdown(c->conn->fd, SHUT_RDWR);
+            shutdown(connGetFd(c->conn), SHUT_RDWR);
 
         /* Send STREAM-EOF to indicate the end of the stream. */
         char *err = sendCommand(c->conn, "CLUSTER", "SYNCSLOTS", "STREAM-EOF", NULL);
