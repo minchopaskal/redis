@@ -2623,6 +2623,9 @@ static inline int _writeToClientSlaveIOThread(client *c, ssize_t *nwritten) {
         size_t last_written = 0;
         if (connCheckLastWritten(c->conn, &last_written)) {
             *nwritten += last_written;
+            /* Since nwritten stores the number of compressed bytes written to
+             * socket we also store the uncompressed size for stats. */
+            atomicIncr(server.stat_net_repl_uncompressed_bytes, consumed);
         } else {
             *nwritten += consumed;
         }
@@ -3828,6 +3831,11 @@ void readQueryFromClient(connection *conn) {
     size_t network_read;
     if (!connCheckLastRead(c->conn, &network_read)) {
         network_read = nread;
+    } else {
+        /* In case of compression nread is the number of decompressed bytes,
+         * whereas network_read stores the actual number of bytes read from
+         * socket. */
+        atomicIncr(server.stat_net_repl_decompressed_bytes, nread);
     }
 
     if (c->flags & CLIENT_MASTER) {

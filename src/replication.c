@@ -4149,6 +4149,8 @@ int replDataBufStreamToDb(replDataBuf *buf, replDataBufToDbCtx *ctx) {
                 sdsIncrLen(c->querybuf, decompressed);
                 c->read_reploff += (long long) decompressed;
                 c->io_read_reploff += (long long int) decompressed;
+
+                atomicIncr(server.stat_net_repl_decompressed_bytes, decompressed);
             } else {
                 size_t bytes = min(PROTO_IOBUF_LEN, o->used - processed);
                 c->querybuf = sdscatlen(c->querybuf, &o->buf[processed], bytes);
