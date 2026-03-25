@@ -517,11 +517,12 @@ robj *createStreamObject(void) {
 robj *createGCRAObject(long long value) {
     /* NOTE: for 32-bit systems we can't use integer encoding (as OBJ_STRING does)
      * as the GCRA object is a unixtime value in microseconds, which as of the
-     * time of writing is already much more than LONG_MAX. */
+     * time of writing is already much more than 32-bit's LONG_MAX. */
 #if UINTPTR_MAX == 0xffffffff
         long long *v = zmalloc(sizeof(long long));
         *v = value;
-        return createObject(OBJ_GCRA,v);
+        robj *o = createObject(OBJ_GCRA,v);
+        o->encoding = OBJ_ENCODING_PTRINT;
 #else
     robj *o = createObject(OBJ_GCRA,NULL);
     o->encoding = OBJ_ENCODING_INT;
@@ -603,7 +604,7 @@ void freeStreamObject(robj *o) {
 }
 
 void freeGCRAObject(robj *o) {
-    if (o->encoding == OBJ_ENCODING_RAW)
+    if (o->encoding == OBJ_ENCODING_PTRINT)
         zfree(o->ptr);
 }
 
@@ -1175,7 +1176,7 @@ int getLongLongFromGCRAObject(robj *o, long long *target) {
     } else {
         serverAssertWithInfo(NULL, o, o->type == OBJ_GCRA);
 #if UINTPTR_MAX == 0xffffffff
-        serverAssert(o->encoding == OBJ_ENCODING_RAW);
+        serverAssert(o->encoding == OBJ_ENCODING_PTRINT);
         res = *((long long*)o->ptr);
 #else
         serverAssert(o->encoding == OBJ_ENCODING_INT);
