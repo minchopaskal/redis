@@ -1318,8 +1318,10 @@ size_t kvobjAllocSize(kvobj *o) {
 
 size_t gcraTypeAllocSize(robj *o) {
     /* Same as string with int encoding there is no allocation as the value is
-     * stored as void* in o->ptr */
+     * cast to void* and stored in o->ptr */
     if (o->encoding == OBJ_ENCODING_INT) return 0;
+
+    /* Else the value is heap allocated */
     return sizeof(long long);
 }
 
