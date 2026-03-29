@@ -2247,7 +2247,7 @@ void renameGenericCommand(client *c, int nx) {
         streamKeyLoaded(c->db, c->argv[2], o);
 
     keyModified(c,c->db,c->argv[1],NULL,1);
-    keyModified(c,c->db,c->argv[2],NULL,1); /* LRM already updated by dbAddInternal */
+    keyModified(c,c->db,c->argv[2],o,1);
     notifyKeyspaceEvent(NOTIFY_GENERIC,"rename_from",
         c->argv[1],c->db->id);
     notifyKeyspaceEvent(NOTIFY_GENERIC,"rename_to",
@@ -2345,7 +2345,7 @@ void moveCommand(client *c) {
         streamKeyLoaded(dst, c->argv[1], kv);
 
     keyModified(c,src,c->argv[1],NULL,1);
-    keyModified(c,dst,c->argv[1],NULL,1); /* LRM already updated by dbAddInternal */
+    keyModified(c,dst,c->argv[1],kv,1);
     notifyKeyspaceEvent(NOTIFY_GENERIC,
                 "move_from",c->argv[1],src->id);
     notifyKeyspaceEvent(NOTIFY_GENERIC,
@@ -2468,8 +2468,8 @@ void copyCommand(client *c) {
     if (kvCopy->type == OBJ_STREAM)
         streamKeyLoaded(dst, newkey, kvCopy);
 
-    /* OK! key copied. Signal modification (LRM already updated by dbAddInternal) */
-    keyModified(c,dst,c->argv[2],NULL,1);
+    /* OK! key copied. Signal modification */
+    keyModified(c,dst,c->argv[2],kvCopy,1);
     notifyKeyspaceEvent(NOTIFY_GENERIC,"copy_to",c->argv[2],dst->id);
 
     /* `delete` implies the destination key was overwritten */
