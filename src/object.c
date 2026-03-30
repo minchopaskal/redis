@@ -519,16 +519,17 @@ robj *createGCRAObject(long long value) {
      * as the GCRA object is a unixtime value in microseconds, which as of the
      * time of writing is already much more than 32-bit's LONG_MAX. */
 #if UINTPTR_MAX == 0xffffffff
-        long long *v = zmalloc(sizeof(long long));
-        *v = value;
-        robj *o = createObject(OBJ_GCRA,v);
-        o->encoding = OBJ_ENCODING_PTRINT;
+    long long *v = zmalloc(sizeof(long long));
+    *v = value;
+    robj *o = createObject(OBJ_GCRA,v);
+    o->encoding = OBJ_ENCODING_PTRINT;
 #else
     robj *o = createObject(OBJ_GCRA,NULL);
     o->encoding = OBJ_ENCODING_INT;
     o->ptr = (void*)value;
-    return o;
 #endif
+
+    return o;
 }
 
 robj *createModuleObject(moduleType *mt, void *value) {
