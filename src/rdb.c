@@ -3610,6 +3610,10 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error)
         o = createModuleObject(mt, ptr);
     } else if (rdbtype == RDB_TYPE_GCRA) {
         long long time = rdbLoadGCRATime(rdb, RDB_VERSION);
+        if (rioGetReadError(rdb)) {
+            rdbReportReadError("Failed loading GCRA TaT value");
+            return NULL;
+        }
         o = createGCRAObject(time);
     } else {
         rdbReportReadError("Unknown RDB encoding type %d",rdbtype);

@@ -1265,6 +1265,7 @@ char *strEncoding(int encoding) {
     case OBJ_ENCODING_SKIPLIST: return "skiplist";
     case OBJ_ENCODING_EMBSTR: return "embstr";
     case OBJ_ENCODING_STREAM: return "stream";
+    case OBJ_ENCODING_PTRINT: return "ptrint";
     default: return "unknown";
     }
 }
