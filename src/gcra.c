@@ -68,7 +68,7 @@
 /* GCRA key max_burst tokens_per_period period [TOKENS count]
  *
  * key: Key related to specific rate limiting case
- * max_burst: Maximum requests allowed as burst (in addition to sustained rate)
+ * max_burst: Maximum tokens allowed as burst (in addition to sustained rate)
  * tokens_per_period: Number of tokens allowed per period
  * period: Period in seconds for calculating sustained rate
  * tokens: Optional, cost of this request (default: 1)
