@@ -1165,11 +1165,11 @@ void defragKey(defragKeysCtx *ctx, dictEntry *de, dictEntryLink link) {
         defragStream(ctx, ob);
     } else if (ob->type == OBJ_GCRA) {
         /* GCRA object is just an allocation to a long long value */
-        if (ob->encoding == OBJ_ENCODING_PTRINT) {
+#if UINTPTR_MAX == 0xffffffff
             void *newptr, *ptr = ob->ptr;
             if ((newptr = activeDefragAlloc(ptr)))
                 ob->ptr = newptr;
-        }
+#endif
     } else if (ob->type == OBJ_MODULE) {
         defragModule(ctx,db, ob);
     } else {

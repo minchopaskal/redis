@@ -796,6 +796,7 @@ typedef enum {
 #define NOTIFY_OVERWRITTEN (1<<15)   /* o, key overwrite notification (Note: excluded from NOTIFY_ALL) */
 #define NOTIFY_TYPE_CHANGED (1<<16) /* c, key type changed notification (Note: excluded from NOTIFY_ALL) */
 #define NOTIFY_KEY_TRIMMED (1<<17)     /* module only key space notification, indicates a key trimmed during slot migration */
+#define NOTIFY_RATE_LIMIT (1<<18) /* r, notify rate limit event (Note: excluded from NOTIFY_ALL)*/
 #define NOTIFY_ALL (NOTIFY_GENERIC | NOTIFY_STRING | NOTIFY_LIST | NOTIFY_SET | NOTIFY_HASH | NOTIFY_ZSET | NOTIFY_EXPIRED | NOTIFY_EVICTED | NOTIFY_STREAM | NOTIFY_MODULE) /* A flag */
 
 /* Using the following macro you can run code inside serverCron() with the
@@ -2782,6 +2783,7 @@ typedef enum {
     COMMAND_GROUP_STREAM,
     COMMAND_GROUP_BITMAP,
     COMMAND_GROUP_MODULE,
+    COMMAND_GROUP_RATE_LIMIT,
 } redisCommandGroup;
 
 typedef void redisCommandProc(client *c);

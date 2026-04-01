@@ -201,7 +201,7 @@ void gcraCommand(client *c) {
         ttl_us = new_tat_us - now;
         robj *tatobj = createGCRAObject(new_tat_us);
         setKeyByLink(c, c->db, key, &tatobj, kv ? SETKEY_ALREADY_EXIST : SETKEY_DOESNT_EXIST, &link);
-        notifyKeyspaceEvent(NOTIFY_GENERIC,"gcra",key,c->db->id);
+        notifyKeyspaceEvent(NOTIFY_RATE_LIMIT,"gcra",key,c->db->id);
 
         long long when = new_tat_us / 1000;
         kv = setExpireByLink(c, c->db, key->ptr, when, link);

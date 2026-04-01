@@ -2,7 +2,7 @@
     "GCRASETTAT": {
         "summary": "An internal command for recording a GCRA TAT value during AOF rewrite.",
         "complexity": "O(1)",
-        "group": "string",
+        "group": "rate_limit",
         "since": "8.8.0",
         "arity": 3,
         "function": "gcraSetTATCommand",

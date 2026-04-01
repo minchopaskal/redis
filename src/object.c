@@ -522,13 +522,12 @@ robj *createGCRAObject(long long value) {
     long long *v = zmalloc(sizeof(long long));
     *v = value;
     robj *o = createObject(OBJ_GCRA,v);
-    o->encoding = OBJ_ENCODING_PTRINT;
 #else
     robj *o = createObject(OBJ_GCRA,NULL);
-    o->encoding = OBJ_ENCODING_INT;
     o->ptr = (void*)value;
 #endif
 
+    o->encoding = OBJ_ENCODING_INT;
     return o;
 }
 
@@ -605,8 +604,11 @@ void freeStreamObject(robj *o) {
 }
 
 void freeGCRAObject(robj *o) {
-    if (o->encoding == OBJ_ENCODING_PTRINT)
+#if UINTPTR_MAX == 0xffffffff
         zfree(o->ptr);
+#else
+    (void)o;
+#endif
 }
 
 void incrRefCount(robj *o) {
@@ -1176,11 +1178,10 @@ int getLongLongFromGCRAObject(robj *o, long long *target) {
         res = 0;
     } else {
         serverAssertWithInfo(NULL, o, o->type == OBJ_GCRA);
+        serverAssert(o->encoding == OBJ_ENCODING_INT);
 #if UINTPTR_MAX == 0xffffffff
-        serverAssert(o->encoding == OBJ_ENCODING_PTRINT);
         res = *((long long*)o->ptr);
 #else
-        serverAssert(o->encoding == OBJ_ENCODING_INT);
         res = (long long)o->ptr;
 #endif
 
@@ -1265,7 +1266,6 @@ char *strEncoding(int encoding) {
     case OBJ_ENCODING_SKIPLIST: return "skiplist";
     case OBJ_ENCODING_EMBSTR: return "embstr";
     case OBJ_ENCODING_STREAM: return "stream";
-    case OBJ_ENCODING_PTRINT: return "ptrint";
     default: return "unknown";
     }
 }
