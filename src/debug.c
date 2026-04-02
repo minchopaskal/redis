@@ -1317,8 +1317,9 @@ void serverLogObjectDebugInfo(const robj *o) {
     } else if (o->type == OBJ_STREAM) {
         serverLog(LL_WARNING,"Stream size: %d", (int) streamLength(o));
     } else if (o->type == OBJ_GCRA) {
-        if (o->encoding == OBJ_ENCODING_INT)
-            serverLog(LL_WARNING,"GCRA object: %lld", (long long)o->ptr);
+#if UINTPTR_MAX == 0xffffffff
+            serverLog(LL_WARNING, "GCRA object: %lld", (long long)o->ptr);
+#endif
     }
 #endif
 }
