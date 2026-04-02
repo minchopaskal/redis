@@ -130,9 +130,7 @@ void mixGCRAObjectDigest(unsigned char *digest, robj *o) {
         serverPanic("invalid gcra object");
     }
     int len = ll2string(buf, 32, val);
-    o = createStringObject(buf, len);
-    mixDigest(digest,o->ptr,sdslen(o->ptr));
-    decrRefCount(o);
+    mixDigest(digest,buf,len);
 }
 
 /* This function computes the digest of a data structure stored in the
