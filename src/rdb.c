@@ -153,17 +153,6 @@ long long rdbLoadMillisecondTime(rio *rdb, int rdbver) {
     return (long long)t64;
 }
 
-/* GCRA functions are the same as milliseconds ones, present only for semantic
- * differentiation. For sake of completeness the stored value is actually
- * microseconds. */
-static inline ssize_t rdbSaveGCRATime(rio *rdb, long long t) {
-    return rdbSaveMillisecondTime(rdb, t);
-}
-
-static inline long long rdbLoadGCRATime(rio *rdb, int rdbver) {
-    return rdbLoadMillisecondTime(rdb, rdbver);
-}
-
 /* Saves an encoded length. The first two bits in the first byte are used to
  * hold the encoding type. See the RDB_* definitions for more information
  * on the types of encoding. */
@@ -1415,7 +1404,7 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid) {
     } else if (o->type == OBJ_GCRA) {
         long long t;
         getLongLongFromGCRAObject(o, &t);
-        if ((n = rdbSaveGCRATime(rdb,t)) == -1) return -1;
+        if ((n = rdbSaveLen(rdb,t)) == -1) return -1;
         nwritten += n;
     } else if (o->type == OBJ_MODULE) {
         /* Save a module-specific value. */
@@ -3609,12 +3598,12 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error)
         }
         o = createModuleObject(mt, ptr);
     } else if (rdbtype == RDB_TYPE_GCRA) {
-        long long time = rdbLoadGCRATime(rdb, RDB_VERSION);
-        if (rioGetReadError(rdb)) {
+        uint64_t time = rdbLoadLen(rdb, NULL);
+        if (time == RDB_LENERR) {
             rdbReportReadError("Failed loading GCRA TaT value");
             return NULL;
         }
-        o = createGCRAObject(time);
+        o = createGCRAObject((long long)time);
     } else {
         rdbReportReadError("Unknown RDB encoding type %d",rdbtype);
         return NULL;

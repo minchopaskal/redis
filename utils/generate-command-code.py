@@ -603,7 +603,8 @@ const char *COMMAND_GROUP_STR[] = {
     "geo",
     "stream",
     "bitmap",
-    "module"
+    "module",
+    "rate_limit"
 };
 
 const char *commandGroupStr(int index) {
