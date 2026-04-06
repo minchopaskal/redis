@@ -2471,9 +2471,9 @@ int rewriteGCRAObject(rio *r, robj *key, robj *o) {
     long long val;
     if (getLongLongFromGCRAObject(o, &val) == C_ERR) return 0;
 
-    /* GCRASETTAT <key> <tat> */
+    /* GCRASETVALUE <key> <tat> */
     if (rioWriteBulkCount(r,'*',3) == 0) return 0;
-    if (rioWriteBulkString(r,"GCRASETTAT",10) == 0) return 0;
+    if (rioWriteBulkString(r,"GCRASETVALUE",12) == 0) return 0;
     if (rioWriteBulkObject(r,key) == 0) return 0;
     if (rioWriteBulkLongLong(r,val) == 0) return 0;
     return 1;

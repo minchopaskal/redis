@@ -4483,7 +4483,7 @@ void resetCommand(client *c);
 void failoverCommand(client *c);
 void digestCommand(client *c);
 void gcraCommand(client *c);
-void gcraSetTATCommand(client *c);
+void gcraSetValueCommand(client *c);
 
 #if defined(__GNUC__)
 void *calloc(size_t count, size_t size) __attribute__ ((deprecated));

@@ -349,14 +349,14 @@ start_server {tags {"gcra repl" "external:skip"}} {
             }
 
             set cmdinfo [$replica info commandstats]
-            assert_equal [lsearch -glob $cmdinfo "cmdstat_gcrasettat:*"] -1
+            assert_equal [lsearch -glob $cmdinfo "cmdstat_gcrasetvalue:*"] -1
 
             $master del mykey
             $master gcra mykey 2 1 1000 TOKENS 2
             wait_for_ofs_sync $master $replica
 
             set cmdinfo [$replica info commandstats]
-            assert_morethan_equal [lsearch -glob $cmdinfo "cmdstat_gcrasettat:*"] 0
+            assert_morethan_equal [lsearch -glob $cmdinfo "cmdstat_gcrasetvalue:*"] 0
         } {} {external:skip}
     }
 }

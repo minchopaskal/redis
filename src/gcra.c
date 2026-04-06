@@ -210,10 +210,10 @@ void gcraCommand(client *c) {
         /* Replicating the command directly would mess up TaT as we use
          * commandTimeSnapshot. We instead rewrite the command as SET with the
          * appropriate expire time. */
-        robj *gcrasettat= createStringObject("GCRASETTAT", 10);
+        robj *gcrasetvalue = createStringObject("GCRASETVALUE", 12);
         robj *newtatstr = createStringObjectFromLongLong(new_tat_us);
-        rewriteClientCommandVector(c, 3, gcrasettat, key, newtatstr);
-        decrRefCount(gcrasettat);
+        rewriteClientCommandVector(c, 3, gcrasetvalue, key, newtatstr);
+        decrRefCount(gcrasetvalue);
         decrRefCount(newtatstr);
 
         server.dirty++;
@@ -233,10 +233,12 @@ void gcraCommand(client *c) {
     addReplyLongLong(c, reset_after_s);
 }
 
-/* GCRASETTAT key tat
+/* GCRASETVALUE key tat
  *
- * Internal command used during AOF rewrite to record a GCRA TAT value. */
-void gcraSetTATCommand(client *c) {
+ * Internal command used during AOF rewrite to record a GCRA TAT value. The GCRA
+ * command is also rewritten as GCRASETVALUE for replication since GCRA uses
+ * commandTimeSnapshot. */
+void gcraSetValueCommand(client *c) {
     robj *key = c->argv[1];
     robj *tat = c->argv[2];
     long long when;
@@ -251,6 +253,8 @@ void gcraSetTATCommand(client *c) {
 
     robj *tatobj = createGCRAObject(when);
     setKeyByLink(c, c->db, key, &tatobj, kv ? SETKEY_ALREADY_EXIST : SETKEY_DOESNT_EXIST, &link);
+    notifyKeyspaceEvent(NOTIFY_RATE_LIMIT,"gcra",key,c->db->id);
+
     long long when_ms = when / 1000;
     kv = setExpireByLink(c, c->db, key->ptr, when_ms, link);
     notifyKeyspaceEvent(NOTIFY_GENERIC,"expire",key,c->db->id);

@@ -9203,6 +9203,7 @@ void moduleReleaseGIL(void) {
  *  - REDISMODULE_NOTIFY_OVERWRITTEN: Overwritten events
  *  - REDISMODULE_NOTIFY_TYPE_CHANGED: Type-changed events
  *  - REDISMODULE_NOTIFY_KEY_TRIMMED: Key trimmed events after a slot migration operation
+ *  - REDISMODULE_NOTIFY_RATE_LIMIT: Rate limit event
  *  - REDISMODULE_NOTIFY_ALL: All events (Excluding REDISMODULE_NOTIFY_KEYMISS,
  *                            REDISMODULE_NOTIFY_NEW, REDISMODULE_NOTIFY_OVERWRITTEN,
  *                            REDISMODULE_NOTIFY_TYPE_CHANGED, REDISMODULE_NOTIFY_KEY_TRIMMED
