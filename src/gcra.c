@@ -203,6 +203,14 @@ void gcraCommand(client *c) {
         setKeyByLink(c, c->db, key, &tatobj, kv ? SETKEY_ALREADY_EXIST : SETKEY_DOESNT_EXIST, &link);
         notifyKeyspaceEvent(NOTIFY_RATE_LIMIT,"gcra",key,c->db->id);
 
+        /* The key implicitly sets its own expiry time (which is basically the
+         * TaT after which time the value is no longer of any use). That way even
+         * if only one GCRA command is called on a key it will automatically
+         * expire after reaching its TaT without user needing to explicitly call
+         * DEL on it.
+         * These keys are expected to be numerous and short lived thus the
+         * decision to keep the implicit expiraty.
+         * NOTE: idea is same as in redis-cell. */
         long long when = new_tat_us / 1000;
         kv = setExpireByLink(c, c->db, key->ptr, when, link);
         notifyKeyspaceEvent(NOTIFY_GENERIC,"expire",key,c->db->id);
@@ -255,6 +263,7 @@ void gcraSetValueCommand(client *c) {
     setKeyByLink(c, c->db, key, &tatobj, kv ? SETKEY_ALREADY_EXIST : SETKEY_DOESNT_EXIST, &link);
     notifyKeyspaceEvent(NOTIFY_RATE_LIMIT,"gcra",key,c->db->id);
 
+    /* Just like the base GCRA command we set the expire time of the key implicitly. */
     long long when_ms = when / 1000;
     kv = setExpireByLink(c, c->db, key->ptr, when_ms, link);
     notifyKeyspaceEvent(NOTIFY_GENERIC,"expire",key,c->db->id);
