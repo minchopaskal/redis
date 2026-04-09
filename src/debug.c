@@ -124,12 +124,12 @@ void mixStringObjectDigest(unsigned char *digest, robj *o) {
 }
 
 void mixGCRAObjectDigest(unsigned char *digest, robj *o) {
-    char buf[32];
+    char buf[LONG_STR_SIZE];
     long long val;
     if (getLongLongFromGCRAObject(o, &val) == C_ERR) {
         serverPanic("invalid gcra object");
     }
-    int len = ll2string(buf, 32, val);
+    int len = ll2string(buf, sizeof(buf), val);
     mixDigest(digest,buf,len);
 }
 
