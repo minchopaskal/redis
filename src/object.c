@@ -605,7 +605,7 @@ void freeStreamObject(robj *o) {
 
 void freeGCRAObject(robj *o) {
 #if UINTPTR_MAX == 0xffffffff
-        zfree(o->ptr);
+    zfree(o->ptr);
 #else
     (void)o;
 #endif
