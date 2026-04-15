@@ -1231,3 +1231,14 @@ start_cluster 1 0 {tags {external:skip cluster needs:debug}} {
         R 0 CONFIG SET list-max-listpack-size [lindex $origin_conf 1]
     }
 }
+
+start_server {} {
+    test "CLUSTER SLOT-STATS memory tracking cannot be re-enabled after being disabled (non-clustered mode)" {
+        # Once memory tracking is disabled, it cannot be re-enabled at runtime
+        assert_error "ERR*memory tracking cannot be enabled at runtime*" {r CONFIG SET cluster-slot-stats-enabled yes}
+        assert_error "ERR*memory tracking cannot be enabled at runtime*" {r CONFIG SET cluster-slot-stats-enabled mem}
+
+        # But cpu and net can still be enabled
+        assert_match "OK" [r CONFIG SET cluster-slot-stats-enabled "cpu net"]
+    }
+}
