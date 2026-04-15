@@ -3599,7 +3599,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error)
         o = createModuleObject(mt, ptr);
     } else if (rdbtype == RDB_TYPE_GCRA) {
         uint64_t time = rdbLoadLen(rdb, NULL);
-        if (time == RDB_LENERR) {
+        if (time == RDB_LENERR || time > LLONG_MAX) {
             rdbReportReadError("Failed loading GCRA TaT value");
             return NULL;
         }
