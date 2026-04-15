@@ -1182,7 +1182,7 @@ int getLongLongFromGCRAObject(robj *o, long long *target) {
     res = (long long)o->ptr;
 #endif
     if (unlikely(res < 0)) {
-        return C_ERR;
+        serverPanic("Invalid negative GCRA value");
     }
     *target = res;
     return C_OK;

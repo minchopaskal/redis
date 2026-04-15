@@ -133,10 +133,7 @@ void gcraCommand(client *c) {
         return;
     }
     if (kv != NULL) {
-        if (getLongLongFromGCRAObject(kv, &tat_us) != C_OK) {
-            addReplyError(c, "invalid value for GCRA");
-            return;
-        }
+        getLongLongFromGCRAObject(kv, &tat_us);
     } else {
         tat_us = now;
     }
@@ -274,6 +271,6 @@ void gcraSetValueCommand(client *c) {
 
 robj *gcraDup(robj *o) {
     long long val;
-    serverAssert(getLongLongFromGCRAObject(o, &val) == C_OK);
+    getLongLongFromGCRAObject(o, &val);
     return createGCRAObject(val);
 }

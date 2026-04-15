@@ -2469,7 +2469,7 @@ int rewriteStreamObject(rio *r, robj *key, robj *o) {
 
 int rewriteGCRAObject(rio *r, robj *key, robj *o) {
     long long val;
-    if (getLongLongFromGCRAObject(o, &val) == C_ERR) return 0;
+    getLongLongFromGCRAObject(o, &val);
 
     /* GCRASETVALUE <key> <tat> */
     if (rioWriteBulkCount(r,'*',3) == 0) return 0;
