@@ -1174,20 +1174,15 @@ int getLongLongFromObject(robj *o, long long *target) {
 
 int getLongLongFromGCRAObject(robj *o, long long *target) {
     long long res;
-    if (o == NULL) {
-        res = 0;
-    } else {
-        serverAssertWithInfo(NULL, o, o->type == OBJ_GCRA);
-        serverAssert(o->encoding == OBJ_ENCODING_INT);
+    serverAssertWithInfo(NULL, o, o->type == OBJ_GCRA);
+    serverAssert(o->encoding == OBJ_ENCODING_INT);
 #if UINTPTR_MAX == 0xffffffff
-        res = *((long long*)o->ptr);
+    res = *((long long*)o->ptr);
 #else
-        res = (long long)o->ptr;
+    res = (long long)o->ptr;
 #endif
-
-        if (unlikely(res < 0)) {
-            return C_ERR;
-        }
+    if (unlikely(res < 0)) {
+        return C_ERR;
     }
     *target = res;
     return C_OK;
