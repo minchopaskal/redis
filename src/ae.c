@@ -64,6 +64,9 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     eventLoop->aftersleep = NULL;
     eventLoop->flags = 0;
     memset(eventLoop->privdata, 0, sizeof(eventLoop->privdata));
+#ifdef HAVE_IO_URING
+    eventLoop->iouring_state = NULL;
+#endif
     if (aeApiCreate(eventLoop) == -1) goto err;
     /* Events with mask == AE_NONE are not set. So let's initialize the
      * vector with it. */
@@ -123,6 +126,12 @@ int aeResizeSetSize(aeEventLoop *eventLoop, int setsize) {
 
 void aeDeleteEventLoop(aeEventLoop *eventLoop) {
     aeApiFree(eventLoop);
+#ifdef HAVE_IO_URING
+    {
+        extern void aeIOUringCleanup(aeEventLoop *el);
+        aeIOUringCleanup(eventLoop);
+    }
+#endif
     zfree(eventLoop->events);
     zfree(eventLoop->fired);
 
@@ -489,9 +498,105 @@ int aeWait(int fd, int mask, long long milliseconds) {
     }
 }
 
+#ifdef HAVE_IO_URING
+int aeIOUringProcessEvents(aeEventLoop *eventLoop, int flags) {
+    extern int aeIOUringProcessCQEs(aeEventLoop *el);
+    int processed = 0;
+
+    if (!(flags & AE_TIME_EVENTS) && !(flags & AE_FILE_EVENTS)) return 0;
+
+    /* beforesleep hook */
+    if (eventLoop->beforesleep != NULL && (flags & AE_CALL_BEFORE_SLEEP))
+        eventLoop->beforesleep(eventLoop);
+
+    /*
+     * Poll epoll with zero timeout for non-io_uring fds (module pipe,
+     * time-event wake-ups, cluster bus, etc.).
+     */
+    if (eventLoop->maxfd != -1 ||
+        ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
+        struct timeval tv, *tvp = NULL;
+
+        if ((flags & AE_DONT_WAIT) || (eventLoop->flags & AE_DONT_WAIT)) {
+            tv.tv_sec = tv.tv_usec = 0;
+            tvp = &tv;
+        } else if (flags & AE_TIME_EVENTS) {
+            int64_t usUntilTimer_val = usUntilEarliestTimer(eventLoop);
+            if (usUntilTimer_val >= 0) {
+                tv.tv_sec  = usUntilTimer_val / 1000000;
+                tv.tv_usec = usUntilTimer_val % 1000000;
+                tvp = &tv;
+            }
+        }
+
+        /*
+         * We always want a very short epoll wait here because the main
+         * blocking wait happens in io_uring_wait_cqes inside
+         * aeIOUringProcessCQEs.  Cap it to 0 so we never double-sleep.
+         */
+        tv.tv_sec = tv.tv_usec = 0;
+        tvp = &tv;
+
+        int numevents = aeApiPoll(eventLoop, tvp);
+
+        if (flags & AE_FILE_EVENTS) {
+            for (int j = 0; j < numevents; j++) {
+                int fd = eventLoop->fired[j].fd;
+                aeFileEvent *fe = &eventLoop->events[fd];
+                int mask = eventLoop->fired[j].mask;
+                int fired = 0;
+                int invert = fe->mask & AE_BARRIER;
+
+                if (!invert && fe->mask & mask & AE_READABLE) {
+                    fe->rfileProc(eventLoop, fd, fe->clientData, mask);
+                    fired++;
+                    fe = &eventLoop->events[fd];
+                }
+                if (fe->mask & mask & AE_WRITABLE) {
+                    if (!fired || fe->wfileProc != fe->rfileProc) {
+                        fe->wfileProc(eventLoop, fd, fe->clientData, mask);
+                        fired++;
+                    }
+                }
+                if (invert) {
+                    fe = &eventLoop->events[fd];
+                    if ((fe->mask & mask & AE_READABLE) &&
+                        (!fired || fe->wfileProc != fe->rfileProc))
+                    {
+                        fe->rfileProc(eventLoop, fd, fe->clientData, mask);
+                        fired++;
+                    }
+                }
+                processed++;
+            }
+        }
+    }
+
+    /* Process io_uring completions (accept / read / write / close). */
+    processed += aeIOUringProcessCQEs(eventLoop);
+
+    /* aftersleep hook */
+    if (eventLoop->aftersleep != NULL && (flags & AE_CALL_AFTER_SLEEP))
+        eventLoop->aftersleep(eventLoop);
+
+    /* Time events */
+    if (flags & AE_TIME_EVENTS)
+        processed += processTimeEvents(eventLoop);
+
+    return processed;
+}
+#endif /* HAVE_IO_URING */
+
 void aeMain(aeEventLoop *eventLoop) {
     eventLoop->stop = 0;
     while (!eventLoop->stop) {
+#ifdef HAVE_IO_URING
+        if (eventLoop->iouring_state) {
+            aeIOUringProcessEvents(eventLoop, AE_ALL_EVENTS|
+                                              AE_CALL_BEFORE_SLEEP|
+                                              AE_CALL_AFTER_SLEEP);
+        } else
+#endif
         aeProcessEvents(eventLoop, AE_ALL_EVENTS|
                                    AE_CALL_BEFORE_SLEEP|
                                    AE_CALL_AFTER_SLEEP);

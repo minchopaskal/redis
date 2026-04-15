@@ -9,6 +9,7 @@
 
 #include "server.h"
 #include "connhelpers.h"
+#include "ae_iouring.h"
 
 /* The connections module provides a lean abstraction of network connections
  * to avoid direct socket and async event management across the Redis code base.
@@ -116,6 +117,9 @@ static void connSocketShutdown(connection *conn) {
 /* Close the connection and free resources. */
 static void connSocketClose(connection *conn) {
     if (conn->fd != -1) {
+#ifdef HAVE_IO_URING
+        if (conn->el) aeIOUringDeactivateFd(conn->el, conn->fd);
+#endif
         if (conn->el) aeDeleteFileEvent(conn->el, conn->fd, AE_READABLE | AE_WRITABLE);
         close(conn->fd);
         conn->fd = -1;
@@ -428,6 +432,113 @@ static ConnectionType CT_Socket = {
     .has_pending_data = NULL,
     .process_pending_data = NULL,
 };
+
+/* ------------------------------------------------------------------ */
+/* io_uring connection type overrides                                  */
+/* ------------------------------------------------------------------ */
+#ifdef HAVE_IO_URING
+
+/*
+ * connRead for io_uring connections: instead of read(2), serve data from
+ * the pre-filled io_uring recv buffer.  readQueryFromClient calls this
+ * via connRead() -> conn->type->read().
+ *
+ * Returns bytes copied (>0), 0 for EOF (shouldn't happen here), or -1
+ * with errno = EAGAIN when the buffer is exhausted (which causes
+ * readQueryFromClient to stop reading and return).
+ */
+static int connIOUringRead(connection *conn, void *buf, size_t buf_len) {
+    aeIOUringFdState *fs = aeIOUringGetFdState(conn->el, conn->fd);
+    if (!fs || fs->read_len <= 0) {
+        errno = EAGAIN;
+        return -1;
+    }
+
+    int avail = fs->read_len - fs->read_pos;
+    if (avail <= 0) {
+        errno = EAGAIN;
+        return -1;
+    }
+
+    int to_copy = (int)buf_len < avail ? (int)buf_len : avail;
+    memcpy(buf, fs->readbuf + fs->read_pos, to_copy);
+    fs->read_pos += to_copy;
+    return to_copy;
+}
+
+/*
+ * set_read_handler for io_uring connections: just store the handler,
+ * do NOT create an epoll event.  io_uring drives readability via
+ * recv SQE/CQE.
+ */
+static int connIOUringSetReadHandler(connection *conn, ConnectionCallbackFunc func) {
+    conn->read_handler = func;
+    return C_OK;
+}
+
+/*
+ * set_write_handler for io_uring connections: just store the handler,
+ * do NOT create an epoll event.  io_uring drives writes via send
+ * SQE/CQE.
+ */
+static int connIOUringSetWriteHandler(connection *conn, ConnectionCallbackFunc func, int barrier) {
+    conn->write_handler = func;
+    if (barrier)
+        conn->flags |= CONN_FLAG_WRITE_BARRIER;
+    else
+        conn->flags &= ~CONN_FLAG_WRITE_BARRIER;
+    return C_OK;
+}
+
+/*
+ * CT_IOUring: connection type for io_uring-managed client sockets.
+ * Inherits almost everything from CT_Socket; overrides read and
+ * handler registration to avoid epoll and syscall read(2).
+ */
+static ConnectionType CT_IOUring = {
+    .get_type = connSocketGetType,
+
+    .init = NULL,
+    .cleanup = NULL,
+    .configure = NULL,
+
+    .ae_handler = connSocketEventHandler,
+    .accept_handler = connSocketAcceptHandler,
+    .addr = connSocketAddr,
+    .is_local = connSocketIsLocal,
+    .listen = connSocketListen,
+
+    .conn_create = connCreateSocket,
+    .conn_create_accepted = connCreateAcceptedSocket,
+    .shutdown = connSocketShutdown,
+    .close = connSocketClose,
+
+    .connect = connSocketConnect,
+    .blocking_connect = connSocketBlockingConnect,
+    .accept = connSocketAccept,
+
+    .unbind_event_loop = NULL,
+    .rebind_event_loop = connSocketRebindEventLoop,
+
+    .write = connSocketWrite,
+    .writev = connSocketWritev,
+    .read = connIOUringRead,
+    .set_write_handler = connIOUringSetWriteHandler,
+    .set_read_handler = connIOUringSetReadHandler,
+    .get_last_error = connSocketGetLastError,
+    .sync_write = connSocketSyncWrite,
+    .sync_read = connSocketSyncRead,
+    .sync_readline = connSocketSyncReadLine,
+
+    .has_pending_data = NULL,
+    .process_pending_data = NULL,
+};
+
+ConnectionType *connectionTypeIOUring(void) {
+    return &CT_IOUring;
+}
+
+#endif /* HAVE_IO_URING */
 
 int connBlock(connection *conn) {
     if (conn->fd == -1) return C_ERR;

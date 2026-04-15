@@ -33,6 +33,7 @@
 #include "estore.h"
 #include "chk.h"
 #include "fast_float_strtod.h"
+#include "ae_iouring.h"
 
 #include <time.h>
 #include <signal.h>
@@ -8200,6 +8201,24 @@ int main(int argc, char **argv) {
     }
     ACLLoadUsersAtStartup();
     initListeners();
+
+#ifdef HAVE_IO_URING
+    /* Initialize io_uring for the first TCP listener socket. */
+    {
+        int conn_index = connectionIndexByType(CONN_TYPE_SOCKET);
+        if (conn_index >= 0) {
+            connListener *listener = &server.listeners[conn_index];
+            if (listener->count > 0) {
+                if (aeIOUringInit(server.el, listener->fd[0]) == C_ERR) {
+                    serverLog(LL_WARNING,
+                              "Failed to initialize io_uring, "
+                              "falling back to epoll.");
+                }
+            }
+        }
+    }
+#endif
+
     if (server.cluster_enabled) {
         clusterInitLast();
     }

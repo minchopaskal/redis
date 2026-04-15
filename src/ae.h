@@ -90,6 +90,9 @@ typedef struct aeEventLoop {
     aeBeforeSleepProc *aftersleep;
     int flags;
     void *privdata[2];
+#ifdef HAVE_IO_URING
+    void *iouring_state; /* aeIOUringState*, opaque to avoid leaking liburing.h */
+#endif
 } aeEventLoop;
 
 /* Prototypes */
@@ -114,5 +117,9 @@ void aeSetAfterSleepProc(aeEventLoop *eventLoop, aeBeforeSleepProc *aftersleep);
 int aeGetSetSize(aeEventLoop *eventLoop);
 int aeResizeSetSize(aeEventLoop *eventLoop, int setsize);
 void aeSetDontWait(aeEventLoop *eventLoop, int noWait);
+
+#ifdef HAVE_IO_URING
+int aeIOUringProcessEvents(aeEventLoop *eventLoop, int flags);
+#endif
 
 #endif
