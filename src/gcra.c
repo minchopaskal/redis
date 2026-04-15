@@ -252,7 +252,11 @@ void gcraSetValueCommand(client *c) {
     kvobj *kv = lookupKeyWriteWithLink(c->db, key, &link);
     if (checkType(c, kv, OBJ_GCRA)) return;
 
-    if (getLongLongFromObjectOrReply(c, tat, &when, "Invalid tat value") == C_ERR) {
+    if (getLongLongFromObjectOrReply(c, tat, &when, "Invalid TaT value") == C_ERR) {
+        return;
+    }
+    if (when < 0) {
+        addReplyError(c, "Invalid negative TaT value");
         return;
     }
 
