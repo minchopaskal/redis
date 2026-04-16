@@ -22,6 +22,7 @@
 #include "cluster_asm.h"
 #include "memory_prefetch.h"
 #include "connection.h"
+#include "ae_iouring.h"
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <math.h>
@@ -2799,6 +2800,12 @@ int handleClientsWithPendingWrites(void) {
 
         c->flags &= ~CLIENT_PENDING_WRITE;
         listUnlinkNode(server.clients_pending_write,ln);
+
+#ifdef HAVE_IO_URING
+        /* io_uring clients handle writes via send SQEs, not write(2).
+         * Skip them here to avoid racing with in-flight io_uring sends. */
+        if (c->conn && c->conn->type == connectionTypeIOUring()) continue;
+#endif
 
         /* If a client is protected, don't do anything,
          * that may trigger write error or recreate handler. */
