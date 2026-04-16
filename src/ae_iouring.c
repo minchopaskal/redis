@@ -467,20 +467,7 @@ static void handleReadCQE(aeIOUringState *state, aeEventLoop *el,
     /* ---- decide next action: WRITE or READ ---- */
 
     if (clientHasPendingReplies(c)) {
-        /*
-         * Try a direct write(2) first – for small replies this will
-         * complete immediately and we can go back to reading.
-         */
-        if (writeToClient(c, 0) == C_ERR) {
-            fs->active = 0;
-            return;
-        }
-
-        if (clientHasPendingReplies(c)) {
-            iouringSubmitClientWrite(state, el, c);
-        } else {
-            iouringSubmitRecv(state, el, fd);
-        }
+        iouringSubmitClientWrite(state, el, c);
     } else {
         iouringSubmitRecv(state, el, fd);
     }
