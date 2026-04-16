@@ -14,6 +14,7 @@
 #define __AE_H__
 
 #include "monotonic.h"
+#include <sys/time.h>
 
 #define AE_OK 0
 #define AE_ERR -1
@@ -90,9 +91,12 @@ typedef struct aeEventLoop {
     aeBeforeSleepProc *aftersleep;
     int flags;
     void *privdata[2];
-#ifdef HAVE_IO_URING
-    void *iouring_state; /* aeIOUringState*, opaque to avoid leaking liburing.h */
-#endif
+    /* Alternate event backend (io_uring).  Dispatched via function
+     * pointers so ae.c has zero link-time dependency on ae_iouring.o.
+     * NULL when inactive.  Set by aeIOUringInit(). */
+    void *iouring_state;
+    int  (*iouring_process_events)(struct aeEventLoop *el, int flags);
+    void (*iouring_cleanup)(struct aeEventLoop *el);
 } aeEventLoop;
 
 /* Prototypes */
@@ -117,9 +121,7 @@ void aeSetAfterSleepProc(aeEventLoop *eventLoop, aeBeforeSleepProc *aftersleep);
 int aeGetSetSize(aeEventLoop *eventLoop);
 int aeResizeSetSize(aeEventLoop *eventLoop, int setsize);
 void aeSetDontWait(aeEventLoop *eventLoop, int noWait);
-
-#ifdef HAVE_IO_URING
-int aeIOUringProcessEvents(aeEventLoop *eventLoop, int flags);
-#endif
+int aeCallApiPoll(aeEventLoop *eventLoop, struct timeval *tvp);
+int aeCallProcessTimeEvents(aeEventLoop *eventLoop);
 
 #endif

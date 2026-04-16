@@ -295,6 +295,11 @@ int aeIOUringInit(aeEventLoop *eventLoop, int listen_fd) {
     io_uring_submit(&state->ring);
 
     eventLoop->iouring_state = state;
+
+    static int aeIOUringProcessEvents(aeEventLoop *, int);
+    eventLoop->iouring_process_events = aeIOUringProcessEvents;
+    eventLoop->iouring_cleanup        = aeIOUringCleanup;
+
     serverLog(LL_NOTICE,
               "io_uring initialized: SQ=%d CQ=%d SQPOLL mode, "
               "features=0x%x, listen fd=%d",
@@ -584,6 +589,65 @@ int aeIOUringProcessCQEs(aeEventLoop *eventLoop) {
 
     io_uring_cq_advance(&state->ring, cqe_count);
     return cqe_count;
+}
+
+static int aeIOUringProcessEvents(aeEventLoop *eventLoop, int flags) {
+    int processed = 0;
+
+    if (!(flags & AE_TIME_EVENTS) && !(flags & AE_FILE_EVENTS)) return 0;
+
+    if (eventLoop->beforesleep != NULL && (flags & AE_CALL_BEFORE_SLEEP))
+        eventLoop->beforesleep(eventLoop);
+
+    /* Poll epoll with zero timeout for non-io_uring fds. */
+    if (eventLoop->maxfd != -1 ||
+        ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
+
+        struct timeval tv = {0, 0};
+        int numevents = aeCallApiPoll(eventLoop, &tv);
+
+        if (flags & AE_FILE_EVENTS) {
+            for (int j = 0; j < numevents; j++) {
+                int fd = eventLoop->fired[j].fd;
+                aeFileEvent *fe = &eventLoop->events[fd];
+                int mask = eventLoop->fired[j].mask;
+                int fired = 0;
+                int invert = fe->mask & AE_BARRIER;
+
+                if (!invert && fe->mask & mask & AE_READABLE) {
+                    fe->rfileProc(eventLoop, fd, fe->clientData, mask);
+                    fired++;
+                    fe = &eventLoop->events[fd];
+                }
+                if (fe->mask & mask & AE_WRITABLE) {
+                    if (!fired || fe->wfileProc != fe->rfileProc) {
+                        fe->wfileProc(eventLoop, fd, fe->clientData, mask);
+                        fired++;
+                    }
+                }
+                if (invert) {
+                    fe = &eventLoop->events[fd];
+                    if ((fe->mask & mask & AE_READABLE) &&
+                        (!fired || fe->wfileProc != fe->rfileProc))
+                    {
+                        fe->rfileProc(eventLoop, fd, fe->clientData, mask);
+                        fired++;
+                    }
+                }
+                processed++;
+            }
+        }
+    }
+
+    processed += aeIOUringProcessCQEs(eventLoop);
+
+    if (eventLoop->aftersleep != NULL && (flags & AE_CALL_AFTER_SLEEP))
+        eventLoop->aftersleep(eventLoop);
+
+    if (flags & AE_TIME_EVENTS)
+        processed += aeCallProcessTimeEvents(eventLoop);
+
+    return processed;
 }
 
 #endif /* HAVE_IO_URING */
