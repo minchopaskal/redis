@@ -237,6 +237,7 @@ static void iouringSubmitClientWrite(aeIOUringState *state, aeEventLoop *el,
 /* ------------------------------------------------------------------ */
 /* Init / Cleanup                                                     */
 /* ------------------------------------------------------------------ */
+static int aeIOUringProcessEvents(aeEventLoop *eventLoop, int flags);
 
 int aeIOUringInit(aeEventLoop *eventLoop, int listen_fd) {
     aeIOUringState *state = zcalloc(sizeof(*state));
@@ -296,7 +297,6 @@ int aeIOUringInit(aeEventLoop *eventLoop, int listen_fd) {
 
     eventLoop->iouring_state = state;
 
-    static int aeIOUringProcessEvents(aeEventLoop *, int);
     eventLoop->iouring_process_events = aeIOUringProcessEvents;
     eventLoop->iouring_cleanup        = aeIOUringCleanup;
 
