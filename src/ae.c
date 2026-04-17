@@ -65,7 +65,7 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     eventLoop->flags = 0;
     memset(eventLoop->privdata, 0, sizeof(eventLoop->privdata));
     eventLoop->iouring_state = NULL;
-    eventLoop->iouring_process_events = NULL;
+    eventLoop->iouring_process_cqes = NULL;
     eventLoop->iouring_cleanup = NULL;
     if (aeApiCreate(eventLoop) == -1) goto err;
     /* Events with mask == AE_NONE are not set. So let's initialize the
@@ -377,7 +377,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
         int j;
         struct timeval tv, *tvp = NULL; /* NULL means infinite wait. */
-        int64_t usUntilTimer;
+        int64_t usUntilTimer = -1;
 
         if (eventLoop->beforesleep != NULL && (flags & AE_CALL_BEFORE_SLEEP))
             eventLoop->beforesleep(eventLoop);
@@ -390,6 +390,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         if ((flags & AE_DONT_WAIT) || (eventLoop->flags & AE_DONT_WAIT)) {
             tv.tv_sec = tv.tv_usec = 0;
             tvp = &tv;
+            usUntilTimer = 0;
         } else if (flags & AE_TIME_EVENTS) {
             usUntilTimer = usUntilEarliestTimer(eventLoop);
             if (usUntilTimer >= 0) {
@@ -398,6 +399,15 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
                 tvp = &tv;
             }
         }
+
+        /* When io_uring is active the main blocking wait happens in
+         * iouring_process_cqes below; aeApiPoll just does a quick
+         * non-blocking check for non-client fds. */
+        struct timeval tv_zero = {0, 0};
+        if (eventLoop->iouring_process_cqes) {
+            tvp = &tv_zero;
+        }
+
         /* Call the multiplexing API, will return only on timeout or when
          * some event fires. */
         numevents = aeApiPoll(eventLoop, tvp);
@@ -405,6 +415,12 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         /* Don't process file events if not requested. */
         if (!(flags & AE_FILE_EVENTS)) {
             numevents = 0;
+        }
+
+        /* io_uring blocking wait – picks up recv/send/accept completions. */
+        if (eventLoop->iouring_process_cqes) {
+            processed += eventLoop->iouring_process_cqes(eventLoop,
+                                                         usUntilTimer);
         }
 
         /* After sleep callback. */
@@ -494,25 +510,12 @@ int aeWait(int fd, int mask, long long milliseconds) {
     }
 }
 
-int aeCallApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
-    return aeApiPoll(eventLoop, tvp);
-}
-
-int aeCallProcessTimeEvents(aeEventLoop *eventLoop) {
-    return processTimeEvents(eventLoop);
-}
-
 void aeMain(aeEventLoop *eventLoop) {
     eventLoop->stop = 0;
     while (!eventLoop->stop) {
-        if (eventLoop->iouring_process_events) {
-            eventLoop->iouring_process_events(eventLoop,
-                AE_ALL_EVENTS|AE_CALL_BEFORE_SLEEP|AE_CALL_AFTER_SLEEP);
-        } else {
-            aeProcessEvents(eventLoop, AE_ALL_EVENTS|
-                                       AE_CALL_BEFORE_SLEEP|
-                                       AE_CALL_AFTER_SLEEP);
-        }
+        aeProcessEvents(eventLoop, AE_ALL_EVENTS|
+                                   AE_CALL_BEFORE_SLEEP|
+                                   AE_CALL_AFTER_SLEEP);
     }
 }
 

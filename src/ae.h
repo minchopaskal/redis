@@ -91,11 +91,12 @@ typedef struct aeEventLoop {
     aeBeforeSleepProc *aftersleep;
     int flags;
     void *privdata[2];
-    /* Alternate event backend (io_uring).  Dispatched via function
-     * pointers so ae.c has zero link-time dependency on ae_iouring.o.
-     * NULL when inactive.  Set by aeIOUringInit(). */
+    /* io_uring backend hook.  When active, aeProcessEvents uses a
+     * non-blocking epoll poll and delegates the main blocking wait to
+     * iouring_process_cqes(el, timeout_ns).  Function pointer so ae.c
+     * has no link-time dependency on ae_iouring.o. */
     void *iouring_state;
-    int  (*iouring_process_events)(struct aeEventLoop *el, int flags);
+    int  (*iouring_process_cqes)(struct aeEventLoop *el, int64_t timeout_us);
     void (*iouring_cleanup)(struct aeEventLoop *el);
 } aeEventLoop;
 
@@ -121,7 +122,5 @@ void aeSetAfterSleepProc(aeEventLoop *eventLoop, aeBeforeSleepProc *aftersleep);
 int aeGetSetSize(aeEventLoop *eventLoop);
 int aeResizeSetSize(aeEventLoop *eventLoop, int setsize);
 void aeSetDontWait(aeEventLoop *eventLoop, int noWait);
-int aeCallApiPoll(aeEventLoop *eventLoop, struct timeval *tvp);
-int aeCallProcessTimeEvents(aeEventLoop *eventLoop);
 
 #endif
