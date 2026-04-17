@@ -237,7 +237,6 @@ static void iouringSubmitClientWrite(aeIOUringState *state, aeEventLoop *el,
 /* ------------------------------------------------------------------ */
 /* Init / Cleanup                                                     */
 /* ------------------------------------------------------------------ */
-static int aeIOUringProcessEvents(aeEventLoop *eventLoop, int flags);
 
 int aeIOUringInit(aeEventLoop *eventLoop, int listen_fd) {
     aeIOUringState *state = zcalloc(sizeof(*state));
@@ -297,8 +296,8 @@ int aeIOUringInit(aeEventLoop *eventLoop, int listen_fd) {
 
     eventLoop->iouring_state = state;
 
-    eventLoop->iouring_process_events = aeIOUringProcessEvents;
-    eventLoop->iouring_cleanup        = aeIOUringCleanup;
+    eventLoop->iouring_process_cqes = aeIOUringProcessCQEs;
+    eventLoop->iouring_cleanup      = aeIOUringCleanup;
 
     serverLog(LL_NOTICE,
               "io_uring initialized: SQ=%d CQ=%d SQPOLL mode, "
@@ -544,7 +543,16 @@ static void handleCloseCQE(aeIOUringState *state, int fd) {
     fs->conn   = NULL;
 }
 
-int aeIOUringProcessCQEs(aeEventLoop *eventLoop) {
+/*
+ * Drain io_uring completions.  Called from aeProcessEvents.
+ *
+ * timeout_us controls the blocking wait:
+ *   >= 0: wait up to this many microseconds for at least one CQE
+ *    < 0: wait indefinitely (until a CQE arrives)
+ *
+ * Returns the number of CQEs processed.
+ */
+int aeIOUringProcessCQEs(aeEventLoop *eventLoop, int64_t timeout_us) {
     aeIOUringState *state = eventLoop->iouring_state;
     if (!state || !state->initialized) return 0;
 
@@ -554,15 +562,36 @@ int aeIOUringProcessCQEs(aeEventLoop *eventLoop) {
     /* Submit any pending SQEs – with SQPOLL this should not syscall. */
     io_uring_submit(&state->ring);
 
-    /* Wait for CQEs with a short timeout. */
     struct __kernel_timespec ts;
-    ts.tv_sec  = 0;
-    ts.tv_nsec = 1000; /* 1 µs */
+    struct __kernel_timespec *tsp = NULL;
+    if (timeout_us >= 0) {
+        ts.tv_sec  = timeout_us / 1000000LL;
+        ts.tv_nsec = (timeout_us % 1000000LL) * 1000LL;
+        tsp = &ts;
+    }
+
+    /*
+     * Choose wait_nr based on the timeout:
+     *  - timeout  > 0 : we have slack before the next timer; batch up
+     *    to SQ-size completions before waking.  The timeout bounds
+     *    the wait so we never miss the timer.
+     *  - timeout == 0 : peek only, don't block.
+     *  - timeout  < 0 : no deadline; block until the first CQE
+     *    arrives.  wait_nr MUST be 1 here, otherwise with tsp = NULL
+     *    we could sleep forever waiting for a batch that never fills.
+     * io_uring_for_each_cqe below drains everything in the CQ
+     * regardless of wait_nr.
+     */
+    unsigned wait_nr;
+    if (timeout_us > 0)        wait_nr = IOURING_SQ_ENTRIES;
+    else if (timeout_us == 0)  wait_nr = 0;
+    else                       wait_nr = 1;
 
     struct io_uring_cqe *cqe = NULL;
-    int ret = io_uring_wait_cqes(&state->ring, &cqe,
-                                 IOURING_SQ_ENTRIES, &ts, NULL);
-    if (ret < 0 && ret != -ETIME && ret != -EINTR) {
+    int ret = io_uring_wait_cqes(&state->ring, &cqe, wait_nr, tsp, NULL);
+    /* -ETIME: timeout expired, -EINTR: signal, -EAGAIN: peek with
+     * empty CQ (wait_nr=0).  All expected and harmless. */
+    if (ret < 0 && ret != -ETIME && ret != -EINTR && ret != -EAGAIN) {
         serverLog(LL_WARNING, "io_uring_wait_cqes: %s", strerror(-ret));
     }
 
@@ -576,65 +605,6 @@ int aeIOUringProcessCQEs(aeEventLoop *eventLoop) {
 
     io_uring_cq_advance(&state->ring, cqe_count);
     return cqe_count;
-}
-
-static int aeIOUringProcessEvents(aeEventLoop *eventLoop, int flags) {
-    int processed = 0;
-
-    if (!(flags & AE_TIME_EVENTS) && !(flags & AE_FILE_EVENTS)) return 0;
-
-    if (eventLoop->beforesleep != NULL && (flags & AE_CALL_BEFORE_SLEEP))
-        eventLoop->beforesleep(eventLoop);
-
-    /* Poll epoll with zero timeout for non-io_uring fds. */
-    if (eventLoop->maxfd != -1 ||
-        ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
-
-        struct timeval tv = {0, 0};
-        int numevents = aeCallApiPoll(eventLoop, &tv);
-
-        if (flags & AE_FILE_EVENTS) {
-            for (int j = 0; j < numevents; j++) {
-                int fd = eventLoop->fired[j].fd;
-                aeFileEvent *fe = &eventLoop->events[fd];
-                int mask = eventLoop->fired[j].mask;
-                int fired = 0;
-                int invert = fe->mask & AE_BARRIER;
-
-                if (!invert && fe->mask & mask & AE_READABLE) {
-                    fe->rfileProc(eventLoop, fd, fe->clientData, mask);
-                    fired++;
-                    fe = &eventLoop->events[fd];
-                }
-                if (fe->mask & mask & AE_WRITABLE) {
-                    if (!fired || fe->wfileProc != fe->rfileProc) {
-                        fe->wfileProc(eventLoop, fd, fe->clientData, mask);
-                        fired++;
-                    }
-                }
-                if (invert) {
-                    fe = &eventLoop->events[fd];
-                    if ((fe->mask & mask & AE_READABLE) &&
-                        (!fired || fe->wfileProc != fe->rfileProc))
-                    {
-                        fe->rfileProc(eventLoop, fd, fe->clientData, mask);
-                        fired++;
-                    }
-                }
-                processed++;
-            }
-        }
-    }
-
-    processed += aeIOUringProcessCQEs(eventLoop);
-
-    if (eventLoop->aftersleep != NULL && (flags & AE_CALL_AFTER_SLEEP))
-        eventLoop->aftersleep(eventLoop);
-
-    if (flags & AE_TIME_EVENTS)
-        processed += aeCallProcessTimeEvents(eventLoop);
-
-    return processed;
 }
 
 #endif /* HAVE_IO_URING */

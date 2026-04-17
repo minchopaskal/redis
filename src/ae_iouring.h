@@ -10,6 +10,8 @@
 
 #ifdef HAVE_IO_URING
 
+#include <stdint.h>
+
 #define IOURING_SQ_ENTRIES 8192
 #define IOURING_CQ_ENTRIES (IOURING_SQ_ENTRIES * 4)
 #define IOURING_READBUF_SIZE (16 * 1024)
@@ -46,7 +48,7 @@ typedef struct aeIOUringState aeIOUringState;
 
 int  aeIOUringInit(struct aeEventLoop *eventLoop, int listen_fd);
 void aeIOUringCleanup(struct aeEventLoop *eventLoop);
-int  aeIOUringProcessCQEs(struct aeEventLoop *eventLoop);
+int  aeIOUringProcessCQEs(struct aeEventLoop *eventLoop, int64_t timeout_us);
 void aeIOUringDeactivateFd(struct aeEventLoop *eventLoop, int fd);
 
 /* io_uring connection type (defined in socket.c) */
