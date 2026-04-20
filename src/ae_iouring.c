@@ -63,7 +63,7 @@ static void handleWriteCQE(aeIOUringState *state, aeEventLoop *el,
                             int fd, struct io_uring_cqe *cqe);
 static void handleCloseCQE(aeIOUringState *state, int fd);
 
-static void iouringDispatchCQE(aeIOUringState *state, aeEventLoop *el,
+static inline void iouringDispatchCQE(aeIOUringState *state, aeEventLoop *el,
                                struct io_uring_cqe *cqe) {
     int req_type = iouringGetReqType(cqe->user_data);
     int req_fd   = iouringGetFd(cqe->user_data);
@@ -124,8 +124,7 @@ static int iouringDrainCQEs(aeIOUringState *state, aeEventLoop *el) {
  *   4. Repeat.  The ring has a finite number of entries so this
  *      always terminates.
  */
-static struct io_uring_sqe *iouringGetSqe(aeIOUringState *state,
-                                          aeEventLoop *el) {
+static struct io_uring_sqe *iouringGetSqe(aeIOUringState *state) {
     struct io_uring_sqe *sqe = io_uring_get_sqe(&state->ring);
     if (likely(sqe != NULL)) return sqe;
 
@@ -135,21 +134,12 @@ static struct io_uring_sqe *iouringGetSqe(aeIOUringState *state,
         sqe = io_uring_get_sqe(&state->ring);
         if (sqe != NULL) return sqe;
 
-        int drained = iouringDrainCQEs(state, el);
-
         io_uring_submit(&state->ring);
 
         sqe = io_uring_get_sqe(&state->ring);
         if (sqe != NULL) return sqe;
 
-        if (drained == 0) {
-            /*
-             * No CQEs to drain and SQ still full – all entries are
-             * in-flight in the SQPOLL thread.  Yield briefly so it
-             * can make progress, then try again.
-             */
-            usleep(10);
-        }
+        usleep(10);
     }
 }
 
@@ -192,7 +182,7 @@ static void iouringSubmitRecv(aeIOUringState *state, aeEventLoop *el, int fd) {
     }
 
     iouringCheckCQOverflow(state, el);
-    struct io_uring_sqe *sqe = iouringGetSqe(state, el);
+    struct io_uring_sqe *sqe = iouringGetSqe(state);
     io_uring_prep_recv(sqe, fd, fs->readbuf, IOURING_READBUF_SIZE, 0);
     sqe->user_data = iouringUserData(IOURING_REQ_READ, fd);
 }
@@ -200,7 +190,7 @@ static void iouringSubmitRecv(aeIOUringState *state, aeEventLoop *el, int fd) {
 static void iouringSubmitSend(aeIOUringState *state, aeEventLoop *el,
                               int fd, const void *buf, int len) {
     iouringCheckCQOverflow(state, el);
-    struct io_uring_sqe *sqe = iouringGetSqe(state, el);
+    struct io_uring_sqe *sqe = iouringGetSqe(state);
     io_uring_prep_send(sqe, fd, buf, len, 0);
     sqe->user_data = iouringUserData(IOURING_REQ_WRITE, fd);
 }
@@ -243,9 +233,9 @@ int aeIOUringInit(aeEventLoop *eventLoop, int listen_fd) {
 
     struct io_uring_params params;
     memset(&params, 0, sizeof(params));
-    params.flags = IORING_SETUP_SQPOLL
-                 | IORING_SETUP_SINGLE_ISSUER
-                 | IORING_SETUP_CQSIZE;
+    params.flags = IORING_SETUP_SQPOLL |
+                   IORING_SETUP_SINGLE_ISSUER |
+                   IORING_SETUP_CQSIZE;
     params.cq_entries = IOURING_CQ_ENTRIES;
 
     int ret = io_uring_queue_init_params(IOURING_SQ_ENTRIES,
@@ -344,8 +334,8 @@ aeIOUringFdState *aeIOUringGetFdState(aeEventLoop *el, int fd) {
 /* CQE Processing                                                     */
 /* ------------------------------------------------------------------ */
 
-static void iouringArmMultishotAccept(aeIOUringState *state, aeEventLoop *el) {
-    struct io_uring_sqe *sqe = iouringGetSqe(state, el);
+static inline void iouringArmMultishotAccept(aeIOUringState *state) {
+    struct io_uring_sqe *sqe = iouringGetSqe(state);
     io_uring_prep_multishot_accept(sqe, state->listen_fd, NULL, NULL, 0);
     sqe->user_data = iouringUserData(IOURING_REQ_ACCEPT, state->listen_fd);
 }
@@ -355,7 +345,7 @@ static void handleAcceptCQE(aeIOUringState *state, aeEventLoop *el,
     if (cqe->res < 0) {
         serverLog(LL_WARNING, "io_uring accept error: %s",
                   strerror(-cqe->res));
-        iouringArmMultishotAccept(state, el);
+        iouringArmMultishotAccept(state);
         return;
     }
 
@@ -393,7 +383,7 @@ static void handleAcceptCQE(aeIOUringState *state, aeEventLoop *el,
 
     /* Re-arm multishot accept if the kernel disabled it. */
     if (!(cqe->flags & IORING_CQE_F_MORE)) {
-        iouringArmMultishotAccept(state, el);
+        iouringArmMultishotAccept(state);
     }
 }
 
@@ -583,7 +573,7 @@ int aeIOUringProcessCQEs(aeEventLoop *eventLoop, int64_t timeout_us) {
      * regardless of wait_nr.
      */
     unsigned wait_nr;
-    if (timeout_us > 0)        wait_nr = IOURING_SQ_ENTRIES;
+    if (timeout_us > 0)        wait_nr = 128;
     else if (timeout_us == 0)  wait_nr = 0;
     else                       wait_nr = 1;
 
