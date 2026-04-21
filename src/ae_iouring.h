@@ -20,6 +20,7 @@
 #define IOURING_REQ_READ   2
 #define IOURING_REQ_WRITE  3
 #define IOURING_REQ_CLOSE  4
+#define IOURING_REQ_POLL_FD 5
 
 struct aeEventLoop;
 struct connection;
@@ -30,6 +31,10 @@ typedef struct aeIOUringFdState {
     int read_pos;       /* current consumer position within readbuf */
     int active;
     void *conn;         /* connection* for this fd */
+
+    /* Poll-watch path (e.g. IO-thread notifier eventfds) */
+    void *poll_proc;    /* aeIOUringFdReadyProc */
+    void *poll_data;
 } aeIOUringFdState;
 
 /*
@@ -46,10 +51,36 @@ aeIOUringFdState *aeIOUringGetFdState(struct aeEventLoop *el, int fd);
  */
 typedef struct aeIOUringState aeIOUringState;
 
+/*
+ * Initialize io_uring on an event loop.
+ *   listen_fd >= 0 : main-thread ring; sets up multishot accept on listen_fd.
+ *   listen_fd <  0 : IO-thread ring; no accept, handles only its clients.
+ */
 int  aeIOUringInit(struct aeEventLoop *eventLoop, int listen_fd);
 void aeIOUringCleanup(struct aeEventLoop *eventLoop);
 int  aeIOUringProcessCQEs(struct aeEventLoop *eventLoop, int64_t timeout_us);
 void aeIOUringDeactivateFd(struct aeEventLoop *eventLoop, int fd);
+
+/*
+ * Public helpers used by iothread.c when a client transitions from the
+ * main thread to an IO thread (via processClientsFromMainThread):
+ *
+ *   aeIOUringClientSetup       – submit the initial recv SQE on the
+ *     target event loop's ring and link the fd_state to this
+ *     connection.  Called after connRebindEventLoop on the IO thread.
+ *
+ *   aeIOUringClientStartWrite  – submit a send SQE for the next chunk
+ *     of the client's pending reply on the target event loop's ring.
+ *     Used when main returns a client with pending replies.
+ */
+struct client;
+void aeIOUringClientSetup(struct aeEventLoop *el, struct client *c);
+void aeIOUringClientStartWrite(struct aeEventLoop *el, struct client *c);
+
+typedef void (*aeIOUringFdReadyProc)(struct aeEventLoop *el, int fd,
+                                     void *clientData, int mask);
+int aeIOUringWatchFd(struct aeEventLoop *el, int fd,
+                     aeIOUringFdReadyProc proc, void *clientData);
 
 /* io_uring connection type (defined in socket.c) */
 struct ConnectionType;

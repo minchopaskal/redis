@@ -417,11 +417,13 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             numevents = 0;
         }
 
+#ifdef HAVE_IO_URING
         /* io_uring blocking wait – picks up recv/send/accept completions. */
         if (eventLoop->iouring_process_cqes) {
             processed += eventLoop->iouring_process_cqes(eventLoop,
                                                          usUntilTimer);
         }
+#endif
 
         /* After sleep callback. */
         if (eventLoop->aftersleep != NULL && flags & AE_CALL_AFTER_SLEEP)
@@ -479,7 +481,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             }
 
             processed++;
-        }
+        } 
     }
     /* Check time events */
     if (flags & AE_TIME_EVENTS)

@@ -491,6 +491,18 @@ static int connIOUringSetWriteHandler(connection *conn, ConnectionCallbackFunc f
 }
 
 /*
+ * unbind_event_loop for io_uring connections: deactivate the per-fd
+ * io_uring state on the current event loop so stale CQEs (if any)
+ * don't try to touch this connection after it's rebound to a
+ * different event loop.  The new loop will lazily create its own
+ * fd_state when aeIOUringClientSetup submits its first recv.
+ */
+static void connIOUringUnbindEventLoop(connection *conn) {
+    if (!conn->el || conn->fd < 0) return;
+    aeIOUringDeactivateFd(conn->el, conn->fd);
+}
+
+/*
  * CT_IOUring: connection type for io_uring-managed client sockets.
  * Inherits almost everything from CT_Socket; overrides read and
  * handler registration to avoid epoll and syscall read(2).
@@ -517,7 +529,7 @@ static ConnectionType CT_IOUring = {
     .blocking_connect = connSocketBlockingConnect,
     .accept = connSocketAccept,
 
-    .unbind_event_loop = NULL,
+    .unbind_event_loop = connIOUringUnbindEventLoop,
     .rebind_event_loop = connSocketRebindEventLoop,
 
     .write = connSocketWrite,

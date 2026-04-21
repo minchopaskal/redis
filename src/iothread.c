@@ -9,6 +9,7 @@
  */
 
 #include "server.h"
+#include "ae_iouring.h"
 
 /* IO threads. */
 static IOThread IOThreads[IO_THREADS_MAX_NUM];
@@ -763,7 +764,36 @@ int processClientsFromMainThread(IOThread *t) {
             connRebindEventLoop(c->conn, t->el);
             serverAssert(!connHasReadHandler(c->conn));
             connSetReadHandler(c->conn, readQueryFromClient);
+
+#ifdef HAVE_IO_URING
+        /* We need the read handler so io uring knows how to handle reads,
+         * but we need to remove the file event from the epoll, so it doesnt
+         * interfere with io uring. */
+        if (c->conn->type == connectionTypeIOUring() &&
+            t->el->iouring_state != NULL)
+        {
+            aeDeleteFileEvent(t->el,c->conn->fd,AE_READABLE);
         }
+#endif
+        }
+
+#ifdef HAVE_IO_URING
+        /* io_uring path: writes/reads happen via SQEs on this IO
+         * thread's ring – never call writeToClient/connSetWriteHandler.
+         * Dispatch based on current state:
+         *   - pending replies -> send SQE (flush reply),
+         *   - nothing pending -> recv SQE (start / resume reading).
+         * Both fresh hand-offs and returning-from-main hit this path. */
+        if (c->conn->type == connectionTypeIOUring() &&
+            t->el->iouring_state != NULL)
+        {
+            if (clientHasPendingReplies(c))
+                aeIOUringClientStartWrite(t->el, c);
+            else
+                aeIOUringClientSetup(t->el, c);
+            continue;
+        }
+#endif
 
         /* If the client has pending replies, write replies to client. */
         if (clientHasPendingReplies(c)) {
@@ -833,8 +863,10 @@ void IOThreadClientsCron(IOThread *t) {
     listIter li;
     listNode *ln;
     listRewind(t->clients, &li);
-    while ((ln = listNext(&li)) && iterations--) {
+    while ((ln = listNext(&li)) && iterations) {
         client *c = listNodeValue(ln);
+        if (c->io_flags & CLIENT_IO_WAIT_CQE) continue;
+        iterations--;
         /* Mark the client as pending cron, main thread will process it. */
         c->io_flags |= CLIENT_IO_PENDING_CRON;
         enqueuePendingClientsToMainThread(c, 0);
@@ -868,6 +900,34 @@ void *IOThreadMain(void *ptr) {
     makeThreadKillable();
     aeSetBeforeSleepProc(t->el, IOThreadBeforeSleep);
     aeSetAfterSleepProc(t->el, IOThreadAfterSleep);
+
+    #ifdef HAVE_IO_URING
+    /* Must init io_uring from the IO thread itself because
+     * IORING_SETUP_SINGLE_ISSUER binds the ring to the creating task;
+     * only that task may submit SQEs to it. */
+    if (server.el->iouring_state != NULL) {
+        if (aeIOUringInit(t->el, -1) == C_OK) {
+            /* Upgrade the notifier: move it from epoll to io_uring so
+            * that io_uring_wait_cqes wakes up when main signals us.
+            * Otherwise the IO thread would sleep in the kernel until
+            * its own timer expires (~100ms) before noticing new work. */
+            int nfd = getReadEventFd(t->pending_clients_notifier);
+            aeDeleteFileEvent(t->el, nfd, AE_READABLE);
+            if (aeIOUringWatchFd(t->el, nfd,
+                                handleClientsFromMainThread, t) != C_OK)
+            {
+                /* Restore epoll fallback on failure. */
+                aeCreateFileEvent(t->el, nfd, AE_READABLE,
+                                handleClientsFromMainThread, t);
+            }
+        } else {
+            serverLog(LL_WARNING,
+                    "io_uring init failed for IO thread %d, using epoll.",
+                    t->id);
+        }
+    }
+#endif
+
     aeMain(t->el);
     return NULL;
 }

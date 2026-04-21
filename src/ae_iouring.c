@@ -21,12 +21,12 @@
 #include "server.h"
 #include "connhelpers.h"
 #include "ae_iouring.h"
-
 #include "liburing.h"
 
 #include <string.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <poll.h>
 
 struct aeIOUringState {
     struct io_uring ring;
@@ -62,6 +62,8 @@ static void handleReadCQE(aeIOUringState *state, aeEventLoop *el,
 static void handleWriteCQE(aeIOUringState *state, aeEventLoop *el,
                             int fd, struct io_uring_cqe *cqe);
 static void handleCloseCQE(aeIOUringState *state, int fd);
+static void handlePollCQE(aeIOUringState *state, aeEventLoop *el,
+                          int fd, struct io_uring_cqe *cqe);
 
 static inline void iouringDispatchCQE(aeIOUringState *state, aeEventLoop *el,
                                struct io_uring_cqe *cqe) {
@@ -80,6 +82,9 @@ static inline void iouringDispatchCQE(aeIOUringState *state, aeEventLoop *el,
         break;
     case IOURING_REQ_CLOSE:
         handleCloseCQE(state, req_fd);
+        break;
+    case IOURING_REQ_POLL_FD:
+        handlePollCQE(state, el, req_fd, cqe);
         break;
     default:
         serverLog(LL_WARNING,
@@ -208,6 +213,7 @@ static void iouringSubmitClientWrite(aeIOUringState *state, aeEventLoop *el,
         iouringSubmitSend(state, el, fd,
                           c->buf + c->sentlen,
                           c->bufpos - c->sentlen);
+        c->io_flags |= CLIENT_IO_WAIT_CQE;
         return;
     }
 
@@ -217,6 +223,7 @@ static void iouringSubmitClientWrite(aeIOUringState *state, aeEventLoop *el,
         iouringSubmitSend(state, el, fd,
                           block->buf + offset,
                           block->used - offset);
+        c->io_flags |= CLIENT_IO_WAIT_CQE;
         return;
     }
 
@@ -274,20 +281,24 @@ int aeIOUringInit(aeEventLoop *eventLoop, int listen_fd) {
     state->fd_states_size = eventLoop->setsize;
     state->fd_states = zcalloc(sizeof(aeIOUringFdState) * state->fd_states_size);
 
-    /* Remove the listen socket from epoll – io_uring will handle accepts. */
-    aeDeleteFileEvent(eventLoop, listen_fd, AE_READABLE);
-
-    /* Setup multishot accept.  Ring is empty so get_sqe cannot fail. */
-    struct io_uring_sqe *sqe = io_uring_get_sqe(&state->ring);
-    serverAssert(sqe != NULL);
-    io_uring_prep_multishot_accept(sqe, listen_fd, NULL, NULL, 0);
-    sqe->user_data = iouringUserData(IOURING_REQ_ACCEPT, listen_fd);
-    io_uring_submit(&state->ring);
-
     eventLoop->iouring_state = state;
-
     eventLoop->iouring_process_cqes = aeIOUringProcessCQEs;
     eventLoop->iouring_cleanup      = aeIOUringCleanup;
+
+    /* Main-thread ring owns the listen socket: remove it from epoll and
+     * install multishot accept.  IO-thread rings (listen_fd < 0) skip
+     * this – they only handle clients that the main thread hands to
+     * them. */
+    if (listen_fd >= 0) {
+        aeDeleteFileEvent(eventLoop, listen_fd, AE_READABLE);
+
+        /* Ring is empty so get_sqe cannot fail. */
+        struct io_uring_sqe *sqe = io_uring_get_sqe(&state->ring);
+        serverAssert(sqe != NULL);
+        io_uring_prep_multishot_accept(sqe, listen_fd, NULL, NULL, 0);
+        sqe->user_data = iouringUserData(IOURING_REQ_ACCEPT, listen_fd);
+        io_uring_submit(&state->ring);
+    }
 
     serverLog(LL_NOTICE,
               "io_uring initialized: SQ=%d CQ=%d SQPOLL mode, "
@@ -352,49 +363,52 @@ static void handleAcceptCQE(aeIOUringState *state, aeEventLoop *el,
     int client_fd = cqe->res;
     serverLog(LL_VERBOSE, "io_uring: accepted fd=%d", client_fd);
 
-    /* Create the connection & client through the normal Redis path. */
+    /*
+     * Create the connection using CT_IOUring right away, so any
+     * connSetReadHandler/connSetWriteHandler calls made by createClient
+     * and clientAcceptHandler are no-ops (no epoll events created).
+     */
     connection *conn = connCreateAccepted(el, connectionTypeTcp(),
                                           client_fd, NULL);
+
     acceptCommonHandler(conn, 0, NULL);
-
-    /*
-     * createClient() installed an epoll AE_READABLE watch via
-     * connSetReadHandler (which uses CT_Socket's set_read_handler).
-     * Remove it – io_uring will drive this fd from now on.
-     */
     aeDeleteFileEvent(el, client_fd, AE_READABLE);
-
-    /*
-     * Swap the connection type to CT_IOUring.  From this point on:
-     *   - connRead()           -> serves from io_uring recv buffer
-     *   - connSetReadHandler() -> stores handler, no epoll
-     *   - connSetWriteHandler()-> stores handler, no epoll
-     * Everything else (write, close, addr, ...) stays as CT_Socket.
-     */
     conn->type = connectionTypeIOUring();
+    /*
+     * acceptCommonHandler may:
+     *   - close the connection (rejected / over maxclients / etc.)
+     *   - leave the client bound to this (main) event loop
+     *   - call assignClientToIOThread(), which unbinds conn from this
+     *     event loop (conn->el = NULL) and queues the client for an
+     *     IO thread.  In that case the IO thread will submit the
+     *     initial recv SQE in processClientsFromMainThread.
+     */
 
-    /* Init per-fd io_uring state and submit the first recv. */
-    aeIOUringFdState *fs = iouringGetFdState(state, client_fd);
-    fs->active   = 1;
-    fs->conn     = conn;
-    fs->read_len = 0;
-    fs->read_pos = 0;
-    iouringSubmitRecv(state, el, client_fd);
+    if (conn->fd > 0 && conn->el == el) {
+        /* Client stayed on the main thread – own its initial recv. */
+        aeIOUringFdState *fs = iouringGetFdState(state, client_fd);
+        fs->active   = 1;
+        fs->conn     = conn;
+        fs->read_len = 0;
+        fs->read_pos = 0;
+        iouringSubmitRecv(state, el, client_fd);
 
-    /* Re-arm multishot accept if the kernel disabled it. */
-    if (!(cqe->flags & IORING_CQE_F_MORE)) {
-        iouringArmMultishotAccept(state);
+        /* Re-arm multishot accept if the kernel disabled it. */
+        if (!(cqe->flags & IORING_CQE_F_MORE)) {
+            iouringArmMultishotAccept(state);
+        }
     }
 }
 
 static void handleReadCQE(aeIOUringState *state, aeEventLoop *el,
                            int fd, struct io_uring_cqe *cqe) {
+    // serverLog(LL_NOTICE, "iouring: read cqe 1 (submit send)");
     aeIOUringFdState *fs = iouringGetFdState(state, fd);
 
     if (!fs->active || !fs->conn) return;
-
     connection *conn = fs->conn;
     client *c = connGetPrivateData(conn);
+    // serverLog(LL_NOTICE, "iouring: read cqe 2 fd=%d (submit send)", c->conn->fd);
     if (!c) {
         fs->active = 0;
         return;
@@ -453,8 +467,22 @@ static void handleReadCQE(aeIOUringState *state, aeEventLoop *el,
         return;
     }
 
-    /* ---- decide next action: WRITE or READ ---- */
+    /*
+     * If readQueryFromClient + processInputBuffer queued this client
+     * to the main thread (a full command is ready to execute), the
+     * IO thread must NOT submit another SQE for this fd.  The main
+     * thread now owns the client; it will bounce it back to this
+     * (or another) IO thread via processClientsFromMainThread, which
+     * is where the next SQE will be submitted.
+     *
+     * Detection: enqueuePendingClientsToMainThread clears both IO
+     * read and write enabled flags.  If either is cleared, the
+     * client is mid-handoff – leave it alone.
+     */
+    if (c->io_flags & CLIENT_IO_PENDING_COMMAND)
+        return;
 
+    /* ---- decide next action: WRITE or READ ---- */
     if (clientHasPendingReplies(c)) {
         iouringSubmitClientWrite(state, el, c);
     } else {
@@ -512,6 +540,8 @@ static void handleWriteCQE(aeIOUringState *state, aeEventLoop *el,
 
     if (!(c->flags & CLIENT_MASTER))
         c->lastinteraction = server.unixtime;
+   
+    // c->io_flags &= ~CLIENT_IO_WAIT_CQE;
 
     /* More data to write? */
     if (clientHasPendingReplies(c)) {
@@ -555,8 +585,8 @@ int aeIOUringProcessCQEs(aeEventLoop *eventLoop, int64_t timeout_us) {
     struct __kernel_timespec ts;
     struct __kernel_timespec *tsp = NULL;
     if (timeout_us >= 0) {
-        ts.tv_sec  = timeout_us / 1000000LL;
-        ts.tv_nsec = (timeout_us % 1000000LL) * 1000LL;
+        ts.tv_sec  = 0; //timeout_us / 1000000LL;
+        ts.tv_nsec = 1000;// (timeout_us % 1000000LL) * 1000LL;
         tsp = &ts;
     }
 
@@ -595,6 +625,93 @@ int aeIOUringProcessCQEs(aeEventLoop *eventLoop, int64_t timeout_us) {
 
     io_uring_cq_advance(&state->ring, cqe_count);
     return cqe_count;
+}
+
+/* ------------------------------------------------------------------ */
+/* Public helpers for iothread.c                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Ensure the per-fd io_uring state on `el` is active and linked to
+ * the connection.  Idempotent – safe on both fresh binds and
+ * clients returning from the main thread.
+ */
+static aeIOUringFdState *iouringEnsureFdState(aeIOUringState *state,
+                                              client *c) {
+    int fd = c->conn->fd;
+    aeIOUringFdState *fs = iouringGetFdState(state, fd);
+    fs->active   = 1;
+    fs->conn     = c->conn;
+    fs->read_len = 0;
+    fs->read_pos = 0;
+    return fs;
+}
+
+/*
+ * Called by the IO thread (from processClientsFromMainThread) after
+ * connRebindEventLoop has bound the connection to the IO thread's
+ * event loop.  Submits the initial recv SQE so the IO thread starts
+ * reading.  Idempotent.
+ */
+void aeIOUringClientSetup(aeEventLoop *el, client *c) {
+    aeIOUringState *state = el->iouring_state;
+    if (!state || !state->initialized) return;
+    if (!c->conn || c->conn->fd < 0) return;
+
+    // serverLog(LL_NOTICE, "iouring: client setup fd=%d (submit send)", c->conn->fd);
+    iouringEnsureFdState(state, c);
+    iouringSubmitRecv(state, el, c->conn->fd);
+}
+
+/*
+ * Called by the IO thread when the main thread returns a client that
+ * has pending replies to send.  Makes sure the fd_state is live on
+ * this ring, then submits a send SQE for the next chunk of output.
+ */
+void aeIOUringClientStartWrite(aeEventLoop *el, client *c) {
+    aeIOUringState *state = el->iouring_state;
+    if (!state || !state->initialized) return;
+    if (!c->conn || c->conn->fd < 0) return;
+
+    // serverLog(LL_NOTICE, "iouring: start write fd=%d (submit send)", c->conn->fd);
+    iouringEnsureFdState(state, c);
+    iouringSubmitClientWrite(state, el, c);
+}
+
+static void iouringArmPollFd(aeIOUringState *state, aeEventLoop *el, int fd) {
+    iouringCheckCQOverflow(state, el);
+    struct io_uring_sqe *sqe = iouringGetSqe(state);
+    io_uring_prep_poll_multishot(sqe, fd, POLLIN);
+    sqe->user_data = iouringUserData(IOURING_REQ_POLL_FD, fd);
+}
+static void handlePollCQE(aeIOUringState *state, aeEventLoop *el,
+                          int fd, struct io_uring_cqe *cqe) {
+    if (fd < 0 || fd >= state->fd_states_size) return;
+    // serverLog(LL_NOTICE, "iouring: pollCQE fd=%d res=%d flags=0x%x",
+            //   fd, cqe->res, cqe->flags);
+    aeIOUringFdState *fs = &state->fd_states[fd];
+    aeIOUringFdReadyProc proc = (aeIOUringFdReadyProc)fs->poll_proc;
+    if (!proc) {
+        // serverLog(LL_WARNING, "iouring: pollCQE fd=%d has no handler", fd);
+        return;
+    }
+    if (cqe->res >= 0) {
+        proc(el, fd, fs->poll_data, AE_READABLE);
+    }
+    if (!(cqe->flags & IORING_CQE_F_MORE)) {
+        iouringArmPollFd(state, el, fd);
+    }
+}
+int aeIOUringWatchFd(aeEventLoop *el, int fd,
+                     aeIOUringFdReadyProc proc, void *clientData) {
+    aeIOUringState *state = el ? el->iouring_state : NULL;
+    if (!state || !state->initialized) return C_ERR;
+    if (fd < 0 || !proc) return C_ERR;
+    aeIOUringFdState *fs = iouringGetFdState(state, fd);
+    fs->poll_proc = (void*)proc;
+    fs->poll_data = clientData;
+    iouringArmPollFd(state, el, fd);
+    return C_OK;
 }
 
 #endif /* HAVE_IO_URING */
