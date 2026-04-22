@@ -242,9 +242,10 @@ int aeIOUringInit(aeEventLoop *eventLoop, int listen_fd) {
 
     struct io_uring_params params;
     memset(&params, 0, sizeof(params));
-    params.flags = IORING_SETUP_SQPOLL |
+    params.flags = //IORING_SETUP_SQPOLL |
                    IORING_SETUP_SINGLE_ISSUER |
-                   IORING_SETUP_CQSIZE;
+                   IORING_SETUP_CQSIZE |
+                   IORING_SETUP_DEFER_TASKRUN;
     params.cq_entries = IOURING_CQ_ENTRIES;
 
     int ret = io_uring_queue_init_params(IOURING_SQ_ENTRIES,
