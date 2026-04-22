@@ -190,6 +190,7 @@ static void iouringSubmitRecv(aeIOUringState *state, aeEventLoop *el, int fd) {
     struct io_uring_sqe *sqe = iouringGetSqe(state);
     io_uring_prep_recv(sqe, fd, fs->readbuf, IOURING_READBUF_SIZE, 0);
     sqe->user_data = iouringUserData(IOURING_REQ_READ, fd);
+    io_uring_sqe_set_flags(sqe, IOSQE_ASYNC);
 }
 
 static void iouringSubmitSend(aeIOUringState *state, aeEventLoop *el,
@@ -198,6 +199,7 @@ static void iouringSubmitSend(aeIOUringState *state, aeEventLoop *el,
     struct io_uring_sqe *sqe = iouringGetSqe(state);
     io_uring_prep_send(sqe, fd, buf, len, 0);
     sqe->user_data = iouringUserData(IOURING_REQ_WRITE, fd);
+    io_uring_sqe_set_flags(sqe, IOSQE_ASYNC);
 }
 
 /*
@@ -275,6 +277,11 @@ int aeIOUringInit(aeEventLoop *eventLoop, int listen_fd) {
         zfree(state);
         return C_ERR;
     }
+
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    n = n > 0 ? n : 8;
+    int max_workers[2] = {n, n};
+    io_uring_register(state->ring.ring_fd, IORING_REGISTER_IOWQ_MAX_WORKERS, max_workers, 2);
 
     state->initialized = 1;
     state->listen_fd   = listen_fd;
@@ -585,8 +592,8 @@ int aeIOUringProcessCQEs(aeEventLoop *eventLoop, int64_t timeout_us) {
     struct __kernel_timespec ts;
     struct __kernel_timespec *tsp = NULL;
     if (timeout_us >= 0) {
-        ts.tv_sec  = 0; //timeout_us / 1000000LL;
-        ts.tv_nsec = 1000;// (timeout_us % 1000000LL) * 1000LL;
+        ts.tv_sec  = timeout_us / 1000000LL;
+        ts.tv_nsec = (timeout_us % 1000000LL) * 1000LL;
         tsp = &ts;
     }
 
