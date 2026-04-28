@@ -134,8 +134,6 @@ static struct io_uring_sqe *iouringGetSqe(aeIOUringState *state) {
     if (likely(sqe != NULL)) return sqe;
 
     while (1) {
-        io_uring_submit(&state->ring);
-
         sqe = io_uring_get_sqe(&state->ring);
         if (sqe != NULL) return sqe;
 
