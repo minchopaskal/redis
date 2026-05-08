@@ -28,6 +28,16 @@
 #include <netinet/in.h>
 #include <poll.h>
 
+#define IOURING_SQ_ENTRIES 8192
+#define IOURING_CQ_ENTRIES (IOURING_SQ_ENTRIES * 4)
+#define IOURING_READBUF_SIZE (16 * 1024)
+
+#define IOURING_REQ_ACCEPT   1
+#define IOURING_REQ_READ     2
+#define IOURING_REQ_WRITE    3
+#define IOURING_REQ_CLOSE    4
+#define IOURING_REQ_READ_EVN 5
+
 struct aeIOUringState {
     struct io_uring ring;
     int initialized;
@@ -62,8 +72,9 @@ static void handleReadCQE(aeIOUringState *state, aeEventLoop *el,
 static void handleWriteCQE(aeIOUringState *state, aeEventLoop *el,
                             int fd, struct io_uring_cqe *cqe);
 static void handleCloseCQE(aeIOUringState *state, int fd);
-static void handlePollCQE(aeIOUringState *state, aeEventLoop *el,
-                          int fd, struct io_uring_cqe *cqe);
+static void handleReadEventNotifierCQE(aeIOUringState *state, aeEventLoop *el,
+                                       int fd, struct io_uring_cqe *cqe);
+
 
 static inline void iouringDispatchCQE(aeIOUringState *state, aeEventLoop *el,
                                struct io_uring_cqe *cqe) {
@@ -83,8 +94,8 @@ static inline void iouringDispatchCQE(aeIOUringState *state, aeEventLoop *el,
     case IOURING_REQ_CLOSE:
         handleCloseCQE(state, req_fd);
         break;
-    case IOURING_REQ_POLL_FD:
-        handlePollCQE(state, el, req_fd, cqe);
+    case IOURING_REQ_READ_EVN:
+        handleReadEventNotifierCQE(state, el, req_fd, cqe);
         break;
     default:
         serverLog(LL_WARNING,
@@ -231,11 +242,19 @@ static void iouringSubmitClientWrite(aeIOUringState *state, aeEventLoop *el,
     iouringSubmitRecv(state, el, fd);
 }
 
+static void iouringSubmitReadEventNotifier(aeIOUringState *state, aeEventLoop *el, int fd) {
+    aeIOUringFdState *fs = iouringGetFdState(state, fd);
+    iouringCheckCQOverflow(state, el);
+    struct io_uring_sqe *sqe = iouringGetSqe(state);
+    io_uring_prep_read(sqe, fd, &fs->ev_buf, sizeof(fs->ev_buf), 0);
+    sqe->user_data = iouringUserData(IOURING_REQ_READ_EVN, fd);
+}
+
 /* ------------------------------------------------------------------ */
 /* Init / Cleanup                                                     */
 /* ------------------------------------------------------------------ */
 
-int aeIOUringInit(aeEventLoop *eventLoop, int listen_fd) {
+int aeIOUringInit(aeEventLoop *eventLoop, int listen_fd, int max_bgworkers) {
     aeIOUringState *state = zcalloc(sizeof(*state));
 
     struct io_uring_params params;
@@ -245,7 +264,7 @@ int aeIOUringInit(aeEventLoop *eventLoop, int listen_fd) {
                    IORING_SETUP_CQSIZE |
                    IORING_SETUP_DEFER_TASKRUN;
     params.cq_entries = IOURING_CQ_ENTRIES;
-
+    
     int ret = io_uring_queue_init_params(IOURING_SQ_ENTRIES,
                                          &state->ring, &params);
     if (ret < 0) {
@@ -277,7 +296,7 @@ int aeIOUringInit(aeEventLoop *eventLoop, int listen_fd) {
         return C_ERR;
     }
 
-    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    long n = max_bgworkers > 0 ? max_bgworkers : sysconf(_SC_NPROCESSORS_ONLN);
     n = n > 0 ? n : 8;
     int max_workers[2] = {n, n};
     io_uring_register(state->ring.ring_fd, IORING_REGISTER_IOWQ_MAX_WORKERS, max_workers, 2);
@@ -307,9 +326,10 @@ int aeIOUringInit(aeEventLoop *eventLoop, int listen_fd) {
     }
 
     serverLog(LL_NOTICE,
-              "io_uring initialized: SQ=%d CQ=%d SQPOLL mode, "
+              "io_uring initialized: SQ=%d CQ=%d SQPOLL=%d, "
               "features=0x%x, listen fd=%d",
               IOURING_SQ_ENTRIES, IOURING_CQ_ENTRIES,
+              params.flags & IORING_SETUP_SQPOLL,
               params.features, listen_fd);
     return C_OK;
 }
@@ -569,6 +589,32 @@ static void handleCloseCQE(aeIOUringState *state, int fd) {
     fs->conn   = NULL;
 }
 
+static void handleReadEventNotifierCQE(aeIOUringState *state, aeEventLoop *el,
+                                       int fd, struct io_uring_cqe *cqe) {
+    aeIOUringFdState *fs = iouringGetFdState(state, fd);
+
+    if (!fs->active) return;
+
+    if (cqe->res <= 0) {
+        if (cqe->res < 0) {
+            serverLog(LL_VERBOSE, "io_uring read error fd=%d: %s",
+                      fd, strerror(-cqe->res));
+        } else {
+            iouringSubmitReadEventNotifier(state, el, fd);
+        }
+  
+        fs->active = 0;
+        return;
+    }
+  
+    // if (((IOThread*)el->privdata[0])->id == 1)
+        // serverLog(LL_NOTICE, "Handle read EVN...");
+
+    fs->poll_proc(el, fd, fs->poll_data, 0);
+
+    iouringSubmitReadEventNotifier(state, el, fd);
+}
+
 /*
  * Drain io_uring completions.  Called from aeProcessEvents.
  *
@@ -609,7 +655,7 @@ int aeIOUringProcessCQEs(aeEventLoop *eventLoop, int64_t timeout_us) {
      * regardless of wait_nr.
      */
     unsigned wait_nr;
-    if (timeout_us > 0)        wait_nr = 128;
+    if (timeout_us > 0)        wait_nr = 1;
     else if (timeout_us == 0)  wait_nr = 0;
     else                       wait_nr = 1;
 
@@ -628,6 +674,9 @@ int aeIOUringProcessCQEs(aeEventLoop *eventLoop, int64_t timeout_us) {
         iouringDispatchCQE(state, eventLoop, cqe);
         cqe_count++;
     }
+
+    // if (cqe_count)
+    // serverLog(LL_NOTICE, "TID_%d Processed %d CQES, waited for %d\n", eventLoop->privdata[0] == NULL ? 0 : ((IOThread*)eventLoop->privdata[0])->id, cqe_count, wait_nr);
 
     io_uring_cq_advance(&state->ring, cqe_count);
     return cqe_count;
@@ -684,39 +733,18 @@ void aeIOUringClientStartWrite(aeEventLoop *el, client *c) {
     iouringSubmitClientWrite(state, el, c);
 }
 
-static void iouringArmPollFd(aeIOUringState *state, aeEventLoop *el, int fd) {
-    iouringCheckCQOverflow(state, el);
-    struct io_uring_sqe *sqe = iouringGetSqe(state);
-    io_uring_prep_poll_multishot(sqe, fd, POLLIN);
-    sqe->user_data = iouringUserData(IOURING_REQ_POLL_FD, fd);
-}
-static void handlePollCQE(aeIOUringState *state, aeEventLoop *el,
-                          int fd, struct io_uring_cqe *cqe) {
-    if (fd < 0 || fd >= state->fd_states_size) return;
-    // serverLog(LL_NOTICE, "iouring: pollCQE fd=%d res=%d flags=0x%x",
-            //   fd, cqe->res, cqe->flags);
-    aeIOUringFdState *fs = &state->fd_states[fd];
-    aeIOUringFdReadyProc proc = (aeIOUringFdReadyProc)fs->poll_proc;
-    if (!proc) {
-        // serverLog(LL_WARNING, "iouring: pollCQE fd=%d has no handler", fd);
-        return;
-    }
-    if (cqe->res >= 0) {
-        proc(el, fd, fs->poll_data, AE_READABLE);
-    }
-    if (!(cqe->flags & IORING_CQE_F_MORE)) {
-        iouringArmPollFd(state, el, fd);
-    }
-}
-int aeIOUringWatchFd(aeEventLoop *el, int fd,
-                     aeIOUringFdReadyProc proc, void *clientData) {
+int aeIOUringSetupReadEventNotifier(aeEventLoop *el, int fd,
+                                    aeIOUringFdReadyProc proc, void *clientData) {
     aeIOUringState *state = el ? el->iouring_state : NULL;
     if (!state || !state->initialized) return C_ERR;
     if (fd < 0 || !proc) return C_ERR;
     aeIOUringFdState *fs = iouringGetFdState(state, fd);
-    fs->poll_proc = (void*)proc;
+    fs->poll_proc = proc;
     fs->poll_data = clientData;
-    iouringArmPollFd(state, el, fd);
+    fs->active = 1;
+
+    iouringSubmitReadEventNotifier(state, el, fd);
+
     return C_OK;
 }
 

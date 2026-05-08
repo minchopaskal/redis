@@ -12,18 +12,11 @@
 
 #include <stdint.h>
 
-#define IOURING_SQ_ENTRIES 8192
-#define IOURING_CQ_ENTRIES (IOURING_SQ_ENTRIES * 4)
-#define IOURING_READBUF_SIZE (16 * 1024)
-
-#define IOURING_REQ_ACCEPT 1
-#define IOURING_REQ_READ   2
-#define IOURING_REQ_WRITE  3
-#define IOURING_REQ_CLOSE  4
-#define IOURING_REQ_POLL_FD 5
-
 struct aeEventLoop;
 struct connection;
+
+typedef void (*aeIOUringFdReadyProc)(struct aeEventLoop *el, int fd,
+                                     void *clientData, int mask);
 
 typedef struct aeIOUringFdState {
     char *readbuf;
@@ -33,8 +26,9 @@ typedef struct aeIOUringFdState {
     void *conn;         /* connection* for this fd */
 
     /* Poll-watch path (e.g. IO-thread notifier eventfds) */
-    void *poll_proc;    /* aeIOUringFdReadyProc */
+    aeIOUringFdReadyProc poll_proc;
     void *poll_data;
+    uint64_t ev_buf;        /* notifier read scratch */
 } aeIOUringFdState;
 
 /*
@@ -56,7 +50,7 @@ typedef struct aeIOUringState aeIOUringState;
  *   listen_fd >= 0 : main-thread ring; sets up multishot accept on listen_fd.
  *   listen_fd <  0 : IO-thread ring; no accept, handles only its clients.
  */
-int  aeIOUringInit(struct aeEventLoop *eventLoop, int listen_fd);
+int  aeIOUringInit(struct aeEventLoop *eventLoop, int listen_fd, int max_bgworkers);
 void aeIOUringCleanup(struct aeEventLoop *eventLoop);
 int  aeIOUringProcessCQEs(struct aeEventLoop *eventLoop, int64_t timeout_us);
 void aeIOUringDeactivateFd(struct aeEventLoop *eventLoop, int fd);
@@ -77,10 +71,8 @@ struct client;
 void aeIOUringClientSetup(struct aeEventLoop *el, struct client *c);
 void aeIOUringClientStartWrite(struct aeEventLoop *el, struct client *c);
 
-typedef void (*aeIOUringFdReadyProc)(struct aeEventLoop *el, int fd,
-                                     void *clientData, int mask);
-int aeIOUringWatchFd(struct aeEventLoop *el, int fd,
-                     aeIOUringFdReadyProc proc, void *clientData);
+int aeIOUringSetupReadEventNotifier(struct aeEventLoop *el, int fd,
+                                    aeIOUringFdReadyProc proc, void *clientData);
 
 /* io_uring connection type (defined in socket.c) */
 struct ConnectionType;

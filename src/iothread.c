@@ -675,6 +675,9 @@ void handleClientsFromIOThread(struct aeEventLoop *el, int fd, void *ptr, int ma
 
     /* Handle fd event first. */
     serverAssert(fd == getReadEventFd(mainThreadPendingClientsNotifiers[t->id]));
+#ifdef HAVE_IO_URING
+    if (el->iouring_state == NULL) 
+#endif
     handleEventNotifier(mainThreadPendingClientsNotifiers[t->id]);
 
     /* Process the clients from IO threads. */
@@ -712,6 +715,10 @@ void handleClientsFromMainThread(struct aeEventLoop *ae, int fd, void *ptr, int 
 
     /* Handle fd event first. */
     serverAssert(fd == getReadEventFd(t->pending_clients_notifier));
+#ifdef HAVE_IO_URING
+    /* If we are using IO_URING the notifier was already read. */
+    if (ae->iouring_state == NULL)
+#endif
     handleEventNotifier(t->pending_clients_notifier);
 
     /* Process the clients from main thread. */
@@ -901,20 +908,19 @@ void *IOThreadMain(void *ptr) {
     aeSetBeforeSleepProc(t->el, IOThreadBeforeSleep);
     aeSetAfterSleepProc(t->el, IOThreadAfterSleep);
 
-    #ifdef HAVE_IO_URING
+#ifdef HAVE_IO_URING
     /* Must init io_uring from the IO thread itself because
      * IORING_SETUP_SINGLE_ISSUER binds the ring to the creating task;
      * only that task may submit SQEs to it. */
     if (server.el->iouring_state != NULL) {
-        if (aeIOUringInit(t->el, -1) == C_OK) {
+        if (aeIOUringInit(t->el, -1, 1) == C_OK) {
             /* Upgrade the notifier: move it from epoll to io_uring so
             * that io_uring_wait_cqes wakes up when main signals us.
             * Otherwise the IO thread would sleep in the kernel until
             * its own timer expires (~100ms) before noticing new work. */
             int nfd = getReadEventFd(t->pending_clients_notifier);
             aeDeleteFileEvent(t->el, nfd, AE_READABLE);
-            if (aeIOUringWatchFd(t->el, nfd,
-                                handleClientsFromMainThread, t) != C_OK)
+            if (aeIOUringSetupReadEventNotifier(t->el, nfd, handleClientsFromMainThread, t) != C_OK)
             {
                 /* Restore epoll fallback on failure. */
                 aeCreateFileEvent(t->el, nfd, AE_READABLE,
@@ -992,6 +998,12 @@ void initThreadedIO(void) {
         mainThreadProcessingClients[i] = listCreate();
         pthread_mutex_init(&mainThreadPendingClientsMutexes[i], attr);
         mainThreadPendingClientsNotifiers[i] = createEventNotifier();
+
+#ifdef HAVE_IO_URING
+        if (server.el->iouring_state == NULL ||
+            aeIOUringSetupReadEventNotifier(server.el, getReadEventFd(mainThreadPendingClientsNotifiers[i]),
+                                            handleClientsFromIOThread, t) != C_OK)
+#endif
         if (aeCreateFileEvent(server.el, getReadEventFd(mainThreadPendingClientsNotifiers[i]),
                               AE_READABLE, handleClientsFromIOThread, t) != AE_OK)
         {

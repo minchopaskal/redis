@@ -8209,7 +8209,7 @@ int main(int argc, char **argv) {
         if (conn_index >= 0) {
             connListener *listener = &server.listeners[conn_index];
             if (listener->count > 0) {
-                if (aeIOUringInit(server.el, listener->fd[0]) == C_ERR) {
+                if (aeIOUringInit(server.el, listener->fd[0], 0) == C_ERR) {
                     serverLog(LL_WARNING,
                               "Failed to initialize io_uring, "
                               "falling back to epoll.");
