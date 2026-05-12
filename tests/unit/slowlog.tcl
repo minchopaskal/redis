@@ -475,7 +475,7 @@ start_server {tags {"slowlog"} overrides {slowlog-log-slower-than 1000000}} {
         assert_equal "mset k2{x} v1 k3{x} {[string repeat C 8]... (42 more bytes)}" \
             $new_entry_argv
 
-        # ... while the old one remains untocuhed
+        # ... while the old one remains untouched
         set old_entry_argv_again [latest_slowlog_argv_for set]
         assert_equal "set k1 $arg" $old_entry_argv_again
     }
