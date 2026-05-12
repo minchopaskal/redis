@@ -386,26 +386,25 @@ start_server {tags {"slowlog"} overrides {slowlog-log-slower-than 1000000}} {
         assert_error "*argument must be between*" {r config set slowlog-entry-max-argc 1}
         r config set slowlog-entry-max-argc 2
         assert_equal 2 [lindex [r config get slowlog-entry-max-argc] 1]
-        r config set slowlog-entry-max-argc 32
     }
 
     test {SLOWLOG - slowlog-entry-max-string-len enforces minimum value of 1} {
         assert_error "*argument must be between*" {r config set slowlog-entry-max-string-len 0}
         r config set slowlog-entry-max-string-len 1
         assert_equal 1 [lindex [r config get slowlog-entry-max-string-len] 1]
-        r config set slowlog-entry-max-string-len 128
     }
 
     test {SLOWLOG - slowlog-entry-max-argc=2 preserves command name and adds trim marker} {
+        r slowlog reset
+        r config set slowlog-entry-max-string-len 128
+
         # The minimum argc of 2 exists so that the command name is preserved
         # and the trim marker can still be written into the last slot.
         r config set slowlog-log-slower-than 0
         r config set slowlog-entry-max-argc 2
-        r slowlog reset
         r sadd myset a b c d
         # 6 args total, slargc=2: marker == argc - slargc + 1 == 5.
         assert_equal {sadd {... (5 more arguments)}} [latest_slowlog_argv_for sadd]
-        r config set slowlog-entry-max-argc 32
     }
 
     test {SLOWLOG - custom slowlog-entry-max-argc trims correctly} {
@@ -427,16 +426,15 @@ start_server {tags {"slowlog"} overrides {slowlog-log-slower-than 1000000}} {
         r slowlog reset
         r sadd myset a
         assert_equal {sadd myset a} [latest_slowlog_argv_for sadd]
-
-        r config set slowlog-entry-max-argc 32
     }
 
     test {SLOWLOG - custom slowlog-entry-max-string-len trims string args} {
+        r slowlog reset
         r config set slowlog-log-slower-than 0
+        r config set slowlog-entry-max-argc 32
         r config set slowlog-entry-max-string-len 16
 
         # String longer than limit: trimmed with "... (N more bytes)" suffix.
-        r slowlog reset
         r set mykey [string repeat A 20]
         set expected "set mykey {[string repeat A 16]... (4 more bytes)}"
         assert_equal $expected [latest_slowlog_argv_for set]
@@ -451,8 +449,6 @@ start_server {tags {"slowlog"} overrides {slowlog-log-slower-than 1000000}} {
         r slowlog reset
         r set mykey short
         assert_equal {set mykey short} [latest_slowlog_argv_for set]
-
-        r config set slowlog-entry-max-string-len 128
     }
 
     test {SLOWLOG - runtime config change applies only to subsequent entries} {
@@ -472,11 +468,11 @@ start_server {tags {"slowlog"} overrides {slowlog-log-slower-than 1000000}} {
 
         # Lower the limit and log another entry.
         r config set slowlog-entry-max-string-len 8
-        r mset k2 v1 k3 $arg
+        r mset k2{x} v1 k3{x} $arg
 
         # The new entry must be trimmed...
         set new_entry_argv [latest_slowlog_argv_for mset]
-        assert_equal "mset k2 v1 k3 {[string repeat C 8]... (42 more bytes)}" \
+        assert_equal "mset k2{x} v1 k3{x} {[string repeat C 8]... (42 more bytes)}" \
             $new_entry_argv
 
         # ... while the old one remains untocuhed
