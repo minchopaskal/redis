@@ -2644,7 +2644,7 @@ int rewriteObject(rio *r, robj *key, robj *o, int dbid, long long expiretime) {
         if (rewriteHashObject(r,key,o) == 0) return C_ERR;
     } else if (o->type == OBJ_STREAM) {
         if (rewriteStreamObject(r,key,o) == 0) return C_ERR;
-#if 0
+#ifndef DISABLE_GCRA
     } else if (o->type == OBJ_GCRA) {
         if (rewriteGCRAObject(r,key,o) == 0) return C_ERR;
 #endif
