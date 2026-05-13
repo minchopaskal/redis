@@ -889,8 +889,9 @@ typedef enum {
  * - src/server.h - add the new group to redisCommandGroup enum
  * - if needed add new KSN type related to the group - search for NOTIFY_* and REDISMODULE_NOTIFY_* defines. */
 
-/* Currently code related to GCRA is disabled */
-#define DISABLE_GCRA 1
+/* Code related to GCRA is disabled by default.
+ * Define ENABLE_GCRA to compile it back in. */
+#define ENABLE_GCRA 0
 
 /* Extract encver / signature from a module type ID. */
 #define REDISMODULE_TYPE_ENCVER_BITS 10
