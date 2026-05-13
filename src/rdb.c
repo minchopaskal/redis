@@ -722,7 +722,7 @@ int rdbSaveObjectType(rio *rdb, robj *o) {
             serverPanic("Unknown hash encoding");
     case OBJ_STREAM:
         return rdbSaveType(rdb,RDB_TYPE_STREAM_LISTPACKS_5);
-#ifdef ENABLE_GCRA
+#if ENABLE_GCRA
     case OBJ_GCRA:
         return rdbSaveType(rdb,RDB_TYPE_GCRA);
 #endif
@@ -1476,7 +1476,7 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid) {
         /* Save the all-time count of duplicate IIDs detected. */
         if ((n = rdbSaveLen(rdb,s->iids_duplicates)) == -1) return -1;
         nwritten += n;
-#ifdef ENABLE_GCRA
+#if ENABLE_GCRA
     } else if (o->type == OBJ_GCRA) {
         long long t;
         getLongLongFromGCRAObject(o, &t);
@@ -3773,7 +3773,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error)
             return NULL;
         }
         o = createModuleObject(mt, ptr);
-#ifdef ENABLE_GCRA
+#if ENABLE_GCRA
     } else if (rdbtype == RDB_TYPE_GCRA) {
         uint64_t time = rdbLoadLen(rdb, NULL);
         if (time == RDB_LENERR || time > LLONG_MAX) {

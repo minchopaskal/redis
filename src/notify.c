@@ -41,7 +41,7 @@ int keyspaceEventsStringToFlags(char *classes) {
         case 'n': flags |= NOTIFY_NEW; break;
         case 'o': flags |= NOTIFY_OVERWRITTEN; break;
         case 'c': flags |= NOTIFY_TYPE_CHANGED; break;
-#ifdef ENABLE_GCRA
+#if ENABLE_GCRA
         case 'r': flags |= NOTIFY_RATE_LIMIT; break;
 #endif
         case 'S': flags |= NOTIFY_SUBKEYSPACE; break;
