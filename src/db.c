@@ -1758,8 +1758,8 @@ char *obj_type_name[OBJ_TYPE_MAX] = {
     "hash",
     NULL, /* module type is special */
     "stream",
-    "gcra",
-    "array"
+    "array",
+    "gcra"
 };
 
 /* Helper function to get type from a string in scan commands */
