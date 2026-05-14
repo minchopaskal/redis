@@ -868,8 +868,8 @@ typedef enum {
  * encoding version. */
 #define OBJ_MODULE 5    /* Module object. */
 #define OBJ_STREAM 6    /* Stream object. */
-#define OBJ_GCRA 7    /* GCRA object. */
-#define OBJ_ARRAY 8     /* Array object. */
+#define OBJ_ARRAY 7     /* Array object. */
+#define OBJ_GCRA 8    /* GCRA object. */
 #define OBJ_TYPE_MAX 9  /* Maximum number of object types */
 
 /* NOTE: adding a new object requires changes in the following places:
