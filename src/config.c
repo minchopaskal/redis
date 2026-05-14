@@ -2944,7 +2944,7 @@ static int setConfigNotifyKeyspaceEventsOption(standardConfig *config, sds *argv
     }
     int flags = keyspaceEventsStringToFlags(argv[0]);
     if (flags == -1) {
-#if ENABLE_GCRA
+#ifdef ENABLE_GCRA
         *err = "Invalid event class character. Use 'Ag$lshzxeKEtmdnocraSTIV'.";
 #else
         *err = "Invalid event class character. Use 'Ag$lshzxeKEtmdnocaSTIV'.";
