@@ -188,6 +188,9 @@ client *createClient(connection *conn) {
     c->sentlen = 0;
     c->flags = 0;
     c->io_flags = CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED;
+#ifdef HAVE_IO_URING
+    c->iouring_flags = 0;
+#endif
     c->read_error = 0;
     c->slot = -1;
     c->cluster_compatibility_check_slot = -2;

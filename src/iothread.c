@@ -771,6 +771,7 @@ int processClientsFromMainThread(IOThread *t) {
             connRebindEventLoop(c->conn, t->el);
             serverAssert(!connHasReadHandler(c->conn));
             connSetReadHandler(c->conn, readQueryFromClient);
+        }
 
 #ifdef HAVE_IO_URING
         /* We need the read handler so io uring knows how to handle reads,
@@ -781,10 +782,7 @@ int processClientsFromMainThread(IOThread *t) {
         {
             aeDeleteFileEvent(t->el,c->conn->fd,AE_READABLE);
         }
-#endif
-        }
 
-#ifdef HAVE_IO_URING
         /* io_uring path: writes/reads happen via SQEs on this IO
          * thread's ring – never call writeToClient/connSetWriteHandler.
          * Dispatch based on current state:
@@ -794,6 +792,20 @@ int processClientsFromMainThread(IOThread *t) {
         if (c->conn->type == connectionTypeIOUring() &&
             t->el->iouring_state != NULL)
         {
+            /* First we check if we have pending write or recv submit.
+             * We may have defered them in order to process the cron job
+             * in main thread. */
+            if (c->iouring_flags & CLIENT_IO_PENDING_WRITE_SUBMIT) {
+                c->iouring_flags &= ~CLIENT_IO_PENDING_WRITE_SUBMIT;
+                aeIOUringClientStartWrite(t->el, c);
+                continue;
+            }
+            if (c->iouring_flags & CLIENT_IO_PENDING_RECV_SUBMIT) {
+                c->iouring_flags &= ~CLIENT_IO_PENDING_RECV_SUBMIT;
+                aeIOUringClientSetup(t->el, c);
+                continue;
+            }
+
             if (clientHasPendingReplies(c))
                 aeIOUringClientStartWrite(t->el, c);
             else
@@ -872,7 +884,20 @@ void IOThreadClientsCron(IOThread *t) {
     listRewind(t->clients, &li);
     while ((ln = listNext(&li)) && iterations) {
         client *c = listNodeValue(ln);
-        if (c->io_flags & CLIENT_IO_WAIT_CQE) continue;
+
+#ifdef HAVE_IO_URING
+        if (c->io_flags & CLIENT_IO_PENDING_CRON && c->iouring_flags & CLIENT_IO_WAIT_CQE) continue;
+
+        if (c->iouring_flags & CLIENT_IO_WAIT_CQE)
+        {
+            /* Mark the client as pending cron, io uring will detect that and not submit SQE
+             * after handling the last CQE, allowing the client to to process the cron job
+             * in main thread. */
+            c->io_flags |= CLIENT_IO_PENDING_CRON;
+            continue;
+        }
+#endif
+
         iterations--;
         /* Mark the client as pending cron, main thread will process it. */
         c->io_flags |= CLIENT_IO_PENDING_CRON;

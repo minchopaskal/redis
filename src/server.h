@@ -460,7 +460,6 @@ extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
 #define CLIENT_IO_REUSABLE_QUERYBUFFER (1ULL<<3) /* The client is using the reusable query buffer. */
 #define CLIENT_IO_CLOSE_ASAP (1ULL<<4) /* Close this client ASAP in IO thread. */
 #define CLIENT_IO_PENDING_CRON (1ULL<<5)  /* The client is pending cron job, to be processed in main thread. */
-#define CLIENT_IO_WAIT_CQE (1ULL<<6)
 
 /* Definitions for client read errors. These error codes are used to indicate
  * various issues that can occur while reading or parsing data from a client. */
@@ -1480,6 +1479,9 @@ typedef struct client {
     uint8_t tid;            /* Thread assigned ID this client is bound to. */
     uint8_t running_tid;    /* Thread assigned ID this client is running on. */
     uint8_t io_flags;       /* Accessed by both main and IO threads, but not modified concurrently */
+#ifdef HAVE_IO_URING
+    uint8_t iouring_flags;  /* Accessed by IO threads only */
+#endif /* HAVE_IO_URING */
     uint8_t read_error;     /* Client read error: CLIENT_READ_* macros. */
     int resp;               /* RESP protocol version. Can be 2 or 3. */
     redisDb *db;            /* Pointer to currently SELECTed DB. */
