@@ -211,8 +211,10 @@ static void iouringSubmitRecv(aeIOUringState *state, int fd) {
     connection *conn = fs->conn;
     client *c = connGetPrivateData(conn);
 
+    /* When we have a pending cron job we don't submit the next SQE in order
+     * to give a chance to the IOThreadClientCron to send the client back to
+     * main thread for running the cron job on it. */
     if (iothreadCheckCron(c)) {
-        c->iouring_flags |= CLIENT_IO_PENDING_RECV_SUBMIT;
         return;
     }
 
@@ -232,8 +234,8 @@ static void iouringSubmitSend(aeIOUringState *state, int fd,
     aeIOUringFdState *fs = iouringGetFdState(state, fd);
     connection *conn = fs->conn;
     client *c = connGetPrivateData(conn);
+
     if (iothreadCheckCron(c)) {
-        c->iouring_flags |= CLIENT_IO_PENDING_WRITE_SUBMIT;
         return;
     }
 

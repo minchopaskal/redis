@@ -792,20 +792,6 @@ int processClientsFromMainThread(IOThread *t) {
         if (c->conn->type == connectionTypeIOUring() &&
             t->el->iouring_state != NULL)
         {
-            /* First we check if we have pending write or recv submit.
-             * We may have defered them in order to process the cron job
-             * in main thread. */
-            if (c->iouring_flags & CLIENT_IO_PENDING_WRITE_SUBMIT) {
-                c->iouring_flags &= ~CLIENT_IO_PENDING_WRITE_SUBMIT;
-                aeIOUringClientStartWrite(t->el, c);
-                continue;
-            }
-            if (c->iouring_flags & CLIENT_IO_PENDING_RECV_SUBMIT) {
-                c->iouring_flags &= ~CLIENT_IO_PENDING_RECV_SUBMIT;
-                aeIOUringClientSetup(t->el, c);
-                continue;
-            }
-
             if (clientHasPendingReplies(c))
                 aeIOUringClientStartWrite(t->el, c);
             else
