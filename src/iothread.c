@@ -775,7 +775,7 @@ int processClientsFromMainThread(IOThread *t) {
 
 #ifdef HAVE_IO_URING
         /* We need the read handler so io uring knows how to handle reads,
-         * but we need to remove the file event from the epoll, so it doesnt
+         * but we need to remove the file event from the epoll, so it doesn't
          * interfere with io uring. */
         if (c->conn->type == connectionTypeIOUring() &&
             t->el->iouring_state != NULL)
