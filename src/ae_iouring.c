@@ -761,3 +761,8 @@ int aeIOUringSetupReadEventNotifier(aeEventLoop *el, int fd,
 }
 
 #endif /* HAVE_IO_URING */
+
+/* ISO C forbids an empty translation unit; with HAVE_IO_URING disabled
+ * this file contains no other declarations and would trigger
+ * -Wpedantic. A file-scope typedef is a no-op at link time. */
+typedef int ae_iouring_translation_unit_placeholder;
