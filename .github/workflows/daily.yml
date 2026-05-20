@@ -1453,8 +1453,8 @@ jobs:
         ref: ${{ env.GITHUB_HEAD_REF }}
     - name: make
       run: |
-        apt-get update
-        apt-get install liburing-dev liburing2
+        sudo apt-get update
+        sudo apt-get install liburing-dev liburing2
         make REDIS_CFLAGS='-Werror -DREDIS_TEST -DDEBUG_ASSERTIONS' USE_IOURING=yes
     - name: testprep
       run: sudo apt-get install tcl8.6 tclx
