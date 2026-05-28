@@ -4248,8 +4248,10 @@ int replDataBufStreamToDb(replDataBuf *buf, replDataBufToDbCtx *ctx) {
             processed += consumed;
             buf->used -= consumed;
 
-            if (server.repl_debug_pause & REPL_DEBUG_ON_STREAMING_REPL_BUF)
+            if (server.repl_debug_pause & REPL_DEBUG_ON_STREAMING_REPL_BUF) {
                 debugPauseProcess();
+                processEventsWhileBlocked();
+            }
 
             /* Check if we should yield back to the event loop */
             if (server.loading_process_events_interval_bytes &&
