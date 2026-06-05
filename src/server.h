@@ -55,6 +55,7 @@ typedef long long ustime_t; /* microsecond time type. */
 #include "kvstore.h" /* Slot-based hash table */
 #include "estore.h"  /* Expiration store */
 #include "adlist.h"  /* Linked lists */
+#include "vector.h"  /* Append-only pointer vector with optional stack-backed storage */
 #include "zmalloc.h" /* total memory usage aware version of malloc/free */
 #include "anet.h"    /* Networking the easy way */
 #include "version.h" /* Version macro */
@@ -2437,7 +2438,12 @@ struct redisServer {
     /* Client side caching. */
     unsigned int tracking_clients;  /* # of clients with tracking enabled.*/
     size_t tracking_table_max_keys; /* Max number of keys in tracking table. */
-    list *tracking_pending_keys; /* tracking invalidation keys pending to flush */
+    /* tracking invalidation keys pending to flush. Stack-backed vec embedded
+     * in the server struct so the common case of small invalidation bursts
+     * (typically 0-16 entries per top-level command) needs zero heap
+     * allocations. Spills to heap automatically beyond the pool size. */
+    vec tracking_pending_keys;
+    void *tracking_pending_keys_pool[16];
     list *pending_push_messages; /* pending publish or other push messages to flush */
     /* Sort parameters - qsort_r() is only available under BSD so we
      * have to take this state global, in order to pass it to sortCompare() */

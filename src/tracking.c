@@ -416,7 +416,7 @@ void trackingInvalidateKey(client *c, robj *keyobj, int bcast) {
          * response and should after command response. */
         if (target == server.current_client && (server.current_client->flags & CLIENT_EXECUTING_COMMAND)) {
             incrRefCount(keyobj);
-            listAddNodeTail(server.tracking_pending_keys, keyobj);
+            vecPush(&server.tracking_pending_keys, keyobj);
         } else {
             sendTrackingMessage(target,(char *)keyobj->ptr,sdslen(keyobj->ptr),0);
         }
@@ -431,18 +431,15 @@ void trackingInvalidateKey(client *c, robj *keyobj, int bcast) {
 }
 
 void trackingHandlePendingKeyInvalidations(void) {
-    if (!listLength(server.tracking_pending_keys)) return;
+    if (!vecSize(&server.tracking_pending_keys)) return;
 
     /* Flush pending invalidation messages only when we are not in nested call.
      * So the messages are not interleaved with transaction response. */
     if (server.execution_nesting) return;
 
-    listNode *ln;
-    listIter li;
-
-    listRewind(server.tracking_pending_keys,&li);
-    while ((ln = listNext(&li)) != NULL) {
-        robj *key = listNodeValue(ln);
+    size_t pending = vecSize(&server.tracking_pending_keys);
+    for (size_t i = 0; i < pending; i++) {
+        robj *key = vecGet(&server.tracking_pending_keys, i);
         /* current_client maybe freed, so we need to send invalidation
          * message only when current_client is still alive */
         if (server.current_client != NULL) {
@@ -455,7 +452,7 @@ void trackingHandlePendingKeyInvalidations(void) {
         }
         if (key != NULL) decrRefCount(key);
     }
-    listEmpty(server.tracking_pending_keys);
+    vecClear(&server.tracking_pending_keys);
 }
 
 /* This function is called when one or all the Redis databases are
@@ -484,7 +481,7 @@ void trackingInvalidateKeysOnFlush(int async) {
             if (c->flags & CLIENT_TRACKING) {
                 if (c == server.current_client) {
                     /* We use a special NULL to indicate that we should send null */
-                    listAddNodeTail(server.tracking_pending_keys,NULL);
+                    vecPush(&server.tracking_pending_keys, NULL);
                 } else {
                     sendTrackingMessage(c,shared.null[c->resp]->ptr,sdslen(shared.null[c->resp]->ptr),1);
                 }

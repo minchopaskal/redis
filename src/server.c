@@ -2003,7 +2003,7 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
     /* Since we rely on current_client to send scheduled invalidation messages
      * we have to flush them after each command, so when we get here, the list
      * must be empty. */
-    serverAssert(listLength(server.tracking_pending_keys) == 0);
+    serverAssert(vecSize(&server.tracking_pending_keys) == 0);
     serverAssert(listLength(server.pending_push_messages) == 0);
 
     /* Send the invalidation messages to clients participating to the
@@ -2985,7 +2985,8 @@ void initServer(void) {
     server.slaveseldb = -1; /* Force to emit the first SELECT command. */
     server.unblocked_clients = listCreate();
     server.ready_keys = listCreate();
-    server.tracking_pending_keys = listCreate();
+    vecInit(&server.tracking_pending_keys, server.tracking_pending_keys_pool,
+            sizeof(server.tracking_pending_keys_pool) / sizeof(server.tracking_pending_keys_pool[0]));
     server.pending_push_messages = listCreate();
     server.clients_waiting_acks = listCreate();
     server.get_ack_from_slaves = 0;
