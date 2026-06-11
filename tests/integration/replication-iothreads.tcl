@@ -382,13 +382,11 @@ proc measure_proc_cpu_fraction {pid window_ms} {
     return [expr {double($ticks) / ($hz * ($window_ms / 1000.0))}]
 }
 
+if {$::accurate && $::tcl_platform(platform) eq "unix" && $::tcl_platform(os) eq "Linux"} {
+
 start_server {overrides {io-threads 4 save ""} tags {"iothreads repl network external:skip"}} {
 start_server {overrides {io-threads 4 save ""}} {
 
-    if {!$::accurate || $::tcl_platform(platform) ne "unix" || $::tcl_platform(os) ne "Linux"} {
-        # /proc based measurement is Linux specific.
-        return
-    }
 
     set master [srv 0 client]
     set master_host [srv 0 host]
@@ -479,3 +477,4 @@ start_server {overrides {io-threads 4 save ""}} {
 }
 }
 
+}
