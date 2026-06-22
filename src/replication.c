@@ -4203,7 +4203,7 @@ int replDataBufStreamToDb(replDataBuf *buf, replDataBufToDbCtx *ctx) {
     client *c = ctx->client;
 
     if (server.repl_master_compression_level > 0)
-        serverAssert(server.master->compression_state);
+        serverAssert(clientHasCompression(server.master));
 
     blockingOperationStarts();
     while ((n = listFirst(buf->blocks))) {

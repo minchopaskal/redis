@@ -30,6 +30,10 @@ int clientEnableCompression(struct client *c, compressionDirection dir);
 
 void clientDisableCompression(struct client *c);
 
+/* Return non-zero if the client's connection is a compression connection
+ * (i.e. it has an attached compression state). */
+int clientHasCompression(struct client *c);
+
 int compressAndWrite(struct client *c, int *tot_written);
 
 int readFromBufAndDecompress(struct client *c, char *input_buf, size_t input_len,

@@ -185,7 +185,7 @@ void unbindClientFromIOThreadEventLoop(client *c) {
     /* If the client is not bound to an event loop there is nothing to do,
      * unless the client uses repl compression in which case we need to unlink
      * it from IO Thread compression_clients list. */
-    if (!connHasEventLoop(c->conn) && !c->compression_state) return;
+    if (!connHasEventLoop(c->conn) && !clientHasCompression(c)) return;
 
     /* As calling in main thread, we should pause the io thread to make it safe. */
     pauseIOThread(c->tid);
@@ -804,7 +804,7 @@ int processClientsFromMainThread(IOThread *t) {
         }
 
         /* Add the client to the compression clients list. */
-        if (c->compression_state != NULL &&
+        if (clientHasCompression(c) &&
             listSearchKey(t->compression_clients, c) == NULL)
         {
             listLinkNodeTail(t->compression_clients,
@@ -902,7 +902,7 @@ void IOThreadCompressionCron(IOThread *t) {
         client *c = listNodeValue(ln);
 
         if (c->io_flags & CLIENT_IO_CLOSE_ASAP) continue;
-        serverAssert(c->compression_state);
+        serverAssert(clientHasCompression(c));
 
         /* Usually compressAndWrite will be called at the end of
          * consumeAndTryWriteCompressed but when compression maximum latency ms

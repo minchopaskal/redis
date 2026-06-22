@@ -258,7 +258,6 @@ client *createClient(connection *conn) {
     c->task = NULL;
     c->node_id = NULL;
     c->compression_level = 0;
-    c->compression_state = NULL;
     atomicSet(c->pending_read, 0);
     return c;
 }
@@ -3857,7 +3856,7 @@ void readQueryFromClient(connection *conn) {
     /* We have to read compressed data but compression for this client is
      * currently disabled. This could happened f.e when client was just fetched
      * to main thread. */
-    int pending_compression_read = c->compression_state &&
+    int pending_compression_read = clientHasCompression(c) &&
                                    !(c->io_flags & CLIENT_IO_COMPRESSION_ENABLED);
 
     if (!(c->io_flags & CLIENT_IO_READ_ENABLED) || pending_compression_read) {

@@ -216,13 +216,36 @@ static const compressionType zstdType = {
 typedef struct compressionConnection {
     connection base;
     connection *underlying;
+    compressionState *state;    /* Per-connection compression state. Owned by
+                                 * this wrapper, not by the client. */
     listNode *pending_data_node;
     size_t last_read;
     size_t last_written;
     int handle_pending;
 } compressionConnection;
 
+static ConnectionType CT_Compression;
+
 int decompressInto(compressionState *state, char *buf, size_t buflen);
+void compressionStateDestroy(compressionState *state);
+static int compressionConnWrite(compressionConnection *cc, int *tot_written);
+static int compressionStateHasPendingFlush(compressionState *state);
+static int compressionStateHasPendingData(compressionState *state);
+
+/* Return the compression state attached to the client's connection, or NULL if
+ * the client's connection is not a compression connection. This is the single
+ * point that maps a client back to its compression state without the connection
+ * layer having to know about clients. */
+static compressionState *clientCompressionState(client *c) {
+    if (c->conn && c->conn->type == &CT_Compression)
+        return ((compressionConnection *)c->conn)->state;
+    return NULL;
+}
+
+/* Return non-zero if the client's connection is a compression connection. */
+int clientHasCompression(client *c) {
+    return c->conn && c->conn->type == &CT_Compression;
+}
 
 static void compressionPendingAdd(compressionConnection *cc) {
     if (cc->pending_data_node) return;
@@ -276,6 +299,10 @@ static void connCompressionShutdown(connection *conn) {
 static void connCompressionClose(connection *conn) {
     compressionConnection *cc = (compressionConnection*)conn;
     cc->underlying->type->close(cc->underlying);
+    /* The wrapper owns the compression state. Free it here so closing the
+     * wrapper directly (rather than via clientDestroyCompressionState) doesn't
+     * leak it. */
+    if (cc->state) compressionStateDestroy(cc->state);
     zfree(conn);
 }
 
@@ -303,8 +330,7 @@ static int connCompressionAccept(connection *conn, ConnectionCallbackFunc accept
  * to the event-loop's pending data and processed via connProcessPendingData. */
 static int connCompressionRead(struct connection *conn, void *buf, size_t buf_len) {
     compressionConnection *cc = (compressionConnection*)conn;
-    client *c = connGetPrivateData(conn);
-    compressionState *state = c->compression_state;
+    compressionState *state = cc->state;
     if (!state || state->dir != DECOMPRESS)
         return connRead(cc->underlying, buf, buf_len);
 
@@ -348,10 +374,13 @@ static int connCompressionRead(struct connection *conn, void *buf, size_t buf_le
     if (decompressed == 0 && connGetState(cc->underlying) == CONN_STATE_CONNECTED)
         return -1;
 
-    /* No need to give pending work to main thread as the client must be send to
-     * IO-thread soon enough. */
-    if (c->running_tid != IOTHREAD_MAIN_THREAD_ID) {
-        if (connGetState(conn) == CONN_STATE_CONNECTED && clientHasPendingCompressedData(c)) {
+    /* The pending-data list lives on the event loop and is processed by both the
+     * main loop and the IO-thread loops. When the connection is bound to an
+     * IO-thread loop (i.e. not the main loop) we register pending work so it gets
+     * flushed there; on the main loop there's no need as the client is handed off
+     * to an IO thread soon enough. */
+    if (cc->underlying->el && cc->underlying->el != server.el) {
+        if (connGetState(conn) == CONN_STATE_CONNECTED && compressionStateHasPendingData(state)) {
             compressionPendingAdd(cc);
         } else if (cc->pending_data_node) {
             compressionPendingRemove(cc);
@@ -365,8 +394,7 @@ static int connCompressionRead(struct connection *conn, void *buf, size_t buf_le
  * connection write method. */
 static int connCompressionWrite(connection *conn, const void *data, size_t len) {
     compressionConnection *cc = (compressionConnection*)conn;
-    client *c = connGetPrivateData(conn);
-    compressionState *state = c->compression_state;
+    compressionState *state = cc->state;
     /* If no compression state or we are not compressing data - defer to
      * underlying connection. */
     if (!state || state->dir != COMPRESS)
@@ -387,9 +415,9 @@ static int connCompressionWrite(connection *conn, const void *data, size_t len) 
 
         /* Write whatever we have available in the compressed buffer */
         int written = 0;
-        int err = compressAndWrite(c, &written);
+        int err = compressionConnWrite(cc, &written);
         if (err) {
-            if (connGetState(c->conn) != CONN_STATE_CONNECTED) {
+            if (connGetState(cc->underlying) != CONN_STATE_CONNECTED) {
                 return -1;
             }
             return consumed;
@@ -612,8 +640,8 @@ int RedisRegisterConnectionTypeCompression(void) {
     return connTypeRegister(&CT_Compression);
 }
 
-/* Create compression state for the client */
-int compressionStateCreate(client *c) {
+/* Allocate and initialize a bare compression state. */
+static compressionState *compressionStateCreate(void) {
     compressionState *st = zcalloc(sizeof(compressionState));
     st->type = &zstdType;
     st->last_write = 0;
@@ -621,9 +649,7 @@ int compressionStateCreate(client *c) {
     st->read_flush_pending = 0;
     st->dir = CD_INVALID;
 
-    c->compression_state = st;
-
-    return 1;
+    return st;
 }
 
 void compressionStateDestroy(compressionState *state) {
@@ -641,19 +667,16 @@ void compressionStateDestroy(compressionState *state) {
  * Currently only viable for master/replica clients. */
 int clientCreateCompressionState(client *c, compressionDirection dir) {
     /* Client compression already initialized */
-    if (c->compression_state != NULL)
+    if (clientHasCompression(c))
         return 1;
 
-    serverAssert(compressionStateCreate(c));
-
-    compressionState *st = c->compression_state;
+    compressionState *st = compressionStateCreate();
 
     if (dir == COMPRESS) {
         serverAssert(c->compression_level > 0 && c->flags & CLIENT_SLAVE);
 
         if (st->type->init_compress(st, c->compression_level) == -1) {
-            compressionStateDestroy(c->compression_state);
-            c->compression_state = NULL;
+            compressionStateDestroy(st);
             return 0;
         }
 
@@ -665,8 +688,7 @@ int clientCreateCompressionState(client *c, compressionDirection dir) {
         serverAssert(server.repl_master_compression_level > 0);
 
         if (st->type->init_decompress(st) == -1) {
-            compressionStateDestroy(c->compression_state);
-            c->compression_state = NULL;
+            compressionStateDestroy(st);
             return 0;
         }
  
@@ -681,6 +703,7 @@ int clientCreateCompressionState(client *c, compressionDirection dir) {
     compressionConnection *cc = zmalloc(sizeof(compressionConnection));
     cc->base.type = &CT_Compression;
     cc->underlying = c->conn;
+    cc->state = st;
     cc->pending_data_node = NULL;
     cc->last_read = 0;
     cc->last_written = 0;
@@ -691,20 +714,17 @@ int clientCreateCompressionState(client *c, compressionDirection dir) {
 }
 
 void clientDestroyCompressionState(client *c) {
-    if (c->compression_state == NULL) return;
+    if (!clientHasCompression(c)) return;
 
-    /* If the connection is not destroyed yet we need to switch back to the
-     * underlying connection. */
-    if (c->conn) {
-        compressionConnection *cc = (compressionConnection*)c->conn;
-        compressionPendingRemove(cc);
-        c->conn = cc->underlying;
+    /* Switch back to the underlying connection and tear down the wrapper that
+     * owns the compression state. */
+    compressionConnection *cc = (compressionConnection*)c->conn;
+    compressionState *st = cc->state;
+    compressionPendingRemove(cc);
+    c->conn = cc->underlying;
+    zfree(cc);
 
-        zfree(cc);
-    }
-
-    compressionStateDestroy(c->compression_state);
-    c->compression_state = NULL;
+    compressionStateDestroy(st);
     c->compression_level = 0;
     c->io_flags &= ~CLIENT_IO_COMPRESSION_ENABLED;
 
@@ -738,12 +758,10 @@ void clientDisableCompression(client *c) {
  * immediately so this call may not write anything to socket.
  * Force flushes the compressed buffer according to compression_max_latency.
  * Return number of bytes written to socket or -1 on socket write error. */
-int compressAndWrite(client *c, int *tot_written) {
-    if (c->compression_level <= 0)
+static int compressionConnWrite(compressionConnection *cc, int *tot_written) {
+    compressionState *state = cc->state;
+    if (!state || state->dir != COMPRESS)
         return 0;
-
-    compressionState *state = c->compression_state;
-    serverAssert(state);
 
     /* All available uncompressed data was consumed so we need to reset the
      * uncompressed buffer */
@@ -760,12 +778,14 @@ int compressAndWrite(client *c, int *tot_written) {
          * data. */
         int flush = mstime() - state->last_write > server.compression_max_latency;
         if (state->type->compress(state, flush) == -1) {
-            clientDestroyCompressionState(c);
+            /* Fatal compression error. Mark the underlying connection as closed,
+             * mirroring how the read path handles a fatal decompress error. The
+             * client will then be torn down by the regular write-error handling,
+             * which destroys the compression state. */
+            cc->underlying->state = CONN_STATE_CLOSED;
             return 1;
         }
     }
-
-    compressionConnection *cc = (compressionConnection*)c->conn;
 
     /* Try to write all the data available in the compressed buffer. */
     *tot_written = 0;
@@ -796,6 +816,14 @@ int compressAndWrite(client *c, int *tot_written) {
         state->last_write = mstime();
 
     return 0;
+}
+
+/* Client-facing wrapper around compressionConnWrite, used by the IO-thread
+ * compression cron. No-op if the client has no compression connection. */
+int compressAndWrite(client *c, int *tot_written) {
+    if (!clientHasCompression(c))
+        return 0;
+    return compressionConnWrite((compressionConnection*)c->conn, tot_written);
 }
 
 /* Decompress input compressed data and put it in `buf`. If decompressed data
@@ -865,7 +893,7 @@ int decompressInto(compressionState *state, char *buf, size_t buflen) {
 int readFromBufAndDecompress(client *c, char *input_buf, size_t input_len,
                              char *output_buf, size_t output_len, size_t *consumed)
 {
-    compressionState *state = c->compression_state;
+    compressionState *state = clientCompressionState(c);
     if (!state) {
         return -1;
     }
@@ -899,25 +927,31 @@ int readFromBufAndDecompress(client *c, char *input_buf, size_t input_len,
  * a lot of compressed data before it finishes a frame and gives it back to user.
  * While this gives the best compression ratio it introduces a lot of latency so
  * we make a compromise and flush periodically. */
-int clientHasPendingCompressionFlush(client *c) {
-    compressionState *state = c->compression_state;
+static int compressionStateHasPendingFlush(compressionState *state) {
     if (!state) return 0;
     if (state->dir != COMPRESS) return 0;
 
     return state->write_flush_pending || (mstime() - state->last_write >= server.compression_max_latency);
 }
 
+int clientHasPendingCompressionFlush(client *c) {
+    return compressionStateHasPendingFlush(clientCompressionState(c));
+}
+
 /* Check if we still have pending compressed data. This may mean that either the
  * compression library still has data in it's internal buffers, we still have
  * compressed data that needs to be consumed by the library or we have stored
  * decompressed data that we still have not consumed. */
-int clientHasPendingCompressedData(client *c) {
-    compressionState *state = c->compression_state;
+static int compressionStateHasPendingData(compressionState *state) {
     if (!state) return 0;
     if (state->dir != DECOMPRESS) return 0;
 
     return (state->read_flush_pending && state->output.size > state->output.written) ||
            state->input.written > state->input.consumed ||
            state->output.written > state->output.consumed;
+}
+
+int clientHasPendingCompressedData(client *c) {
+    return compressionStateHasPendingData(clientCompressionState(c));
 }
 
