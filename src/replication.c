@@ -2755,8 +2755,13 @@ void readSyncBulkPayload(connection *conn) {
     /* If we agreed on compression with the master then setup compression on the
      * master client. At this point we're done reading all non compressed payload
      * from the master */
-    if (server.repl_master_compression_level > 0)
-        clientEnableCompression(server.master, DECOMPRESS);
+    if (server.repl_master_compression_level > 0) {
+        if (!clientEnableCompression(server.master, DECOMPRESS)) {
+            /* The master streams compressed data, so we cannot fall back to
+             * uncompressed replication. This is unrecoverable on the replica. */
+            serverPanic("Failed to enable decompression for the master replication stream.");
+        }
+    }
 
     if (server.supervised_mode == SUPERVISED_SYSTEMD) {
         redisCommunicateSystemd("STATUS=MASTER <-> REPLICA sync: Finished with success. Ready to accept connections in read-write mode.\n");
@@ -3425,7 +3430,11 @@ void syncWithMaster(connection *conn) {
     if (psync_result == PSYNC_CONTINUE) {
         serverLog(LL_NOTICE, "MASTER <-> REPLICA sync: Master accepted a Partial Resynchronization.");
         if (server.repl_master_compression_level > 0) {
-            clientEnableCompression(server.master, DECOMPRESS);
+            if (!clientEnableCompression(server.master, DECOMPRESS)) {
+                /* The master streams compressed data, so we cannot fall back to
+                 * uncompressed replication. This is unrecoverable on the replica. */
+                serverPanic("Failed to enable decompression for the master replication stream.");
+            }
         }
         if (server.supervised_mode == SUPERVISED_SYSTEMD) {
             redisCommunicateSystemd("STATUS=MASTER <-> REPLICA sync: Partial Resynchronization accepted. Ready to accept connections in read-write mode.\n");
