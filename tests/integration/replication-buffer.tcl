@@ -181,14 +181,6 @@ start_server {} {
         $master config set rdb-key-save-delay 100000000
         populate 1000 master 10000
 
-        # When compression is enabled the repl buffer may be consumed by the
-        # compression library faster than the data is actually send. We still
-        # trim the replication buffer in that case. In order for the following
-        # test to work we rely on replica2 being slow. If repl-rdb-channel is
-        # enabled though the repl buffer may be consumed faster than we expect.
-        if {$::compression} {
-            $replica2 config set repl-rdb-channel no
-        }
         $replica2 replicaof $master_host $master_port
         # Make sure replica2 is waiting bgsave
         wait_for_condition 5000 100 {
@@ -201,11 +193,6 @@ start_server {} {
         # the slow replica2 kept replication buffer.
         populate 20000 master 10000
         assert {[s repl_backlog_histlen] > [expr 10000*10000]}
-
-        # revert the config
-        if {$::compression} {
-            $replica2 config set repl-rdb-channel $rdbchannel
-        }
     }
 
     # Wait replica1 catch up with the master
