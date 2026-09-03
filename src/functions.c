@@ -181,6 +181,23 @@ void functionsLibCtxClear(functionsLibCtx *lib_ctx) {
 }
 
 void functionsLibCtxClearCurrent(int async) {
+#ifdef BUILD_WASM
+    /* WAMR module teardown is not thread-safe with concurrent loading. Keep
+     * teardown synchronous only when the discarded context contains WASM. */
+    if (async) {
+        dictIterator iter;
+        dictEntry *entry;
+        dictInitIterator(&iter, curr_functions_lib_ctx->libraries);
+        while ((entry = dictNext(&iter))) {
+            functionLibInfo *li = dictGetVal(entry);
+            if (!strcasecmp(li->ei->name, "WASM")) {
+                async = 0;
+                break;
+            }
+        }
+        dictResetIterator(&iter);
+    }
+#endif
     if (async) {
         functionsLibCtx *old_l_ctx = curr_functions_lib_ctx;
         dict *old_engines = engines;
@@ -1130,6 +1147,11 @@ int functionsInit(void) {
     if (luaEngineInitEngine() != C_OK) {
         return C_ERR;
     }
+#ifdef BUILD_WASM
+    if (wasmEngineInitEngine() != C_OK) {
+        return C_ERR;
+    }
+#endif
 
     /* Must be initialized after engines initialization */
     curr_functions_lib_ctx = functionsLibCtxCreate();

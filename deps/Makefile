@@ -1,6 +1,7 @@
 # Redis dependency Makefile
 
 uname_S:= $(shell sh -c 'uname -s 2>/dev/null || echo not')
+uname_M:= $(shell sh -c 'uname -m 2>/dev/null || echo not')
 
 LUA_DEBUG?=no
 LUA_COVERAGE?=no
@@ -61,6 +62,7 @@ distclean:
 	-(cd fpconv && $(MAKE) clean) > /dev/null || true
 	-(cd tre && $(MAKE) clean) > /dev/null || true
 	-(cd xxhash && $(MAKE) clean) > /dev/null || true
+	-(rm -rf wamr/build-redis) > /dev/null || true
 	-(rm -f .make-*)
 
 .PHONY: distclean
@@ -136,6 +138,43 @@ lua: .make-prerequisites
 	cd lua/src && $(MAKE) all CFLAGS="$(LUA_CFLAGS)" MYLDFLAGS="$(LUA_LDFLAGS)" AR="$(AR) $(ARFLAGS)"
 
 .PHONY: lua
+
+ifeq ($(uname_S),Darwin)
+WAMR_PLATFORM=darwin
+else
+WAMR_PLATFORM=linux
+endif
+
+ifneq (,$(findstring -m32,$(DEPS_CFLAGS)))
+WAMR_TARGET=X86_32
+else ifneq (,$(filter arm64 aarch64,$(uname_M)))
+WAMR_TARGET=AARCH64
+else
+WAMR_TARGET=X86_64
+endif
+
+wamr: .make-prerequisites
+	@printf '%b %b\n' $(MAKECOLOR)MAKE$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR)
+	cmake -S wamr/product-mini/platforms/$(WAMR_PLATFORM) -B wamr/build-redis \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_C_COMPILER="$(CC)" \
+		-DCMAKE_C_FLAGS="$(DEPS_CFLAGS)" \
+		-DWAMR_BUILD_TARGET="$(WAMR_TARGET)" \
+		-DWAMR_BUILD_INTERP=1 \
+		-DWAMR_BUILD_FAST_INTERP=0 \
+		-DWAMR_BUILD_INSTRUCTION_METERING=1 \
+		-DWAMR_BUILD_AOT=0 \
+		-DWAMR_BUILD_JIT=0 \
+		-DWAMR_BUILD_FAST_JIT=0 \
+		-DWAMR_BUILD_LIBC_BUILTIN=0 \
+		-DWAMR_BUILD_LIBC_WASI=0 \
+		-DWAMR_BUILD_SIMD=0 \
+		-DWAMR_BUILD_REF_TYPES=0 \
+		-DWAMR_BUILD_MULTI_MODULE=0 \
+		-DWAMR_BUILD_LIB_PTHREAD=0
+	cmake --build wamr/build-redis --target vmlib
+
+.PHONY: wamr
 
 JEMALLOC_CFLAGS=$(ENABLE_LTO) $(CFLAGS)
 JEMALLOC_LDFLAGS=$(ENABLE_LTO) $(LDFLAGS)
