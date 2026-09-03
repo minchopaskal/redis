@@ -163,6 +163,14 @@ start_server {tags {"scripting wasm"}} {
         assert_equal wasm-blob [r type cpp-record]
         assert_equal 60 [r fcall cpp_record_sum 1 cpp-record]
     }
+
+    test {WASM JavaScript SDK - AssemblyScript function example} {
+        set payload [sdk_wasm_payload "sdk/wasm/js/build/js-functions.wasm" jsexample]
+        assert_equal jsexample [r function load $payload]
+        assert_equal hello-js [r fcall js_echo 0 hello-js]
+        assert_equal 1 [r fcall js_incr 1 js-counter]
+        assert_equal 2 [r fcall js_incr 1 js-counter]
+    }
 }
 
 start_server {tags {"scripting wasm repl external:skip"}} {

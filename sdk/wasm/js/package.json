@@ -1,0 +1,11 @@
+{
+  "name": "redis-wasm-js-sdk",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "asc assembly/example.ts --outFile build/js-functions.wasm --optimize --shrinkLevel 1 --runtime stub --noAssert --use abort=assembly/sdk/redisAbort"
+  },
+  "devDependencies": {
+    "assemblyscript": "0.28.20"
+  }
+}
