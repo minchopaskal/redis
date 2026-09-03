@@ -17,6 +17,13 @@ proc go_wasm_functions_payload {{name goexample} {modified 0}} {
     return "#!wasm name=$name\n$module"
 }
 
+proc sdk_wasm_payload {path name} {
+    set fp [open $path rb]
+    set module [read $fp]
+    close $fp
+    return "#!wasm name=$name\n$module"
+}
+
 start_server {tags {"scripting wasm"}} {
     if {![dict exists [r function stats] engines WASM]} {
         return
@@ -137,6 +144,16 @@ start_server {tags {"scripting wasm"}} {
         r function flush
         assert_equal renamed [r function load [go_wasm_functions_payload renamed]]
         assert_equal 1 [r fcall tree_contains 1 tree 13]
+    }
+
+    test {WASM C SDK - custom linked-list blob example} {
+        set payload [sdk_wasm_payload "sdk/wasm/c/example/c-list.wasm" cexample]
+        assert_equal cexample [r function load $payload]
+        assert_equal {C list created} [r fcall c_list_create 1 c-list first second third]
+        assert_equal wasm-blob [r type c-list]
+        assert_equal 3 [r fcall c_list_len 1 c-list]
+        assert_equal {C list updated} [r fcall c_list_push 1 c-list fourth]
+        assert_equal 4 [r fcall c_list_len 1 c-list]
     }
 }
 
