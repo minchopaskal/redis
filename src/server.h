@@ -902,9 +902,11 @@ typedef enum {
 #define OBJ_ARRAY 7     /* Array object. */
 #ifdef ENABLE_GCRA
 #define OBJ_GCRA 8      /* GCRA object. */
-#define OBJ_TYPE_MAX 9  /* Maximum number of object types */
+#define OBJ_WASM 9      /* Opaque WASM-owned blob. */
+#define OBJ_TYPE_MAX 10 /* Maximum number of object types */
 #else
-#define OBJ_TYPE_MAX 8  /* Maximum number of object types */
+#define OBJ_WASM 8      /* Opaque WASM-owned blob. */
+#define OBJ_TYPE_MAX 9  /* Maximum number of object types */
 #endif
 
 /* NOTE: adding a new object requires changes in the following places:
@@ -1016,6 +1018,17 @@ typedef struct moduleValue {
     moduleType *type;
     void *value;
 } moduleValue;
+
+#define WASM_BLOB_OWNER_LEN 32 /* SHA-256 digest bytes. */
+
+/* Persisted value of an OBJ_WASM key. All three SDS values are owned by the
+ * object and remain meaningful even when the owning function library is not
+ * currently loaded. owner is the SHA-256 digest of the exact WASM module. */
+typedef struct wasmBlob {
+    sds owner;
+    sds type;
+    sds payload;
+} wasmBlob;
 
 /* Describe the state of the module during loading, and the indication which configs were loaded / applied already. */
 typedef enum {

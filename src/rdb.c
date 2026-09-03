@@ -752,6 +752,8 @@ int rdbSaveObjectType(rio *rdb, robj *o) {
         return rdbSaveType(rdb,RDB_TYPE_MODULE_2);
     case OBJ_ARRAY:
         return rdbSaveType(rdb,RDB_TYPE_ARRAY);
+    case OBJ_WASM:
+        return rdbSaveType(rdb,RDB_TYPE_WASM_BLOB);
     default:
         serverPanic("Unknown object type");
     }
@@ -1590,6 +1592,17 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid) {
         if ((n = rdbSaveLen(rdb,t)) == -1) return -1;
         nwritten += n;
 #endif
+    } else if (o->type == OBJ_WASM) {
+        wasmBlob *blob = o->ptr;
+        if ((n = rdbSaveRawString(rdb, (unsigned char *)blob->owner,
+                                  sdslen(blob->owner))) == -1) return -1;
+        nwritten += n;
+        if ((n = rdbSaveRawString(rdb, (unsigned char *)blob->type,
+                                  sdslen(blob->type))) == -1) return -1;
+        nwritten += n;
+        if ((n = rdbSaveRawString(rdb, (unsigned char *)blob->payload,
+                                  sdslen(blob->payload))) == -1) return -1;
+        nwritten += n;
     } else if (o->type == OBJ_MODULE) {
         /* Save a module-specific value. */
         RedisModuleIO io;
@@ -4390,6 +4403,28 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error)
         }
         o = createGCRAObject((long long)time);
 #endif
+    } else if (rdbtype == RDB_TYPE_WASM_BLOB) {
+        sds owner = rdbGenericLoadStringObject(rdb, RDB_LOAD_SDS, NULL);
+        if (!owner) return NULL;
+        sds blob_type = rdbGenericLoadStringObject(rdb, RDB_LOAD_SDS, NULL);
+        if (!blob_type) {
+            sdsfree(owner);
+            return NULL;
+        }
+        sds payload = rdbGenericLoadStringObject(rdb, RDB_LOAD_SDS, NULL);
+        if (!payload) {
+            sdsfree(owner);
+            sdsfree(blob_type);
+            return NULL;
+        }
+        if (sdslen(owner) != WASM_BLOB_OWNER_LEN || sdslen(blob_type) == 0) {
+            sdsfree(owner);
+            sdsfree(blob_type);
+            sdsfree(payload);
+            rdbReportCorruptRDB("WASM blob owner must be a SHA-256 digest and type must not be empty");
+            return NULL;
+        }
+        o = createWasmBlobObject(owner, blob_type, payload);
     } else if (rdbtype == RDB_TYPE_ARRAY) {
         /* Load array value. We only persist elements and insert_idx - no
          * implementation details. Arrays use current ar_slice_size config. */

@@ -167,6 +167,8 @@ robj *createStreamObject(void);
 robj *createGCRAObject(long long value);
 robj *createModuleObject(struct RedisModuleType *mt, void *value);
 robj *createArrayObject(void);
+robj *createWasmBlobObject(sds owner, sds type, sds payload);
+robj *wasmBlobDup(robj *o);
 int getLongFromObjectOrReply(struct client *c, robj *o, long *target, const char *msg);
 int getPositiveLongFromObjectOrReply(struct client *c, robj *o, long *target, const char *msg);
 int getRangeLongFromObjectOrReply(struct client *c, robj *o, long min, long max, long *target, const char *msg);

@@ -17,6 +17,7 @@
 
 #include "functions.h"
 #include "function_wasm.h"
+#include "sha256.h"
 #include "wasm_export.h"
 
 #include <limits.h>
@@ -45,6 +46,8 @@ typedef struct wasmLibraryCtx {
     wasm_exec_env_t exec_env;
     sds binary;
     sds name;
+    sds blob_owner;
+    dict *blob_types;
     size_t refs;
 } wasmLibraryCtx;
 
@@ -91,6 +94,12 @@ typedef struct wasmRespParser {
  * process-wide signal/allocator state is not safely reinitializable, so keep
  * the runtime alive and only recreate the Redis engine wrapper. */
 static wasmEngineCtx *wasm_global_ctx;
+
+static dictType wasmBlobTypeDictType = {
+    .hashFunction = dictSdsHash,
+    .keyCompare = dictSdsKeyCompare,
+    .keyDestructor = dictSdsDestructor,
+};
 
 static uint32_t readU32LE(const unsigned char *p) {
     return ((uint32_t)p[0]) |
@@ -393,6 +402,24 @@ static void cleanupScriptClient(client *c) {
     resetClient(c, 1);
 }
 
+/* Takes ownership of argv and every object it contains. */
+static int wasmRunRedisCommand(wasmHostCtx *ctx, robj **argv, int argc, sds *reply) {
+    client *c = ctx->run_ctx->c;
+    c->argv = argv;
+    c->argc = c->argv_len = argc;
+
+    sds call_error = NULL;
+    scriptCall(ctx->run_ctx, &call_error);
+    if (call_error) {
+        wasmSetLastErrorSds(ctx, call_error);
+        cleanupScriptClient(c);
+        return C_ERR;
+    }
+    *reply = drainClientReply(c);
+    cleanupScriptClient(c);
+    return C_OK;
+}
+
 static sds packInput(robj **keys, size_t nkeys, robj **args, size_t nargs) {
     if (nkeys + nargs > UINT32_MAX)
         return NULL;
@@ -429,8 +456,10 @@ static void wasmLibraryRelease(wasmLibraryCtx *library) {
     if (library->exec_env) wasm_runtime_destroy_exec_env(library->exec_env);
     if (library->instance) wasm_runtime_deinstantiate(library->instance);
     if (library->module) wasm_runtime_unload(library->module);
+    dictRelease(library->blob_types);
     sdsfree(library->binary);
     sdsfree(library->name);
+    sdsfree(library->blob_owner);
     zfree(library);
 }
 
@@ -565,24 +594,17 @@ static int32_t wasmCall(wasm_exec_env_t exec_env, int32_t argv_ptr, int32_t argv
         ctx->last_error = NULL;
     }
 
-    client *c = ctx->run_ctx->c;
     sds unpack_error = NULL;
+    robj **argv;
+    int argc;
     if (unpackCommand(exec_env, (uint32_t)argv_ptr, (uint32_t)argv_len,
-                      &c->argv, &c->argc, &unpack_error) != C_OK)
+                      &argv, &argc, &unpack_error) != C_OK)
     {
         wasmSetLastErrorSds(ctx, unpack_error);
         return -1;
     }
-    c->argv_len = c->argc;
-    sds call_error = NULL;
-    scriptCall(ctx->run_ctx, &call_error);
-    if (call_error) {
-        wasmSetLastErrorSds(ctx, call_error);
-        cleanupScriptClient(c);
+    if (wasmRunRedisCommand(ctx, argv, argc, &ctx->staged_reply) != C_OK)
         return -1;
-    }
-    ctx->staged_reply = drainClientReply(c);
-    cleanupScriptClient(c);
     if (sdslen(ctx->staged_reply) > INT32_MAX) {
         wasmSetLastError(ctx, "command reply is too large");
         sdsfree(ctx->staged_reply);
@@ -724,6 +746,209 @@ static int32_t wasmRegisterFunction(wasm_exec_env_t exec_env, int32_t name_ptr,
     return 0;
 }
 
+static int wasmValidBlobTypeName(sds name) {
+    if (sdslen(name) == 0)
+        return C_ERR;
+    for (size_t i = 0; i < sdslen(name); i++) {
+        unsigned char c = name[i];
+        if (!((c >= 'a' && c <= 'z') ||
+              (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '_'))
+            return C_ERR;
+    }
+    return C_OK;
+}
+
+static sds wasmRegisteredBlobType(wasm_exec_env_t exec_env, wasmHostCtx *ctx,
+                                  int32_t type_ptr, int32_t type_len)
+{
+    void *type_data;
+    if (!ctx || type_ptr < 0 || type_len <= 0 ||
+        wasmGetGuestBuffer(exec_env, (uint32_t)type_ptr, (uint32_t)type_len,
+                           &type_data) != C_OK)
+        return NULL;
+
+    sds requested = sdsnewlen(type_data, type_len);
+    dictEntry *entry = dictFind(ctx->library->blob_types, requested);
+    sdsfree(requested);
+    if (!entry) {
+        wasmSetLastError(ctx, "WASM blob type is not registered by this library");
+        return NULL;
+    }
+    return dictGetKey(entry);
+}
+
+static int32_t wasmBlobRegister(wasm_exec_env_t exec_env, int32_t type_ptr,
+                                int32_t type_len)
+{
+    wasmHostCtx *ctx = wasmGetHostCtx(exec_env);
+    void *type_data;
+    if (!ctx || ctx->phase != WASM_HOST_LOAD || type_ptr < 0 ||
+        type_len <= 0 || type_len > 128 ||
+        wasmGetGuestBuffer(exec_env, (uint32_t)type_ptr, (uint32_t)type_len,
+                           &type_data) != C_OK ||
+        memchr(type_data, '\0', type_len))
+        return -1;
+
+    sds type = sdsnewlen(type_data, type_len);
+    if (wasmValidBlobTypeName(type) != C_OK) {
+        wasmSetLastError(ctx, "WASM blob type names may contain only letters, numbers, and underscores");
+        sdsfree(type);
+        return -1;
+    }
+    if (dictAdd(ctx->library->blob_types, type, NULL) != DICT_OK) {
+        wasmSetLastError(ctx, "WASM blob type is already registered");
+        sdsfree(type);
+        return -1;
+    }
+    return 0;
+}
+
+static int wasmAuthorizeBlobRead(wasmHostCtx *ctx, sds key) {
+    robj **argv = zmalloc(sizeof(*argv) * 2);
+    argv[0] = createStringObject("TYPE", 4);
+    argv[1] = createStringObject(key, sdslen(key));
+    sds reply = NULL;
+    int result = wasmRunRedisCommand(ctx, argv, 2, &reply);
+    sdsfree(reply);
+    return result;
+}
+
+static wasmBlob *wasmLookupBlob(wasmHostCtx *ctx, sds key, sds type) {
+    if (wasmAuthorizeBlobRead(ctx, key) != C_OK)
+        return NULL;
+
+    kvobj *value = dbFind(ctx->run_ctx->c->db, key);
+    if (!value) {
+        wasmSetLastError(ctx, "WASM blob key does not exist");
+        return NULL;
+    }
+    if (value->type != OBJ_WASM) {
+        wasmSetLastError(ctx, "WRONGTYPE key does not hold a WASM blob");
+        return NULL;
+    }
+    wasmBlob *blob = value->ptr;
+    if (sdscmp(blob->owner, ctx->library->blob_owner) != 0) {
+        wasmSetLastError(ctx, "WASM blob is owned by another module");
+        return NULL;
+    }
+    if (sdscmp(blob->type, type) != 0) {
+        wasmSetLastError(ctx, "WASM blob has a different registered type");
+        return NULL;
+    }
+    return blob;
+}
+
+static int wasmGetBlobLookupArgs(wasm_exec_env_t exec_env, int32_t key_ptr,
+                                 int32_t key_len, int32_t type_ptr,
+                                 int32_t type_len, wasmHostCtx **ctx_out,
+                                 sds *key_out, sds *type_out)
+{
+    wasmHostCtx *ctx = wasmGetHostCtx(exec_env);
+    void *key_data;
+    if (!ctx || ctx->phase != WASM_HOST_CALL || key_ptr < 0 || key_len < 0 ||
+        wasmGetGuestBuffer(exec_env, (uint32_t)key_ptr, (uint32_t)key_len,
+                           &key_data) != C_OK)
+        return C_ERR;
+    sds type = wasmRegisteredBlobType(exec_env, ctx, type_ptr, type_len);
+    if (!type) return C_ERR;
+    *ctx_out = ctx;
+    *key_out = sdsnewlen(key_data, key_len);
+    *type_out = type;
+    return C_OK;
+}
+
+static int32_t wasmBlobLen(wasm_exec_env_t exec_env, int32_t key_ptr,
+                           int32_t key_len, int32_t type_ptr, int32_t type_len)
+{
+    wasmHostCtx *ctx;
+    sds key, type;
+    if (wasmGetBlobLookupArgs(exec_env, key_ptr, key_len, type_ptr, type_len,
+                              &ctx, &key, &type) != C_OK)
+        return -1;
+    wasmBlob *blob = wasmLookupBlob(ctx, key, type);
+    sdsfree(key);
+    if (!blob || sdslen(blob->payload) > INT32_MAX)
+        return -1;
+    return (int32_t)sdslen(blob->payload);
+}
+
+static int32_t wasmBlobRead(wasm_exec_env_t exec_env, int32_t key_ptr,
+                            int32_t key_len, int32_t type_ptr, int32_t type_len,
+                            int32_t dst, int32_t cap, int32_t offset)
+{
+    wasmHostCtx *ctx;
+    sds key, type;
+    if (dst < 0 || cap < 0 || offset < 0 ||
+        wasmGetBlobLookupArgs(exec_env, key_ptr, key_len, type_ptr, type_len,
+                              &ctx, &key, &type) != C_OK)
+        return -1;
+    wasmBlob *blob = wasmLookupBlob(ctx, key, type);
+    sdsfree(key);
+    if (!blob)
+        return -1;
+    return wasmReadSds(exec_env, blob->payload, (uint32_t)dst, (uint32_t)cap,
+                       (uint32_t)offset);
+}
+
+static void wasmSetReplyError(wasmHostCtx *ctx, sds reply, const char *fallback) {
+    if (reply && sdslen(reply) > 1 && (reply[0] == '-' || reply[0] == '!')) {
+        size_t len = 1;
+        while (len < sdslen(reply) && reply[len] != '\r' && reply[len] != '\n')
+            len++;
+        wasmSetLastErrorSds(ctx, sdsnewlen(reply + 1, len - 1));
+    } else {
+        wasmSetLastError(ctx, fallback);
+    }
+}
+
+static int32_t wasmBlobWrite(wasm_exec_env_t exec_env, int32_t key_ptr,
+                             int32_t key_len, int32_t type_ptr, int32_t type_len,
+                             int32_t src, int32_t src_len)
+{
+    wasmHostCtx *ctx;
+    sds key, type;
+    void *payload_data;
+    if (src < 0 || src_len < 0 ||
+        wasmGetBlobLookupArgs(exec_env, key_ptr, key_len, type_ptr, type_len,
+                              &ctx, &key, &type) != C_OK)
+        return -1;
+    if (wasmGetGuestBuffer(exec_env, (uint32_t)src, (uint32_t)src_len,
+                           &payload_data) != C_OK) {
+        sdsfree(key);
+        return -1;
+    }
+
+    robj *key_object = createStringObject(key, sdslen(key));
+    robj *blob_object = createWasmBlobObject(sdsdup(ctx->library->blob_owner),
+                                             sdsdup(type),
+                                             sdsnewlen(payload_data, src_len));
+    sds dump = createRawDumpPayload(blob_object, key_object,
+                                    ctx->run_ctx->c->db->id,
+                                    DUMP_PAYLOAD_SKIP_KEY_META, src_len);
+    decrRefCount(blob_object);
+    sdsfree(key);
+
+    robj **argv = zmalloc(sizeof(*argv) * 5);
+    argv[0] = createStringObject("RESTORE", 7);
+    argv[1] = key_object;
+    argv[2] = createStringObject("0", 1);
+    argv[3] = createStringObject(dump, sdslen(dump));
+    argv[4] = createStringObject("REPLACE", 7);
+    sdsfree(dump);
+
+    sds reply = NULL;
+    if (wasmRunRedisCommand(ctx, argv, 5, &reply) != C_OK)
+        return -1;
+    if (!reply || sdslen(reply) == 0 || reply[0] == '-' || reply[0] == '!') {
+        wasmSetReplyError(ctx, reply, "Failed writing WASM blob");
+        sdsfree(reply);
+        return -1;
+    }
+    sdsfree(reply);
+    return 0;
+}
+
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
 static NativeSymbol wasmNativeSymbols[] = {
@@ -739,6 +964,10 @@ static NativeSymbol wasmNativeSymbols[] = {
     {"status_reply", wasmStatusReply, "(ii)", NULL},
     {"error_reply", wasmErrorReply, "(ii)", NULL},
     {"register_function", wasmRegisterFunction, "(iiii)i", NULL},
+    {"blob_register", wasmBlobRegister, "(ii)i", NULL},
+    {"blob_len", wasmBlobLen, "(iiii)i", NULL},
+    {"blob_read", wasmBlobRead, "(iiiiiii)i", NULL},
+    {"blob_write", wasmBlobWrite, "(iiiiii)i", NULL},
 };
 #pragma GCC diagnostic pop
 
@@ -769,6 +998,15 @@ static int wasmEngineCreate(void *engine_ctx, functionLibInfo *li, sds blob,
     library->refs = 1;
     library->name = sdsdup(li->name);
     library->binary = sdsnewlen(bytes, length);
+    unsigned char owner[SHA256_BLOCK_SIZE];
+    SHA256_CTX sha256;
+    sha256_init(&sha256);
+    sha256_update(&sha256, (unsigned char *)library->binary,
+                  sdslen(library->binary));
+    sha256_final(&sha256, owner);
+    serverAssert(SHA256_BLOCK_SIZE == WASM_BLOB_OWNER_LEN);
+    library->blob_owner = sdsnewlen(owner, sizeof(owner));
+    library->blob_types = dictCreate(&wasmBlobTypeDictType);
 
     char error_buf[WASM_ERROR_BUF_SIZE] = {0};
     library->module = wasm_runtime_load((uint8_t *)library->binary,

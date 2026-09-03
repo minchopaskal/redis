@@ -10,6 +10,9 @@ type Error string
 
 func (e Error) Error() string { return string(e) }
 
+// BlobType identifies an opaque data type registered by one function library.
+type BlobType string
+
 const (
 	ErrHost           = Error("redis wasm host call failed")
 	ErrInvalidInput   = Error("invalid packed function input")
@@ -57,6 +60,18 @@ func hostErrorReply(ptr uint32, length int32)
 
 //go:wasmimport redis register_function
 func hostRegisterFunction(name uint32, nameLen int32, export uint32, exportLen int32) int32
+
+//go:wasmimport redis blob_register
+func hostBlobRegister(typeName uint32, typeLen int32) int32
+
+//go:wasmimport redis blob_len
+func hostBlobLen(key uint32, keyLen int32, typeName uint32, typeLen int32) int32
+
+//go:wasmimport redis blob_read
+func hostBlobRead(key uint32, keyLen int32, typeName uint32, typeLen int32, dst uint32, cap int32, offset int32) int32
+
+//go:wasmimport redis blob_write
+func hostBlobWrite(key uint32, keyLen int32, typeName uint32, typeLen int32, src uint32, srcLen int32) int32
 
 func bytesPointer(value []byte) uint32 {
 	if len(value) == 0 {
@@ -223,6 +238,84 @@ func RegisterFunction(name, exportName string) error {
 	}
 	if hostRegisterFunction(bytesPointer(nameBytes), nameLength,
 		bytesPointer(exportBytes), exportLength) != 0 {
+		return Error(LastError())
+	}
+	return nil
+}
+
+// RegisterBlobType declares a named opaque type during redis_init.
+func RegisterBlobType(name string) (BlobType, error) {
+	value := []byte(name)
+	length, err := checkedLength(len(value))
+	if err != nil {
+		return "", err
+	}
+	if hostBlobRegister(bytesPointer(value), length) != 0 {
+		return "", Error(LastError())
+	}
+	return BlobType(name), nil
+}
+
+func blobArguments(key []byte, blobType BlobType) ([]byte, int32, []byte, int32, error) {
+	keyLength, err := checkedLength(len(key))
+	if err != nil {
+		return nil, 0, nil, 0, err
+	}
+	typeName := []byte(blobType)
+	typeLength, err := checkedLength(len(typeName))
+	if err != nil {
+		return nil, 0, nil, 0, err
+	}
+	return key, keyLength, typeName, typeLength, nil
+}
+
+// BlobLen returns the serialized payload length for an owned blob key.
+func BlobLen(key []byte, blobType BlobType) (int, error) {
+	key, keyLength, typeName, typeLength, err := blobArguments(key, blobType)
+	if err != nil {
+		return 0, err
+	}
+	length := hostBlobLen(bytesPointer(key), keyLength,
+		bytesPointer(typeName), typeLength)
+	if length < 0 {
+		return 0, Error(LastError())
+	}
+	return int(length), nil
+}
+
+// BlobRead returns the complete serialized payload for an owned blob key.
+func BlobRead(key []byte, blobType BlobType) ([]byte, error) {
+	length, err := BlobLen(key, blobType)
+	if err != nil {
+		return nil, err
+	}
+	key, keyLength, typeName, typeLength, err := blobArguments(key, blobType)
+	if err != nil {
+		return nil, err
+	}
+	payload := make([]byte, length)
+	written := hostBlobRead(bytesPointer(key), keyLength,
+		bytesPointer(typeName), typeLength, bytesPointer(payload),
+		int32(length), 0)
+	if written != int32(length) {
+		return nil, Error(LastError())
+	}
+	return payload, nil
+}
+
+// BlobWrite creates or atomically replaces an owned blob key.
+func BlobWrite(key []byte, blobType BlobType, payload []byte) error {
+	key, keyLength, typeName, typeLength, err := blobArguments(key, blobType)
+	if err != nil {
+		return err
+	}
+	payloadLength, err := checkedLength(len(payload))
+	if err != nil {
+		return err
+	}
+	if hostBlobWrite(bytesPointer(key), keyLength,
+		bytesPointer(typeName), typeLength, bytesPointer(payload),
+		payloadLength) != 0 {
 		return Error(LastError())
 	}
 	return nil

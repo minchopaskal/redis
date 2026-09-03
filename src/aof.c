@@ -2964,6 +2964,20 @@ int rewriteArrayObject(rio *r, robj *key, robj *o) {
     return 1;
 }
 
+/* WASM blobs are self-describing RDB values. Rewriting them as RESTORE keeps
+ * owner/type metadata binary-safe and uses the same format as replication. */
+int rewriteWasmBlobObject(rio *r, robj *key, robj *o, int dbid) {
+    sds payload = createRawDumpPayload(o, key, dbid, DUMP_PAYLOAD_SKIP_KEY_META, 0);
+    int ok = rioWriteBulkCount(r, '*', 5) &&
+             rioWriteBulkString(r, "RESTORE", 7) &&
+             rioWriteBulkObject(r, key) &&
+             rioWriteBulkString(r, "0", 1) &&
+             rioWriteBulkString(r, payload, sdslen(payload)) &&
+             rioWriteBulkString(r, "REPLACE", 7);
+    sdsfree(payload);
+    return ok;
+}
+
 int rewriteObject(rio *r, robj *key, robj *o, int dbid, long long expiretime) {
     /* Save the key and associated value */
     if (o->type == OBJ_STRING) {
@@ -2989,6 +3003,8 @@ int rewriteObject(rio *r, robj *key, robj *o, int dbid, long long expiretime) {
 #endif
     } else if (o->type == OBJ_ARRAY) {
         if (rewriteArrayObject(r,key,o) == 0) return C_ERR;
+    } else if (o->type == OBJ_WASM) {
+        if (rewriteWasmBlobObject(r,key,o,dbid) == 0) return C_ERR;
     } else if (o->type == OBJ_MODULE) {
         if (rewriteModuleObject(r,key,o,dbid) == 0) return C_ERR;
     } else {

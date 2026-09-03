@@ -25,9 +25,12 @@ The initial implementation is intentionally narrower than the complete design:
   offsets and lengths select the complete encoded aggregate.
 - Guest RESP is fully bounds-checked and validated. RESP3-only raw replies are
   rejected for RESP2 callers.
-- Function flags, functional `FCALL_RO`, and the `blob_*`/`OBJ_WASM` data type
-  are deferred. Consequently, the current flagless WASM functions are rejected
-  by `FCALL_RO`.
+- Function flags and functional `FCALL_RO` remain deferred. Consequently, the
+  current flagless WASM functions are rejected by `FCALL_RO`.
+- `OBJ_WASM` stores the binary 32-byte SHA-256 digest of the exact WASM module,
+  a registered type name, and an opaque payload. Named types contain letters,
+  numbers, or underscores and are registered during `redis_init`. Blob access
+  is restricted to the exact module digest/type pair.
 - Function libraries retain their original binary payload through RDB and
   `FUNCTION DUMP`/`RESTORE`. A replica loading such a library must also have
   `BUILD_WASM=yes`; the ordinary command effects produced by an invocation do
@@ -75,14 +78,15 @@ status_reply(ptr, len)
 error_reply(ptr, len)
 
 register_function(name, nlen, export, elen) -> i32   ;; load time only
-blob_register(<type identity: OPEN>) -> i32          ;; load time only
-blob_len(key, klen, type) -> i32
-blob_read(key, klen, type, dst, cap, offset) -> i32
-blob_write(key, klen, type, src, slen) -> i32
+blob_register(type, tlen) -> i32                     ;; load time only
+blob_len(key, klen, type, tlen) -> i32
+blob_read(key, klen, type, tlen, dst, cap, offset) -> i32
+blob_write(key, klen, type, tlen, src, slen) -> i32
 
 ;; guest exports
 memory                                   ;; exported linear memory
-redis_init()                             ;; registration only
+redis_abi_version() -> i32
+redis_init() -> i32                      ;; registration only
 <one export per registered function>() -> i32
 ```
 
@@ -114,19 +118,34 @@ Redis never interprets the payload. The guest serializes and deserializes its ow
 
 Because the payload is opaque, everything Redis needs to do with the value is a generic byte operation — free it, copy it, size it, digest it, write it to RDB, read it back. No guest code runs on any of those paths, which means no WASM executes in the RDB-saving fork child, during AOF rewrite, during active defrag, or during eviction and lazy-free.
 
-**OPEN — extension id.** What identifies the owning extension concretely. The library name from the shebang is the obvious candidate, since `FUNCTION LOAD` and RDB already persist it and it therefore survives a restart, but an assigned integer or a module hash are alternatives with different trade-offs on rename and recompile.
+**Extension id.** The SHA-256 digest of the exact WASM module bytes identifies
+the owner. Renaming a byte-identical module preserves access, while loading
+different code under the same library name does not. This is code identity,
+not publisher identity: anyone with an exact copy of the module bytes has the
+same digest. Authenticating an author would require signed modules and a
+trusted public-key identity.
 
-**OPEN — type identity.** Whether an extension registers named blob types (and if so, the name format and whether an encoding version is part of the identity) or gets a single implicit type. This decision fixes the signature of `blob_register` and the `type` parameter of the other blob imports, and it determines the type field in the RDB record below.
+**Type identity.** A library registers one or more case-sensitive named types.
+Names use the Redis function-name character set (letters, numbers, and
+underscores) and are persisted directly in each blob.
 
 ## 4. Persistence and replication
 
-**RDB.** A blob is written as a self-describing record holding the type, the owner, the encoding version and the payload. Because all four are in the record, a server can load, re-save, `DUMP` and `RESTORE` such a key with the extension absent, so data durability does not depend on an operator keeping a library loaded. The cost is a new RDB record type and an `RDB_VERSION` bump, which means older servers cannot read RDBs containing blobs. The exact type and version fields follow from the type-identity decision above.
+**RDB.** A blob is written as `RDB_TYPE_WASM_BLOB`, followed by owner, type,
+and payload strings. The existing RDB version remains unchanged: older servers
+reject an unknown blob record only when one is present, rather than rejecting
+all otherwise-compatible RDBs. Because all fields are in the record, a server
+can load, re-save, `DUMP`, and `RESTORE` such a key with the extension absent,
+so data durability does not depend on an operator keeping a library loaded.
 
 **Replication and AOF: effects.** A WASM invocation replicates its effects, exactly as a Lua script does. Each command the guest issues through `call()` propagates on its own, and Redis wraps the batch in `MULTI`/`EXEC` when a single invocation produced more than one operation; the `FCALL` itself is never propagated. The engine does not have to implement any of this: `scriptResetRun()` already marks the calling client `CLIENT_PREVENT_PROP`, and each write a script performs accumulates through `alsoPropagate()` inside `call()`, flushed by `propagatePendingCommands()`.
 
 Two properties follow. Guests do not need to be deterministic, since nothing re-executes them. And replicas and AOF-loading servers never run WASM — they apply ordinary commands — so a server without the engine compiled in can still replicate from a master that uses it.
 
-**OPEN — how blob writes propagate.** A `blob_write` is not a command, so effects replication has nothing to propagate on its behalf. This needs a decision before implementation.
+**Blob write propagation.** `blob_write` builds a self-contained DUMP payload
+and executes `RESTORE key 0 payload REPLACE` through the shared script command
+path. This inherits ACL, cluster, OOM/read-only checks, notifications, WATCH
+and client tracking, and propagates a normal RESTORE effect to replicas/AOF.
 
 **Other integration points.**
 

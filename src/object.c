@@ -540,6 +540,26 @@ robj *createArrayObject(void) {
     return o;
 }
 
+/* Takes ownership of owner, type and payload. */
+robj *createWasmBlobObject(sds owner, sds type, sds payload) {
+    wasmBlob *blob = zmalloc(sizeof(*blob));
+    blob->owner = owner;
+    blob->type = type;
+    blob->payload = payload;
+    robj *o = createObject(OBJ_WASM, blob);
+    /* Object encodings are four bits wide. HT is an opaque, non-SDS encoding
+     * here; the object type disambiguates it from hash/set dictionaries. */
+    o->encoding = OBJ_ENCODING_HT;
+    return o;
+}
+
+robj *wasmBlobDup(robj *o) {
+    serverAssert(o->type == OBJ_WASM);
+    wasmBlob *blob = o->ptr;
+    return createWasmBlobObject(sdsdup(blob->owner), sdsdup(blob->type),
+                                sdsdup(blob->payload));
+}
+
 robj *createModuleObject(moduleType *mt, void *value) {
     moduleValue *mv = zmalloc(sizeof(*mv));
     mv->type = mt;
@@ -626,6 +646,14 @@ void freeArrayObject(robj *o) {
     arFree(o->ptr);
 }
 
+void freeWasmBlobObject(robj *o) {
+    wasmBlob *blob = o->ptr;
+    sdsfree(blob->owner);
+    sdsfree(blob->type);
+    sdsfree(blob->payload);
+    zfree(blob);
+}
+
 void incrRefCount(robj *o) {
     if (o->refcount < OBJ_FIRST_SPECIAL_REFCOUNT - 1) {
         o->refcount++;
@@ -681,6 +709,7 @@ void decrRefCount(robj *o) {
             case OBJ_GCRA: freeGCRAObject(o); break;
 #endif
             case OBJ_ARRAY: freeArrayObject(o); break;
+            case OBJ_WASM: freeWasmBlobObject(o); break;
             default: serverPanic("Unknown object type"); break;
             }
         }
@@ -846,6 +875,15 @@ void dismissArrayObject(robj *o, size_t size_hint) {
     arDismiss(o->ptr, size_hint);
 }
 
+void dismissWasmBlobObject(robj *o, size_t size_hint) {
+    wasmBlob *blob = o->ptr;
+    UNUSED(size_hint);
+    dismissSds(blob->owner);
+    dismissSds(blob->type);
+    dismissSds(blob->payload);
+    dismissMemory(blob, sizeof(*blob));
+}
+
 #ifdef ENABLE_GCRA
 void dismissGCRAObject(robj *o, size_t size_hint) {
     /* GCRA is a single allocation of a long long thus way smaller than a
@@ -887,6 +925,7 @@ void dismissObject(robj *o, size_t size_hint) {
         case OBJ_GCRA: dismissGCRAObject(o, size_hint); break;
 #endif
         case OBJ_ARRAY: dismissArrayObject(o, size_hint); break;
+        case OBJ_WASM: dismissWasmBlobObject(o, size_hint); break;
         default: break;
     }
 #else
@@ -1012,6 +1051,7 @@ size_t getObjectLength(robj *o) {
         case OBJ_GCRA: return gcraObjectLength(o);
 #endif
         case OBJ_ARRAY: return arCount(o->ptr);
+        case OBJ_WASM: return sdslen(((wasmBlob *)o->ptr)->payload);
         default: return 0;
     }
 }
@@ -1335,7 +1375,8 @@ size_t kvobjComputeSize(robj *key, kvobj *o, size_t sample_size, int dbid) {
 #ifdef ENABLE_GCRA
         o->type == OBJ_GCRA ||
 #endif
-        o->type == OBJ_ARRAY)
+        o->type == OBJ_ARRAY ||
+        o->type == OBJ_WASM)
     {
         return kvobjAllocSize(o);
     } else if (o->type == OBJ_MODULE) {
@@ -1382,6 +1423,12 @@ size_t kvobjAllocSize(kvobj *o) {
     } else if (o->type == OBJ_ARRAY) {
         redisArray *ar = o->ptr;
         asize += ar->alloc_size;
+    } else if (o->type == OBJ_WASM) {
+        wasmBlob *blob = o->ptr;
+        asize += zmalloc_size(blob);
+        asize += sdsAllocSize(blob->owner);
+        asize += sdsAllocSize(blob->type);
+        asize += sdsAllocSize(blob->payload);
     } else if (o->type == OBJ_MODULE) {
         /* TODO: Provide moduleGetAllocSize() module API for O(1) allocation size retrieval */
     }

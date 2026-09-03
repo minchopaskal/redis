@@ -31,8 +31,24 @@ src/redis-cli FCALL go_get 1 my-key
 ```
 
 `go_set` invokes Redis `SET` through the host ABI, while `go_get` invokes `GET`
-and forwards its validated RESP reply. The SDK targets `wasm-unknown`; the
-engine calls TinyGo's optional `_initialize` export before `redis_init`.
+and forwards its validated RESP reply.
 
-The PoC does not implement `OBJ_WASM` or blob imports. Go functions currently
-store data through ordinary Redis commands and data types.
+The sample also registers a `binary_tree` blob type. Its tree is a Go pointer
+structure serialized as a pre-order binary stream with explicit nil markers:
+
+```sh
+src/redis-cli FCALL tree_create 1 my-tree 8 3 10 1 6 14 4 7 13
+src/redis-cli TYPE my-tree
+# wasm-blob
+src/redis-cli FCALL tree_contains 1 my-tree 7
+# 1
+src/redis-cli FCALL tree_insert 1 my-tree 9
+```
+
+The blob SDK exposes `RegisterBlobType`, `BlobLen`, `BlobRead`, and `BlobWrite`.
+Redis persists the module SHA-256 owner digest, type, and payload. Reads and
+writes require the same module bytes and registered type; changing only the
+user-controlled library name cannot claim another module's blobs.
+
+The SDK targets `wasm-unknown`; the engine calls TinyGo's optional
+`_initialize` export before `redis_init`.

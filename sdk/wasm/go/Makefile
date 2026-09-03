@@ -1,5 +1,5 @@
 TINYGO ?= tinygo
-TINYGO_FLAGS ?= -target=wasm-unknown -scheduler=none -gc=leaking -panic=trap -no-debug
+TINYGO_FLAGS ?= -target=wasm-unknown -scheduler=none -gc=conservative -panic=trap -no-debug
 SAMPLE := example/redis-go-example.wasm
 
 .PHONY: all sample clean
