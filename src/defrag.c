@@ -1244,6 +1244,18 @@ void defragKey(defragKeysCtx *ctx, dictEntry *de, dictEntryLink link) {
         defragModule(ctx,db, ob);
     } else if (ob->type == OBJ_ARRAY) {
         defragArray(ctx, ob);
+    } else if (ob->type == OBJ_WASM) {
+        wasmBlob *blob = ob->ptr;
+        wasmBlob *newblob = activeDefragAlloc(blob);
+        if (newblob) {
+            ob->ptr = blob = newblob;
+        }
+        sds newsds = activeDefragSds(blob->owner);
+        if (newsds) blob->owner = newsds;
+        newsds = activeDefragSds(blob->type);
+        if (newsds) blob->type = newsds;
+        newsds = activeDefragSds(blob->payload);
+        if (newsds) blob->payload = newsds;
     } else {
         serverPanic("Unknown object type");
     }

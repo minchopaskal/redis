@@ -269,6 +269,13 @@ void xorObjectDigest(redisDb *db, robj *keyobj, unsigned char *digest, robj *o) 
     } else if (o->type == OBJ_GCRA) {
         mixGCRAObjectDigest(digest, o);
 #endif
+    } else if (o->type == OBJ_WASM) {
+        wasmBlob *blob = o->ptr;
+        mixDigest(digest, blob->owner, sdslen(blob->owner));
+        mixDigest(digest, "\0", 1);
+        mixDigest(digest, blob->type, sdslen(blob->type));
+        mixDigest(digest, "\0", 1);
+        mixDigest(digest, blob->payload, sdslen(blob->payload));
     } else if (o->type == OBJ_MODULE) {
         RedisModuleDigest md = {{0},{0},keyobj,db->id};
         moduleValue *mv = o->ptr;
@@ -1359,6 +1366,10 @@ void serverLogObjectDebugInfo(const robj *o) {
         serverLog(LL_WARNING, "GCRA object: %lld", (long long)o->ptr);
 #endif
 #endif
+    } else if (o->type == OBJ_WASM) {
+        wasmBlob *blob = o->ptr;
+        serverLog(LL_WARNING, "WASM blob owner/type/payload lengths: %zu/%zu/%zu",
+                  sdslen(blob->owner), sdslen(blob->type), sdslen(blob->payload));
     }
 #endif
 }
