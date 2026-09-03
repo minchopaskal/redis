@@ -155,6 +155,14 @@ start_server {tags {"scripting wasm"}} {
         assert_equal {C list updated} [r fcall c_list_push 1 c-list fourth]
         assert_equal 4 [r fcall c_list_len 1 c-list]
     }
+
+    test {WASM C++ SDK - templated flat-record blob example} {
+        set payload [sdk_wasm_payload "sdk/wasm/cpp/example/cpp-flat-record.wasm" cppexample]
+        assert_equal cppexample [r function load $payload]
+        assert_equal {C++ record stored} [r fcall cpp_record_set 1 cpp-record 42 10 20 30 7]
+        assert_equal wasm-blob [r type cpp-record]
+        assert_equal 60 [r fcall cpp_record_sum 1 cpp-record]
+    }
 }
 
 start_server {tags {"scripting wasm repl external:skip"}} {
