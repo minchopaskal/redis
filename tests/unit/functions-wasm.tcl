@@ -171,6 +171,19 @@ start_server {tags {"scripting wasm"}} {
         assert_equal 1 [r fcall js_incr 1 js-counter]
         assert_equal 2 [r fcall js_incr 1 js-counter]
     }
+
+    test {WASM Rust SDK - custom open-addressed hashmap blob example} {
+        set payload [sdk_wasm_payload "sdk/wasm/rust/example/rust-hashmap.wasm" rustexample]
+        assert_equal rustexample [r function load $payload]
+        assert_equal {Rust hashmap created} [r fcall rust_map_create 1 rust-map]
+        assert_equal {Rust hashmap updated} [r fcall rust_map_set 1 rust-map 10 100]
+        # 10 and 26 collide modulo the example's 16-slot table.
+        assert_equal {Rust hashmap updated} [r fcall rust_map_set 1 rust-map 26 260]
+        assert_equal 100 [r fcall rust_map_get 1 rust-map 10]
+        assert_equal 260 [r fcall rust_map_get 1 rust-map 26]
+        assert_equal 2 [r fcall rust_map_len 1 rust-map]
+        assert_equal wasm-blob [r type rust-map]
+    }
 }
 
 start_server {tags {"scripting wasm repl external:skip"}} {
