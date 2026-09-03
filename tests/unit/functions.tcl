@@ -300,6 +300,7 @@ start_server {tags {"scripting"}} {
             r function load [get_function_code lua test$i test$i {local a = 1 while true do a = a + 1 end}]
         }
         assert_morethan [s used_memory_vm_functions] 100000
+        set expected_lazyfreed [expr {1000 + [dict size [dict get [r function stats] engines]]}]
         r config resetstat
         r function flush async
         assert_lessthan [s used_memory_vm_functions] 40000
@@ -309,11 +310,11 @@ start_server {tags {"scripting"}} {
         while {1} {
             # Tests for race conditions between async function flushes and main thread Lua VM operations.
             r function load REPLACE [get_function_code lua test test {local a = 1 while true do a = a + 1 end}]
-            if {[s lazyfreed_objects] == 1001 || [expr {[clock seconds] - $start_time}] > 5} {
+            if {[s lazyfreed_objects] == $expected_lazyfreed || [expr {[clock seconds] - $start_time}] > 5} {
                 break
             }
         }
-        if {[s lazyfreed_objects] != 1001} {
+        if {[s lazyfreed_objects] != $expected_lazyfreed} {
             error "Timeout or unexpected number of lazyfreed_objects: [s lazyfreed_objects]"
         }
         assert_match {{library_name test engine LUA functions {{name test description {} flags {}}}}} [r function list]
@@ -1169,18 +1170,18 @@ start_server {tags {"scripting"}} {
             redis.register_function('f3', function() return 1 end)
         }
 
-        r function stats
-    } {running_script {} engines {LUA {libraries_count 2 functions_count 3}}}
+        dict get [r function stats] engines LUA
+    } {libraries_count 2 functions_count 3}
 
     test {FUNCTION - function stats reloaded correctly from rdb} {
         r debug reload
-        r function stats
-    } {running_script {} engines {LUA {libraries_count 2 functions_count 3}}} {needs:debug}
+        dict get [r function stats] engines LUA
+    } {libraries_count 2 functions_count 3} {needs:debug}
 
     test {FUNCTION - function stats delete library} {
         r function delete test1
-        r function stats
-    } {running_script {} engines {LUA {libraries_count 1 functions_count 1}}}
+        dict get [r function stats] engines LUA
+    } {libraries_count 1 functions_count 1}
 
     test {FUNCTION - test function stats on loading failure} {
         r FUNCTION FLUSH
@@ -1196,13 +1197,13 @@ start_server {tags {"scripting"}} {
         assert_match "*Library 'test1' already exists*" $e
         
 
-        r function stats
-    } {running_script {} engines {LUA {libraries_count 1 functions_count 2}}}
+        dict get [r function stats] engines LUA
+    } {libraries_count 1 functions_count 2}
 
     test {FUNCTION - function stats cleaned after flush} {
         r function flush
-        r function stats
-    } {running_script {} engines {LUA {libraries_count 0 functions_count 0}}}
+        dict get [r function stats] engines LUA
+    } {libraries_count 0 functions_count 0}
 
     test {FUNCTION - function test empty engine} {
          catch {r function load replace {#! name=test

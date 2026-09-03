@@ -6,6 +6,8 @@ should be provided by the operating system.
 * **linenoise** is a readline replacement. It is developed by the same authors of Redis but is managed as a separated project and updated as needed.
 * **lua** is Lua 5.1 with minor changes for security and additional libraries.
 * **hdr_histogram** Used for per-command latency tracking histograms.
+* **WAMR** is the WebAssembly Micro Runtime used by the optional
+  `BUILD_WASM=yes` Redis Functions engine.
 
 How to upgrade the above dependencies
 ===
@@ -103,4 +105,14 @@ We use a customized version based on master branch commit e4448cf6d1cd08fff51981
 1. Compare all changes under /hdr_histogram directory to upstream master commit e4448cf6d1cd08fff519812d3b1e58bd5a94ac42
 2. Copy updated files from newer version onto files in /hdr_histogram.
 3. Apply the changes from 1 above to the updated files.
+
+WAMR
+---
+
+The optional WASM Functions proof of concept vendors WAMR release
+`WAMR-2.4.5`. To update it, replace `deps/wamr` with the corresponding upstream
+release archive from https://github.com/bytecodealliance/wasm-micro-runtime and
+verify the classic-interpreter build options in `deps/Makefile`. WAMR is kept as
+a subtree/copy rather than a git submodule so Redis source archives remain
+self-contained.
 

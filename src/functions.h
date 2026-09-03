@@ -119,6 +119,9 @@ void functionsLibCtxSwapWithCurrent(functionsLibCtx *lib_ctx);
 int functionLibCreateFunction(sds name, void *function, functionLibInfo *li, sds desc, uint64_t f_flags, sds *err);
 
 int luaEngineInitEngine(void);
+#ifdef BUILD_WASM
+int wasmEngineInitEngine(void);
+#endif
 int functionsInit(void);
 void functionsFree(functionsLibCtx *lib_ctx, dict *engs);
 
