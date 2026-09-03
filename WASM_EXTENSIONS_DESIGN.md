@@ -12,7 +12,9 @@ The initial implementation is intentionally narrower than the complete design:
   execution is capped at 10 million instructions, and calls at 100 million.
 - A module must export `memory`, `redis_abi_version() -> i32` (returning `1`),
   and `redis_init() -> i32` (returning `0` on success). Registered function
-  exports have the signature `() -> i32`, where zero means success.
+  exports have the signature `() -> i32`, where zero means success. If a
+  module exports `_initialize() -> void` (as TinyGo reactor modules do), Redis
+  invokes it once before the ABI and registration exports.
 - Packed input and command buffers are little-endian: a `u32` item count,
   followed by repeated `u32 byte_length` and raw byte payload pairs. Invocation
   input contains keys first, followed by arguments; `keys_count()` identifies
@@ -30,6 +32,8 @@ The initial implementation is intentionally narrower than the complete design:
   `FUNCTION DUMP`/`RESTORE`. A replica loading such a library must also have
   `BUILD_WASM=yes`; the ordinary command effects produced by an invocation do
   not require WASM to replay.
+- A proof-of-concept TinyGo SDK and executable example live under
+  `sdk/wasm/go`.
 
 ## 1. Integration
 

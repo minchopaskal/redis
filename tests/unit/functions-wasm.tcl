@@ -5,6 +5,13 @@ proc wasm_functions_payload {{name wasmlib}} {
     return "#!wasm name=$name\n$module"
 }
 
+proc go_wasm_functions_payload {} {
+    set fp [open "sdk/wasm/go/example/redis-go-example.wasm" rb]
+    set module [read $fp]
+    close $fp
+    return "#!wasm name=goexample\n$module"
+}
+
 start_server {tags {"scripting wasm"}} {
     if {![dict exists [r function stats] engines WASM]} {
         return
@@ -76,6 +83,12 @@ start_server {tags {"scripting wasm"}} {
         catch {r function load replace "#!wasm name=wasmlib\nnot wasm"} err
         assert_match {*Error loading WebAssembly module*} $err
         assert_equal {hello from wasm} [r fcall hello 0]
+    }
+
+    test {WASM FUNCTION - TinyGo SDK sample executes Redis commands} {
+        assert_equal goexample [r function load [go_wasm_functions_payload]]
+        assert_equal {stored by Go} [r fcall go_set 1 go:key {value from go}]
+        assert_equal {value from go} [r fcall go_get 1 go:key]
     }
 }
 

@@ -444,6 +444,13 @@ static int validateNoArgsI32(wasmLibraryCtx *library, wasm_function_inst_t funct
     return result_type == WASM_I32 ? C_OK : C_ERR;
 }
 
+static int validateNoArgsVoid(wasmLibraryCtx *library, wasm_function_inst_t function) {
+    return function &&
+           wasm_func_get_param_count(function, library->instance) == 0 &&
+           wasm_func_get_result_count(function, library->instance) == 0
+        ? C_OK : C_ERR;
+}
+
 static int callNoArgsI32(wasmLibraryCtx *library, wasm_function_inst_t function,
                          int instruction_limit, int32_t *result, sds *err)
 {
@@ -456,6 +463,19 @@ static int callNoArgsI32(wasmLibraryCtx *library, wasm_function_inst_t function,
         return C_ERR;
     }
     *result = wasm_result.of.i32;
+    return C_OK;
+}
+
+static int callNoArgsVoid(wasmLibraryCtx *library, wasm_function_inst_t function,
+                          int instruction_limit, sds *err)
+{
+    wasm_runtime_clear_exception(library->instance);
+    wasm_runtime_set_instruction_count_limit(library->exec_env, instruction_limit);
+    if (!wasm_runtime_call_wasm_a(library->exec_env, function, 0, NULL, 0, NULL)) {
+        const char *exception = wasm_runtime_get_exception(library->instance);
+        *err = sdscatprintf(sdsempty(), "%s", exception ? exception : "unknown WebAssembly trap");
+        return C_ERR;
+    }
     return C_OK;
 }
 
@@ -802,6 +822,20 @@ static int wasmEngineCreate(void *engine_ctx, functionLibInfo *li, sds blob,
     wasm_runtime_set_user_data(library->exec_env, &host_ctx);
     int32_t result;
     sds call_error = NULL;
+    wasm_function_inst_t initialize = wasm_runtime_lookup_function(library->instance, "_initialize");
+    if (initialize) {
+        if (validateNoArgsVoid(library, initialize) != C_OK) {
+            *err = sdsnew("Optional WebAssembly _initialize export must have type () -> void");
+            wasmHostCtxFree(&host_ctx);
+            goto error;
+        }
+        if (callNoArgsVoid(library, initialize, WASM_LOAD_INSTRUCTION_LIMIT, &call_error) != C_OK) {
+            *err = sdscatprintf(sdsempty(), "Error running WebAssembly _initialize: %s", call_error);
+            sdsfree(call_error);
+            wasmHostCtxFree(&host_ctx);
+            goto error;
+        }
+    }
     if (callNoArgsI32(library, abi, WASM_LOAD_INSTRUCTION_LIMIT, &result, &call_error) != C_OK) {
         *err = sdscatprintf(sdsempty(), "Error reading WebAssembly ABI version: %s", call_error);
         sdsfree(call_error);
