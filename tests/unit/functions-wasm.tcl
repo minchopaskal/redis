@@ -24,6 +24,61 @@ proc sdk_wasm_payload {path name} {
     return "#!wasm name=$name\n$module"
 }
 
+# Redirect an integration fixture export to another exported function (or
+# memory, for wrong-kind tests). A '-' hides the export without resizing the
+# binary. This keeps tests independent of a locally installed WAT compiler.
+proc wasm_integration_payload {{overrides {}}} {
+    set fp [open tests/assets/wasm/integration.wasm rb]
+    set original [read $fp]
+    close $fp
+    # Locate the export section, so names in data segments cannot also match.
+    set offset 8
+    set exports {}
+    while {$offset < [string length $original]} {
+        binary scan $original @${offset}cu section
+        incr offset
+        set size 0
+        set shift 0
+        while {1} {
+            binary scan $original @${offset}cu byte
+            incr offset
+            set size [expr {$size | (($byte & 127) << $shift)}]
+            if {!($byte & 128)} break
+            incr shift 7
+        }
+        if {$section == 7} {
+            set exports [string range $original $offset [expr {$offset + $size - 1}]]
+            break
+        }
+        incr offset $size
+    }
+    assert {$exports ne {}}
+    set export_offset $offset
+    set module $original
+    foreach {name target} $overrides {
+        set prefix "[binary format c [string length $name]]$name"
+        set offset [string first $prefix $exports]
+        assert {$offset >= 0}
+        assert_equal $offset [string last $prefix $exports]
+        incr offset $export_offset
+        if {$target eq "-"} {
+            set module [string replace $module [expr {$offset + 1}] \
+                [expr {$offset + [string length $name]}] [string repeat x [string length $name]]]
+        } else {
+            set target_prefix "[binary format c [string length $target]]$target"
+            set target_offset [string first $target_prefix $exports]
+            assert {$target_offset >= 0}
+            assert_equal $target_offset [string last $target_prefix $exports]
+            incr target_offset $export_offset
+            set source [expr {$target_offset + [string length $target_prefix]}]
+            set dest [expr {$offset + [string length $prefix]}]
+            set module [string replace $module $dest [expr {$dest + 1}] \
+                [string range $original $source [expr {$source + 1}]]]
+        }
+    }
+    return "#!wasm name=abi\n$module"
+}
+
 start_server {tags {"scripting wasm"}} {
     if {![dict exists [r function stats] engines WASM]} {
         return
@@ -95,6 +150,96 @@ start_server {tags {"scripting wasm"}} {
         catch {r function load replace "#!wasm name=wasmlib\nnot wasm"} err
         assert_match {*Error loading WebAssembly module*} $err
         assert_equal {hello from wasm} [r fcall hello 0]
+    }
+
+    test {WASM integration - marker is never called, initialize precedes main, start is skipped} {
+        assert_equal abi [r function load [wasm_integration_payload]]
+        assert_equal OK [r abi_init]
+        assert_equal OK [r fcall abi_init 0]
+        assert_equal OK [r fcall abi_main 0]
+        assert_error {*Function not found*} {r fcall abi_start 0}
+        r function delete abi
+    }
+
+    test {WASM integration - initialize without main is sufficient} {
+        r function load [wasm_integration_payload {main - _start main_param}]
+        assert_equal OK [r abi_init]
+        assert_error {*Function not found*} {r fcall abi_main 0}
+        r function delete abi
+    }
+
+    test {WASM integration - start is the fallback and main is ignored without initialize} {
+        foreach main {main trap_main main_param} {
+            r function load [wasm_integration_payload [list _initialize - main $main]]
+            assert_equal OK [r fcall abi_start 0]
+            assert_error {*Function not found*} {r fcall abi_init 0}
+            assert_error {*Function not found*} {r fcall abi_main 0}
+            r function delete abi
+        }
+    }
+
+    test {WASM integration - missing and unsupported markers reject obsolete modules} {
+        assert_error {*must export redis_wasm_abi_version_0_1_0*} {
+            r function load [wasm_integration_payload {redis_wasm_abi_version_0_1_0 -}]
+        }
+        assert_error {*Unsupported WebAssembly ABI marker*} {
+            r function load [string map {redis_wasm_abi_version_0_1_0 redis_wasm_abi_version_9_9_9} \
+                [wasm_integration_payload]]
+        }
+        assert_equal {{}} [r command info abi_init]
+    }
+
+    test {WASM integration - marker must be a no-argument void function} {
+        foreach target {run void_param i64_result memory} {
+            assert_error {*redis_wasm_abi_version_0_1_0 export must have type () -> void*} {
+                r function load [wasm_integration_payload [list redis_wasm_abi_version_0_1_0 $target]]
+            }
+        }
+    }
+
+    test {WASM integration - obsolete init and a standalone main do not replace native startup} {
+        assert_error {*must export _initialize or _start*} {
+            r function load [wasm_integration_payload {_initialize - _start -}]
+        }
+    }
+
+    foreach entrypoint {_initialize _start main} {
+        test "WASM integration - validates $entrypoint signature before startup" {
+            set overrides {}
+            if {$entrypoint eq "_start"} {set overrides {_initialize -}}
+            set targets {run void_param i64_result memory}
+            if {$entrypoint eq "main"} {set targets {run trap_void main_param main_result memory}}
+            foreach target $targets {
+                assert_error "*$entrypoint export must have type*" {
+                    r function load [wasm_integration_payload [concat $overrides [list $entrypoint $target]]]
+                }
+                assert_equal {{}} [r command info abi_init]
+                assert_equal {} [r function list libraryname abi]
+            }
+        }
+
+        test "WASM integration - $entrypoint traps and runaway loops abort registration" {
+            set overrides {}
+            if {$entrypoint eq "_start"} {set overrides {_initialize -}}
+            set suffix [expr {$entrypoint eq "main" ? "main" : "void"}]
+            foreach {target error} [list trap_$suffix unreachable spin_$suffix instruction] {
+                assert_error "*Error running WebAssembly $entrypoint*$error*" {
+                    r function load [wasm_integration_payload [concat $overrides [list $entrypoint $target]]]
+                }
+                assert_equal {{}} [r command info abi_init]
+                assert_equal {} [r function list libraryname abi]
+            }
+        }
+    }
+
+    test {WASM integration - failed replacement preserves old library and direct command} {
+        r function load [wasm_integration_payload]
+        assert_error {*Error running WebAssembly main*unreachable*} {
+            r function load replace [wasm_integration_payload {main trap_main}]
+        }
+        assert_equal OK [r abi_init]
+        assert_equal OK [r fcall abi_main 0]
+        r function delete abi
     }
 
     test {WASM FUNCTION - TinyGo SDK sample executes Redis commands} {

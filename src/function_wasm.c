@@ -11,8 +11,8 @@
  * WAMR-backed Redis Functions engine.
  *
  * This is intentionally a small proof of concept. It implements the binary
- * module lifecycle and the basic host ABI, but not function flags or the
- * proposed WASM-owned keyspace blob type.
+ * module lifecycle, the basic host ABI and WASM-owned blobs, but not function
+ * flags.
  */
 
 #include "functions.h"
@@ -25,7 +25,8 @@
 #include <string.h>
 
 #define WASM_ENGINE_NAME "WASM"
-#define WASM_ABI_VERSION 1
+#define WASM_ABI_PREFIX "redis_wasm_abi_version_"
+#define WASM_ABI_MARKER WASM_ABI_PREFIX "0_1_0"
 #define WASM_RUNTIME_POOL_SIZE (64U * 1024U * 1024U)
 #define WASM_MAX_MEMORY_PAGES 128U /* 8 MiB at the WebAssembly 64 KiB page size. */
 #define WASM_EXEC_STACK_SIZE (64U * 1024U)
@@ -473,11 +474,65 @@ static int validateNoArgsI32(wasmLibraryCtx *library, wasm_function_inst_t funct
     return result_type == WASM_I32 ? C_OK : C_ERR;
 }
 
-static int validateNoArgsVoid(wasmLibraryCtx *library, wasm_function_inst_t function) {
-    return function &&
-           wasm_func_get_param_count(function, library->instance) == 0 &&
-           wasm_func_get_result_count(function, library->instance) == 0
-        ? C_OK : C_ERR;
+/* Validate integration exports before instantiation can execute guest code.
+ * The ABI version is encoded in the marker's name, never its return value. */
+static int wasmValidateStartupExport(wasm_export_t *export, int is_main, sds *err) {
+    if (export->kind == WASM_IMPORT_EXPORT_KIND_FUNC) {
+        wasm_func_type_t type = export->u.func_type;
+        if (wasm_func_type_get_param_count(type) == (is_main ? 2U : 0U) &&
+            wasm_func_type_get_result_count(type) == (is_main ? 1U : 0U) &&
+            (!is_main || (wasm_func_type_get_param_valkind(type, 0) == WASM_I32 &&
+                          wasm_func_type_get_param_valkind(type, 1) == WASM_I32 &&
+                          wasm_func_type_get_result_valkind(type, 0) == WASM_I32)))
+        {
+            return C_OK;
+        }
+    }
+    *err = sdscatprintf(sdsempty(), "WebAssembly %s export must have type %s",
+                       export->name, is_main ? "(i32, i32) -> i32" : "() -> void");
+    return C_ERR;
+}
+
+static int wasmValidateIntegration(wasm_module_t module, const char **entrypoint,
+                                  int *has_main, sds *err)
+{
+    wasm_export_t abi = {0}, initialize = {0}, start = {0}, main_export = {0};
+    int32_t count = wasm_runtime_get_export_count(module);
+    for (int32_t i = 0; i < count; i++) {
+        wasm_export_t export;
+        wasm_runtime_get_export_type(module, i, &export);
+        if (!strncmp(export.name, WASM_ABI_PREFIX, sizeof(WASM_ABI_PREFIX) - 1)) {
+            if (strcmp(export.name, WASM_ABI_MARKER)) {
+                *err = sdscatprintf(sdsempty(), "Unsupported WebAssembly ABI marker: %s", export.name);
+                return C_ERR;
+            }
+            abi = export;
+        } else if (!strcmp(export.name, "_initialize")) {
+            initialize = export;
+        } else if (!strcmp(export.name, "_start")) {
+            start = export;
+        } else if (!strcmp(export.name, "main")) {
+            main_export = export;
+        }
+    }
+    if (!abi.name) {
+        *err = sdsnew("WebAssembly module must export " WASM_ABI_MARKER " as () -> void");
+        return C_ERR;
+    }
+    if (wasmValidateStartupExport(&abi, 0, err) != C_OK) return C_ERR;
+
+    /* Proxy-Wasm integration order: _initialize then optional main(0, 0),
+     * or _start when _initialize is absent. Ignore unused entry points. */
+    wasm_export_t *init = initialize.name ? &initialize : &start;
+    if (!init->name) {
+        *err = sdsnew("WebAssembly module must export _initialize or _start as () -> void");
+        return C_ERR;
+    }
+    if (wasmValidateStartupExport(init, 0, err) != C_OK) return C_ERR;
+    *entrypoint = init->name;
+    *has_main = initialize.name && main_export.name;
+    if (*has_main && wasmValidateStartupExport(&main_export, 1, err) != C_OK) return C_ERR;
+    return C_OK;
 }
 
 static int callNoArgsI32(wasmLibraryCtx *library, wasm_function_inst_t function,
@@ -495,16 +550,25 @@ static int callNoArgsI32(wasmLibraryCtx *library, wasm_function_inst_t function,
     return C_OK;
 }
 
-static int callNoArgsVoid(wasmLibraryCtx *library, wasm_function_inst_t function,
-                          int instruction_limit, sds *err)
-{
+static int wasmCallStartup(wasmLibraryCtx *library, const char *name, sds *err) {
+    int is_main = !strcmp(name, "main");
+    wasm_function_inst_t function = wasm_runtime_lookup_function(library->instance, name);
+    wasm_val_t args[2] = {{.kind = WASM_I32, .of.i32 = 0}, {.kind = WASM_I32, .of.i32 = 0}};
+    wasm_val_t result = {.kind = WASM_I32};
     wasm_runtime_clear_exception(library->instance);
-    wasm_runtime_set_instruction_count_limit(library->exec_env, instruction_limit);
-    if (!wasm_runtime_call_wasm_a(library->exec_env, function, 0, NULL, 0, NULL)) {
+    wasm_runtime_set_instruction_count_limit(library->exec_env, WASM_LOAD_INSTRUCTION_LIMIT);
+    if (!wasm_runtime_call_wasm_a(library->exec_env, function, is_main ? 1 : 0,
+                                is_main ? &result : NULL, is_main ? 2 : 0,
+                                is_main ? args : NULL))
+    {
         const char *exception = wasm_runtime_get_exception(library->instance);
-        *err = sdscatprintf(sdsempty(), "%s", exception ? exception : "unknown WebAssembly trap");
+        wasmHostCtx *ctx = wasmGetHostCtx(library->exec_env);
+        *err = sdscatprintf(sdsempty(), "Error running WebAssembly %s: %s", name,
+                           exception ? exception : "unknown WebAssembly trap");
+        if (ctx->last_error) *err = sdscatprintf(*err, " (%s)", ctx->last_error);
         return C_ERR;
     }
+    /* main's result is unused, just like its two arguments. */
     return C_OK;
 }
 
@@ -746,6 +810,24 @@ static int32_t wasmRegisterFunction(wasm_exec_env_t exec_env, int32_t name_ptr,
     return 0;
 }
 
+static int32_t wasmCreateCommand(wasm_exec_env_t env, int32_t name_ptr, int32_t name_len,
+                                 int32_t export_ptr, int32_t export_len, int32_t arity, int32_t numkeys) {
+    if (wasmRegisterFunction(env, name_ptr, name_len, export_ptr, export_len) != 0)
+        return -1;
+    wasmHostCtx *ctx = wasmGetHostCtx(env);
+    void *name_data;
+    if (wasmGetGuestBuffer(env, name_ptr, name_len, &name_data) != C_OK) return -1;
+    sds name = sdsnewlen(name_data, name_len);
+    sds err = NULL;
+    int result = functionLibDeclareCommand(ctx->li, name, arity, numkeys, &err);
+    sdsfree(name);
+    if (result != C_OK) {
+        wasmSetLastErrorSds(ctx, err);
+        return -1;
+    }
+    return 0;
+}
+
 static int wasmValidBlobTypeName(sds name) {
     if (sdslen(name) == 0)
         return C_ERR;
@@ -902,14 +984,14 @@ static void wasmSetReplyError(wasmHostCtx *ctx, sds reply, const char *fallback)
     }
 }
 
-static int32_t wasmBlobWrite(wasm_exec_env_t exec_env, int32_t key_ptr,
+static int32_t wasmBlobWriteWithExpiry(wasm_exec_env_t exec_env, int32_t key_ptr,
                              int32_t key_len, int32_t type_ptr, int32_t type_len,
-                             int32_t src, int32_t src_len)
+                             int32_t src, int32_t src_len, int64_t expire_at)
 {
     wasmHostCtx *ctx;
     sds key, type;
     void *payload_data;
-    if (src < 0 || src_len < 0 ||
+    if (src < 0 || src_len < 0 || expire_at < 0 ||
         wasmGetBlobLookupArgs(exec_env, key_ptr, key_len, type_ptr, type_len,
                               &ctx, &key, &type) != C_OK)
         return -1;
@@ -929,16 +1011,18 @@ static int32_t wasmBlobWrite(wasm_exec_env_t exec_env, int32_t key_ptr,
     decrRefCount(blob_object);
     sdsfree(key);
 
-    robj **argv = zmalloc(sizeof(*argv) * 5);
+    int argc = expire_at ? 6 : 5;
+    robj **argv = zmalloc(sizeof(*argv) * argc);
     argv[0] = createStringObject("RESTORE", 7);
     argv[1] = key_object;
-    argv[2] = createStringObject("0", 1);
+    argv[2] = createStringObjectFromLongLong(expire_at);
     argv[3] = createStringObject(dump, sdslen(dump));
     argv[4] = createStringObject("REPLACE", 7);
+    if (expire_at) argv[5] = createStringObject("ABSTTL", 6);
     sdsfree(dump);
 
     sds reply = NULL;
-    if (wasmRunRedisCommand(ctx, argv, 5, &reply) != C_OK)
+    if (wasmRunRedisCommand(ctx, argv, argc, &reply) != C_OK)
         return -1;
     if (!reply || sdslen(reply) == 0 || reply[0] == '-' || reply[0] == '!') {
         wasmSetReplyError(ctx, reply, "Failed writing WASM blob");
@@ -947,6 +1031,11 @@ static int32_t wasmBlobWrite(wasm_exec_env_t exec_env, int32_t key_ptr,
     }
     sdsfree(reply);
     return 0;
+}
+
+static int32_t wasmBlobWrite(wasm_exec_env_t env, int32_t key, int32_t klen,
+                             int32_t type, int32_t tlen, int32_t src, int32_t len) {
+    return wasmBlobWriteWithExpiry(env, key, klen, type, tlen, src, len, 0);
 }
 
 #pragma GCC diagnostic push
@@ -968,6 +1057,8 @@ static NativeSymbol wasmNativeSymbols[] = {
     {"blob_len", wasmBlobLen, "(iiii)i", NULL},
     {"blob_read", wasmBlobRead, "(iiiiiii)i", NULL},
     {"blob_write", wasmBlobWrite, "(iiiiii)i", NULL},
+    {"blob_write_expire", wasmBlobWriteWithExpiry, "(iiiiiiI)i", NULL},
+    {"create_command", wasmCreateCommand, "(iiiiii)i", NULL},
 };
 #pragma GCC diagnostic pop
 
@@ -1017,6 +1108,11 @@ static int wasmEngineCreate(void *engine_ctx, functionLibInfo *li, sds blob,
         goto error;
     }
 
+    const char *entrypoint;
+    int has_main;
+    if (wasmValidateIntegration(library->module, &entrypoint, &has_main, err) != C_OK)
+        goto error;
+
     InstantiationArgs args = {
         .default_stack_size = WASM_EXEC_STACK_SIZE,
         .host_managed_heap_size = 0,
@@ -1045,61 +1141,18 @@ static int wasmEngineCreate(void *engine_ctx, functionLibInfo *li, sds blob,
         goto error;
     }
 
-    wasm_function_inst_t abi = wasm_runtime_lookup_function(library->instance, "redis_abi_version");
-    wasm_function_inst_t init = wasm_runtime_lookup_function(library->instance, "redis_init");
-    if (validateNoArgsI32(library, abi) != C_OK || validateNoArgsI32(library, init) != C_OK) {
-        *err = sdsnew("WebAssembly module must export redis_abi_version and redis_init as () -> i32");
-        goto error;
-    }
-
     wasmHostCtx host_ctx = {
         .phase = WASM_HOST_LOAD,
         .library = library,
         .li = li,
     };
     wasm_runtime_set_user_data(library->exec_env, &host_ctx);
-    int32_t result;
-    sds call_error = NULL;
-    wasm_function_inst_t initialize = wasm_runtime_lookup_function(library->instance, "_initialize");
-    if (initialize) {
-        if (validateNoArgsVoid(library, initialize) != C_OK) {
-            *err = sdsnew("Optional WebAssembly _initialize export must have type () -> void");
-            wasmHostCtxFree(&host_ctx);
-            goto error;
-        }
-        if (callNoArgsVoid(library, initialize, WASM_LOAD_INSTRUCTION_LIMIT, &call_error) != C_OK) {
-            *err = sdscatprintf(sdsempty(), "Error running WebAssembly _initialize: %s", call_error);
-            sdsfree(call_error);
-            wasmHostCtxFree(&host_ctx);
-            goto error;
-        }
-    }
-    if (callNoArgsI32(library, abi, WASM_LOAD_INSTRUCTION_LIMIT, &result, &call_error) != C_OK) {
-        *err = sdscatprintf(sdsempty(), "Error reading WebAssembly ABI version: %s", call_error);
-        sdsfree(call_error);
-        wasmHostCtxFree(&host_ctx);
-        goto error;
-    }
-    if (result != WASM_ABI_VERSION) {
-        *err = sdscatprintf(sdsempty(), "Unsupported WebAssembly ABI version: %i", result);
-        wasmHostCtxFree(&host_ctx);
-        goto error;
-    }
-    if (callNoArgsI32(library, init, WASM_LOAD_INSTRUCTION_LIMIT, &result, &call_error) != C_OK) {
-        *err = sdscatprintf(sdsempty(), "Error running redis_init: %s", call_error);
-        sdsfree(call_error);
-        wasmHostCtxFree(&host_ctx);
-        goto error;
-    }
-    if (result != 0) {
-        *err = host_ctx.last_error
-            ? sdscatprintf(sdsempty(), "redis_init failed: %s", host_ctx.last_error)
-            : sdscatprintf(sdsempty(), "redis_init returned %i", result);
-        wasmHostCtxFree(&host_ctx);
-        goto error;
-    }
+    /* Both calls run in the same registration-only context. */
+    int result = wasmCallStartup(library, entrypoint, err);
+    if (result == C_OK && has_main) result = wasmCallStartup(library, "main", err);
     wasmHostCtxFree(&host_ctx);
     wasm_runtime_set_user_data(library->exec_env, NULL);
+    if (result != C_OK) goto error;
     wasmLibraryRelease(library); /* Registered functions now own the library. */
     return C_OK;
 

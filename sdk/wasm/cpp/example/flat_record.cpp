@@ -46,19 +46,16 @@ static bool parse_i32(Slice text, int32_t &out) {
     return true;
 }
 
-REDIS_WASM_EXPORT("redis_abi_version")
-int32_t redis_abi_version() {
-    return REDIS_WASM_ABI_VERSION;
-}
+REDIS_WASM_EXPORT(REDIS_WASM_ABI_MARKER)
+void redisWasmAbiVersion() {}
 
-REDIS_WASM_EXPORT("redis_init")
-int32_t redis_init() {
-    if (!record_type().register_type()) return 1;
+REDIS_WASM_EXPORT("_initialize")
+void recordInitialize() {
+    if (!record_type().register_type()) __builtin_trap();
     if (!redis::wasm::register_function("cpp_record_set", "cpp_record_set"))
-        return 2;
+        __builtin_trap();
     if (!redis::wasm::register_function("cpp_record_sum", "cpp_record_sum"))
-        return 3;
-    return 0;
+        __builtin_trap();
 }
 
 REDIS_WASM_EXPORT("cpp_record_set")

@@ -2137,6 +2137,8 @@ struct redisServer {
                                    modules share with each other. */
     dict *module_configs_queue; /* Unmapped configs are queued here, assumed to be module config. Applied after modules are loaded during startup or arguments to loadex. */
     list *loadmodule_queue;     /* List of modules to load at startup. */
+    list *loadextension_queue;  /* Absolute WASM paths configured for startup. */
+    sds extension_dir;         /* WASM autoload directory; empty disables scanning. */
     int module_pipe[2];         /* Pipe used to awake the event loop by module threads. */
     pid_t child_pid;            /* PID of current child */
     int child_type;             /* Type of current child */
@@ -3768,6 +3770,7 @@ int ACLAuthenticateUser(client *c, robj *username, robj *password, robj **err);
 int checkModuleAuthentication(client *c, robj *username, robj *password, robj **err);
 void addAuthErrReply(client *c, robj *err);
 unsigned long ACLGetCommandID(sds cmdname);
+struct redisCommand *ACLLookupCommand(const char *name);
 void ACLClearCommandID(void);
 user *ACLGetUserByName(const char *name, size_t namelen);
 /* ACL LOAD owner-resolution, exported for the Pub/Sub provenance reconciliation

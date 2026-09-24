@@ -90,6 +90,7 @@ typedef struct functionInfo {
     functionLibInfo* li; /* Pointer to the library created the function */
     sds desc;            /* Function description */
     uint64_t f_flags;    /* Function flags */
+    struct redisCommand *command; /* Optional direct command, with process lifetime metadata. */
 } functionInfo;
 
 /* Hold information about the specific library.
@@ -117,12 +118,12 @@ void functionsLibCtxClear(functionsLibCtx *lib_ctx);
 void functionsLibCtxSwapWithCurrent(functionsLibCtx *lib_ctx);
 
 int functionLibCreateFunction(sds name, void *function, functionLibInfo *li, sds desc, uint64_t f_flags, sds *err);
+int functionLibDeclareCommand(functionLibInfo *li, sds name, int arity, int numkeys, sds *err);
+void functionDirectCommand(client *c);
 
 int luaEngineInitEngine(void);
-#ifdef BUILD_WASM
-int wasmEngineInitEngine(void);
-#endif
 int functionsInit(void);
+void functionsLoadExtensions(void);
 void functionsFree(functionsLibCtx *lib_ctx, dict *engs);
 
 void createFunctionDumpPayload(rio *payload);

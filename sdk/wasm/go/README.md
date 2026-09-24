@@ -50,5 +50,9 @@ Redis persists the module SHA-256 owner digest, type, and payload. Reads and
 writes require the same module bytes and registered type; changing only the
 user-controlled library name cannot claim another module's blobs.
 
-The SDK targets `wasm-unknown`; the engine calls TinyGo's optional
-`_initialize` export before `redis_init`.
+The SDK targets `wasm-unknown`. The example exports the void marker
+`redis_wasm_abi_version_0_1_0`, which Redis inspects but never calls. Redis calls
+TinyGo's generated `_initialize` to set up the runtime, then the exported
+`main(i32, i32) -> i32` registration function with zero arguments. This is the
+`redisMain` Go function, not the empty Go `main()`. Its result is ignored;
+registration errors panic (compiled to traps), aborting the library load.

@@ -1,7 +1,5 @@
 #![no_std]
 
-pub const ABI_VERSION: i32 = 1;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
     Host,

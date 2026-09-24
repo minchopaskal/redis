@@ -8,12 +8,127 @@
  */
 
 #include "functions.h"
+#ifdef BUILD_WASM
+#include "function_wasm.h"
+#endif
 #include "sds.h"
 #include "dict.h"
 #include "adlist.h"
 #include "atomicvar.h"
+#include "sha256.h"
+#include <dirent.h>
+#include <sys/stat.h>
 
 #define LOAD_TIMEOUT_MS 500
+
+/* Startup extensions are reconciled after RDB/AOF loading. A content-derived
+ * library name makes identical persisted libraries and repeated directives
+ * idempotent; conflicting function names fail startup rather than replacing
+ * code that owns existing blobs. Configuration must remain available on each
+ * restart, including when the current AOF predates this extension. */
+static void functionsLoadExtension(const char *path) {
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        serverLog(LL_WARNING, "Cannot load extension %s: %s", path, strerror(errno));
+        exit(1);
+    }
+    sds binary = sdsempty();
+    char buffer[8192];
+    size_t n;
+    while ((n = fread(buffer, 1, sizeof(buffer), fp))) {
+        if (sdslen(binary) + n > 16 * 1024 * 1024) {
+            serverLog(LL_WARNING, "Extension %s exceeds 16 MiB", path);
+            fclose(fp);
+            exit(1);
+        }
+        binary = sdscatlen(binary, buffer, n);
+    }
+    int failed = ferror(fp);
+    fclose(fp);
+    if (failed || sdslen(binary) < 8 || memcmp(binary, "\0asm\1\0\0\0", 8)) {
+        serverLog(LL_WARNING, "Cannot read valid WASM extension %s", path);
+        exit(1);
+    }
+    SHA256_CTX ctx;
+    unsigned char digest[SHA256_BLOCK_SIZE];
+    sha256_init(&ctx);
+    sha256_update(&ctx, (unsigned char *)binary, sdslen(binary));
+    sha256_final(&ctx, digest);
+    sds name = sdsnew("wasm_");
+    for (size_t i = 0; i < sizeof(digest); i++)
+        name = sdscatprintf(name, "%02x", digest[i]);
+    sds code = sdscatprintf(sdsempty(), "#!wasm name=%s\n", name);
+    code = sdscatlen(code, binary, sdslen(binary));
+    sdsfree(binary);
+    dictEntry *entry = dictFind(functionsLibGet(), name);
+    functionLibInfo *existing = entry ? dictGetVal(entry) : NULL;
+    sds err = NULL;
+    sds loaded_name = NULL;
+    if (existing ? sdscmp(existing->code, code) != 0 :
+        (loaded_name = functionsCreateWithLibraryCtx(code, 0, &err,
+            functionsLibCtxGetCurrent(), LOAD_TIMEOUT_MS)) == NULL) {
+        serverLog(LL_WARNING, "Cannot load extension %s: %s", path,
+                  err ? err : "persisted library content conflicts with extension");
+        exit(1);
+    }
+    serverLog(LL_NOTICE, "Loaded extension %s as %s", path, name);
+    sdsfree(err);
+    sdsfree(loaded_name);
+    sdsfree(code);
+    sdsfree(name);
+}
+
+static int functionsExtensionFilter(const struct dirent *entry) {
+    size_t len = strlen(entry->d_name);
+    return len >= 5 && !strcmp(entry->d_name + len - 5, ".wasm");
+}
+
+/* Unlike alphasort, bytewise ordering does not depend on the server locale. */
+static int functionsExtensionCompare(const struct dirent **a, const struct dirent **b) {
+    return strcmp((*a)->d_name, (*b)->d_name);
+}
+
+static void functionsLoadExtensionDirectory(const char *directory) {
+    struct dirent **entries;
+    int count = scandir(directory, &entries, functionsExtensionFilter, functionsExtensionCompare);
+    if (count == -1) {
+        serverLog(LL_WARNING, "Cannot scan extension directory %s: %s", directory, strerror(errno));
+        exit(1);
+    }
+    for (int i = 0; i < count; i++) {
+        sds path = sdscatprintf(sdsempty(), "%s/%s", directory, entries[i]->d_name);
+        zlibc_free(entries[i]); /* scandir uses the system allocator. */
+        struct stat st;
+        if (stat(path, &st) == -1) {
+            serverLog(LL_WARNING, "Cannot stat extension %s: %s", path, strerror(errno));
+            exit(1);
+        }
+        /* Do not recurse, even into directories whose names end in .wasm. */
+        if (S_ISDIR(st.st_mode)) {
+            sdsfree(path);
+            continue;
+        }
+        if (!S_ISREG(st.st_mode)) {
+            serverLog(LL_WARNING, "Extension %s is not a regular file", path);
+            exit(1);
+        }
+        functionsLoadExtension(path);
+        sdsfree(path);
+    }
+    zlibc_free(entries);
+}
+
+void functionsLoadExtensions(void) {
+    if (sdslen(server.extension_dir))
+        functionsLoadExtensionDirectory(server.extension_dir);
+    if (!server.loadextension_queue) return;
+    listIter iter;
+    listNode *node;
+    listRewind(server.loadextension_queue, &iter);
+    while ((node = listNext(&iter))) {
+        functionsLoadExtension(listNodeValue(node));
+    }
+}
 
 typedef enum {
     restorePolicy_Flush, restorePolicy_Append, restorePolicy_Replace
@@ -102,6 +217,96 @@ static dict *engines = NULL;
 /* Libraries Ctx. */
 static functionsLibCtx *curr_functions_lib_ctx = NULL;
 
+/* Command metadata outlives libraries: MULTI and I/O queues can retain command
+ * pointers after FUNCTION DELETE/FLUSH. Intern immutable signatures by name,
+ * just like ACL IDs, and bound this PoC registry to 256 names per process.
+ * No guest code or functionInfo pointer is retained here. */
+static dict *function_commands;
+
+int functionLibDeclareCommand(functionLibInfo *li, sds name, int arity, int numkeys, sds *err) {
+    functionInfo *fi = dictFetchValue(li->functions, name);
+    if (!fi || strcasecmp(li->ei->name, "WASM") || sdslen(name) > 128 ||
+        !arity || arity == INT_MIN || numkeys < 0 || numkeys >= abs(arity)) {
+        *err = sdsnew("Invalid WASM command signature (arity includes command name; keys must lead arguments)");
+        return C_ERR;
+    }
+    struct redisCommand *existing = lookupCommandByCString(name);
+    struct redisCommand *original = ACLLookupCommand(name);
+    if ((existing && existing->proc != functionDirectCommand) ||
+        (original && original->proc != functionDirectCommand)) {
+        *err = sdscatprintf(sdsempty(), "Command '%s' already exists", name);
+        return C_ERR;
+    }
+    if (!function_commands) function_commands = dictCreate(&functionDictType);
+    struct redisCommand *cmd = dictFetchValue(function_commands, name);
+    if (cmd) {
+        int oldkeys = cmd->key_specs_num ? cmd->key_specs[0].fk.range.lastkey + 1 : 0;
+        if (cmd->arity != arity || oldkeys != numkeys) {
+            *err = sdsnew("WASM command arity and key positions cannot change until restart");
+            return C_ERR;
+        }
+    } else {
+        if (dictSize(function_commands) >= 256) {
+            *err = sdsnew("WASM command registry limit reached (256 names per process)");
+            return C_ERR;
+        }
+        cmd = zcalloc(sizeof(*cmd));
+        cmd->fullname = sdsdup(name);
+        sdstolower(cmd->fullname);
+        cmd->declared_name = cmd->fullname;
+        cmd->proc = functionDirectCommand;
+        cmd->arity = arity;
+        cmd->group = COMMAND_GROUP_SCRIPTING;
+        cmd->flags = CMD_NOSCRIPT | CMD_SKIP_MONITOR | CMD_SCRIPT_RUNNER | CMD_WRITE | CMD_DENYOOM;
+        cmd->acl_categories = ACL_CATEGORY_SCRIPTING | ACL_CATEGORY_WRITE | ACL_CATEGORY_SLOW;
+        cmd->id = ACLGetCommandID(cmd->fullname);
+        if (numkeys) {
+            cmd->key_specs_num = 1;
+            cmd->key_specs = zcalloc(sizeof(keySpec));
+            cmd->key_specs[0].flags = CMD_KEY_RW | CMD_KEY_ACCESS | CMD_KEY_UPDATE;
+            cmd->key_specs[0].begin_search_type = KSPEC_BS_INDEX;
+            cmd->key_specs[0].bs.index.pos = 1;
+            cmd->key_specs[0].find_keys_type = KSPEC_FK_RANGE;
+            cmd->key_specs[0].fk.range.lastkey = numkeys - 1;
+            cmd->key_specs[0].fk.range.keystep = 1;
+        }
+        populateCommandLegacyRangeSpec(cmd);
+        dictAdd(function_commands, name, cmd);
+    }
+    fi->command = cmd;
+    return C_OK;
+}
+
+/* Publish only commands from the active Functions context, after the complete
+ * library has validated. Keep original entries for ACL rule identity on unload;
+ * executable entries are removed from server.commands immediately. */
+static void functionsSyncCommands(void) {
+    if (!function_commands) return;
+    int changed = 0;
+    pauseAllIOThreads();
+    dictIterator iter;
+    dictEntry *entry;
+    dictInitIterator(&iter, function_commands);
+    while ((entry = dictNext(&iter))) {
+        struct redisCommand *cmd = dictGetVal(entry);
+        functionInfo *fi = dictFetchValue(curr_functions_lib_ctx->functions, cmd->fullname);
+        int active = fi && fi->command == cmd;
+        struct redisCommand *published = dictFetchValue(server.commands, cmd->fullname);
+        if (active && !published) {
+            dictAdd(server.commands, sdsdup(cmd->fullname), cmd);
+            if (!dictFind(server.orig_commands, cmd->fullname))
+                dictAdd(server.orig_commands, sdsdup(cmd->fullname), cmd);
+            changed = 1;
+        } else if (!active && published == cmd) {
+            dictDelete(server.commands, cmd->fullname);
+            changed = 1;
+        }
+    }
+    dictResetIterator(&iter);
+    resumeAllIOThreads();
+    if (changed) ACLRecomputeCommandBitsFromCommandRulesAllUsers();
+}
+
 static size_t functionMallocSize(functionInfo *fi) {
     return zmalloc_size(fi) + sdsZmallocSize(fi->name)
             + (fi->desc ? sdsZmallocSize(fi->desc) : 0)
@@ -167,6 +372,8 @@ static void engineDispose(dict *d, void *obj) {
 /* Clear all the functions from the given library ctx */
 void functionsLibCtxClear(functionsLibCtx *lib_ctx) {
     dictEmpty(lib_ctx->functions, NULL);
+    if (pthread_equal(pthread_self(), server.main_thread_id) && lib_ctx == curr_functions_lib_ctx)
+        functionsSyncCommands();
     dictEmpty(lib_ctx->libraries, NULL);
     dictIterator iter;
     dictEntry *entry = NULL;
@@ -221,8 +428,10 @@ void functionsLibCtxFree(functionsLibCtx *functions_lib_ctx) {
 /* Swap the current functions ctx with the given one.
  * Free the old functions ctx. */
 void functionsLibCtxSwapWithCurrent(functionsLibCtx *new_lib_ctx) {
-    functionsLibCtxFree(curr_functions_lib_ctx);
+    functionsLibCtx *old_lib_ctx = curr_functions_lib_ctx;
     curr_functions_lib_ctx = new_lib_ctx;
+    functionsLibCtxFree(old_lib_ctx);
+    functionsSyncCommands();
 }
 
 /* return the current functions ctx */
@@ -414,6 +623,7 @@ done:
         }
         listRelease(old_libraries_list);
     }
+    if (functions_lib_ctx_dst == curr_functions_lib_ctx) functionsSyncCommands();
     return ret;
 }
 
@@ -609,6 +819,7 @@ void functionDeleteCommand(client *c) {
     }
 
     libraryUnlink(curr_functions_lib_ctx, li);
+    functionsSyncCommands();
     engineLibraryFree(li);
     /* Indicate that the command changed the data so it will be replicated and
      * counted as a data change (for persistence configuration) */
@@ -633,6 +844,31 @@ uint64_t fcallGetCommandFlags(client *c, uint64_t cmd_flags) {
     return scriptFlagsToCmdFlags(cmd_flags, script_flags);
 }
 
+static void functionRun(client *c, functionInfo *fi, robj **args, int argc, int numkeys, int ro) {
+    scriptRunCtx run_ctx;
+    engine *engine = fi->li->ei->engine;
+    if (scriptPrepareForRun(&run_ctx, fi->li->ei->c, c, fi->name, fi->f_flags, ro) != C_OK)
+        return;
+    engine->call(&run_ctx, engine->engine_ctx, fi->function, args, numkeys,
+                 args + numkeys, argc - numkeys);
+    scriptResetRun(&run_ctx);
+}
+
+void functionDirectCommand(client *c) {
+    replicationFeedMonitors(c, server.monitors, c->db->id, c->argv, c->argc);
+    functionInfo *fi = dictFetchValue(curr_functions_lib_ctx->functions, c->cmd->fullname);
+    if (!fi || fi->command != c->cmd) {
+        addReplyError(c, "WASM command is no longer registered");
+        return;
+    }
+    int numkeys = c->cmd->key_specs_num ? c->cmd->key_specs[0].fk.range.lastkey + 1 : 0;
+    if (!commandCheckArity(c->cmd, c->argc, NULL) || c->argc <= numkeys) {
+        addReplyErrorArity(c);
+        return;
+    }
+    functionRun(c, fi, c->argv + 1, c->argc - 1, numkeys, 0);
+}
+
 static void fcallCommandGeneric(client *c, int ro) {
     /* Functions need to be fed to monitors before the commands they execute. */
     replicationFeedMonitors(c,server.monitors,c->db->id,c->argv,c->argc);
@@ -646,7 +882,6 @@ static void fcallCommandGeneric(client *c, int ro) {
         return;
     }
     functionInfo *fi = dictGetVal(de);
-    engine *engine = fi->li->ei->engine;
 
     long long numkeys;
     /* Get the number of arguments that are keys */
@@ -662,14 +897,7 @@ static void fcallCommandGeneric(client *c, int ro) {
         return;
     }
 
-    scriptRunCtx run_ctx;
-
-    if (scriptPrepareForRun(&run_ctx, fi->li->ei->c, c, fi->name, fi->f_flags, ro) != C_OK)
-        return;
-
-    engine->call(&run_ctx, engine->engine_ctx, fi->function, c->argv + 3, numkeys,
-                 c->argv + 3 + numkeys, c->argc - 3 - numkeys);
-    scriptResetRun(&run_ctx);
+    functionRun(c, fi, c->argv + 3, c->argc - 3, numkeys, ro);
 }
 
 /*
@@ -1043,6 +1271,8 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, sds* err, functionsLibC
     sds loaded_lib_name = md.name;
     md.name = NULL;
     functionFreeLibMetaData(&md);
+
+    if (lib_ctx == curr_functions_lib_ctx) functionsSyncCommands();
 
     return loaded_lib_name;
 

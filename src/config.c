@@ -26,6 +26,13 @@
 #include <ctype.h>
 #include <arpa/inet.h>
 
+/* Extension binaries ship with the source tree. */
+#ifdef BUILD_WASM
+#define REDIS_EXTENSION_DIR "./extensions"
+#else
+#define REDIS_EXTENSION_DIR ""
+#endif
+
 /*-----------------------------------------------------------------------------
  * Config file name-value maps.
  *----------------------------------------------------------------------------*/
@@ -626,6 +633,19 @@ void loadServerConfigFromString(char *config) {
             }
         } else if (!strcasecmp(argv[0],"loadmodule") && argc >= 2) {
             queueLoadModule(argv[1],&argv[2],argc-2);
+        } else if (!strcasecmp(argv[0],"loadextension")) {
+#ifndef BUILD_WASM
+            err = "loadextension requires BUILD_WASM=yes";
+            goto loaderr;
+#else
+            if (argc != 2 || argv[1][0] != '/' || server.sentinel_mode ||
+                strlen(argv[1]) != sdslen(argv[1])) {
+                err = "loadextension requires one absolute WASM path and is unavailable in Sentinel mode";
+                goto loaderr;
+            }
+            if (!server.loadextension_queue) server.loadextension_queue = listCreate();
+            listAddNodeTail(server.loadextension_queue, sdsdup(argv[1]));
+#endif
         } else if (!strcasecmp(argv[0],"sentinel")) {
             /* argc == 1 is handled by main() as we need to enter the sentinel
              * mode ASAP. */
@@ -1264,6 +1284,7 @@ struct rewriteConfigState *rewriteConfigReadOldFile(char *path) {
              strcasecmp(argv[0],"rename-command") &&
              strcasecmp(argv[0],"user") &&
              strcasecmp(argv[0],"loadmodule") &&
+             strcasecmp(argv[0],"loadextension") &&
              strcasecmp(argv[0],"sentinel")))
         {
             /* The line is either unparsable for some reason, for
@@ -1872,6 +1893,17 @@ int rewriteConfig(char *path, int force_write) {
 
     rewriteConfigUserOption(state);
     rewriteConfigLoadmoduleOption(state);
+    if (server.loadextension_queue) {
+        listIter li;
+        listNode *ln;
+        listRewind(server.loadextension_queue, &li);
+        while ((ln = listNext(&li))) {
+            sds path = listNodeValue(ln);
+            sds line = sdscatrepr(sdsnew("loadextension "), path, sdslen(path));
+            rewriteConfigRewriteLine(state, "loadextension", line, 1);
+        }
+    }
+    rewriteConfigMarkAsProcessed(state, "loadextension");
 
     /* Rewrite Sentinel config if in Sentinel mode. */
     if (server.sentinel_mode) rewriteConfigSentinelOption(state);
@@ -2457,6 +2489,20 @@ static int isValidActiveDefrag(int val, const char **err) {
     UNUSED(err);
 #endif
     return 1;
+}
+
+static int isValidExtensionDir(sds val, const char **err) {
+    if (!sdslen(val)) return 1;
+#ifndef BUILD_WASM
+    *err = "extension-dir requires BUILD_WASM=yes";
+    return 0;
+#else
+    if (strlen(val) != sdslen(val)) {
+        *err = "extension-dir must not contain NUL bytes";
+        return 0;
+    }
+    return 1;
+#endif
 }
 
 static int isValidDBfilename(char *val, const char **err) {
@@ -3527,6 +3573,7 @@ standardConfig static_configs[] = {
     createStringConfig("locale-collate", NULL, MODIFIABLE_CONFIG, ALLOW_EMPTY_STRING, server.locale_collate, "", NULL, updateLocaleCollate),
 
     /* SDS Configs */
+    createSDSConfig("extension-dir", NULL, IMMUTABLE_CONFIG, ALLOW_EMPTY_STRING, server.extension_dir, REDIS_EXTENSION_DIR, isValidExtensionDir, NULL),
     createSDSConfig("masterauth", NULL, MODIFIABLE_CONFIG | SENSITIVE_CONFIG, EMPTY_STRING_IS_NULL, server.masterauth, NULL, NULL, NULL),
     createSDSConfig("requirepass", NULL, MODIFIABLE_CONFIG | SENSITIVE_CONFIG, EMPTY_STRING_IS_NULL, server.requirepass, NULL, NULL, updateRequirePass),
 

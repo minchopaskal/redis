@@ -7,13 +7,13 @@ import {
   status,
 } from "./sdk";
 
-export function redis_abi_version(): i32 {
-  return 1;
-}
+export function redis_wasm_abi_version_0_1_0(): void {}
 
-export function redis_init(): i32 {
-  if (!registerFunction("js_echo", "js_echo")) return 1;
-  if (!registerFunction("js_incr", "js_incr")) return 2;
+// AssemblyScript exports its runtime initializer as _initialize. Redis calls
+// main only after that initializer has completed.
+export function main(_argc: i32, _argv: i32): i32 {
+  if (!registerFunction("js_echo", "js_echo")) unreachable();
+  if (!registerFunction("js_incr", "js_incr")) unreachable();
   return 0;
 }
 
