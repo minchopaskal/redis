@@ -62,6 +62,13 @@ REDIS_WASM_IMPORT("blob_write")
 int32_t redis_wasm_host_blob_write(const uint8_t *key, int32_t key_len,
                                    const uint8_t *type, int32_t type_len,
                                    const uint8_t *src, int32_t src_len);
+/* Atomic blob replacement with an absolute Unix expiry in milliseconds.
+ * Zero means no expiry; negative values are rejected. */
+REDIS_WASM_IMPORT("blob_write_expire")
+int32_t redis_wasm_host_blob_write_expire(const uint8_t *key, int32_t key_len,
+                                          const uint8_t *type, int32_t type_len,
+                                          const uint8_t *src, int32_t src_len,
+                                          int64_t expire_at_ms);
 
 static inline uint32_t redis_wasm_u32(const uint8_t *p) {
     return (uint32_t)p[0] |

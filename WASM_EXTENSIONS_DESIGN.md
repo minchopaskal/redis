@@ -82,6 +82,7 @@ blob_register(type, tlen) -> i32                     ;; load time only
 blob_len(key, klen, type, tlen) -> i32
 blob_read(key, klen, type, tlen, dst, cap, offset) -> i32
 blob_write(key, klen, type, tlen, src, slen) -> i32
+blob_write_expire(key, klen, type, tlen, src, slen, expire_at_ms: i64) -> i32
 
 ;; guest exports
 memory                                   ;; exported linear memory
@@ -146,6 +147,14 @@ Two properties follow. Guests do not need to be deterministic, since nothing re-
 and executes `RESTORE key 0 payload REPLACE` through the shared script command
 path. This inherits ACL, cluster, OOM/read-only checks, notifications, WATCH
 and client tracking, and propagates a normal RESTORE effect to replicas/AOF.
+`blob_write_expire` adds an absolute Unix millisecond expiration via
+`RESTORE ... REPLACE ABSTTL`, applying state and expiry in the same command.
+Zero disables expiry; negative expiration values fail before writing.
+
+**Startup extensions.** Repeatable `loadextension /absolute/path/module.wasm`
+directives load raw binaries after dataset recovery. SHA-256-derived library
+names make identical persisted libraries idempotent; conflicting exports abort
+startup. See `extensions/README.md` and the C GCRA extension in `extensions/gcra`.
 
 **Other integration points.**
 
@@ -188,4 +197,3 @@ set      robj_set_create, robj_set_add, robj_set_delete, robj_set_pop,
 stream   robj_stream_create, robj_stream_add, robj_stream_delete,
          robj_stream_trim, robj_stream_len, robj_stream_last_id
 ```
-

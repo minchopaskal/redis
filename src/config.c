@@ -584,6 +584,19 @@ void loadServerConfigFromString(char *config) {
             }
         } else if (!strcasecmp(argv[0],"loadmodule") && argc >= 2) {
             queueLoadModule(argv[1],&argv[2],argc-2);
+        } else if (!strcasecmp(argv[0],"loadextension")) {
+#ifndef BUILD_WASM
+            err = "loadextension requires BUILD_WASM=yes";
+            goto loaderr;
+#else
+            if (argc != 2 || argv[1][0] != '/' || server.sentinel_mode ||
+                strlen(argv[1]) != sdslen(argv[1])) {
+                err = "loadextension requires one absolute WASM path and is unavailable in Sentinel mode";
+                goto loaderr;
+            }
+            if (!server.loadextension_queue) server.loadextension_queue = listCreate();
+            listAddNodeTail(server.loadextension_queue, sdsdup(argv[1]));
+#endif
         } else if (!strcasecmp(argv[0],"sentinel")) {
             /* argc == 1 is handled by main() as we need to enter the sentinel
              * mode ASAP. */
@@ -1200,6 +1213,7 @@ struct rewriteConfigState *rewriteConfigReadOldFile(char *path) {
              strcasecmp(argv[0],"rename-command") &&
              strcasecmp(argv[0],"user") &&
              strcasecmp(argv[0],"loadmodule") &&
+             strcasecmp(argv[0],"loadextension") &&
              strcasecmp(argv[0],"sentinel")))
         {
             /* The line is either unparsable for some reason, for
@@ -1808,6 +1822,17 @@ int rewriteConfig(char *path, int force_write) {
 
     rewriteConfigUserOption(state);
     rewriteConfigLoadmoduleOption(state);
+    if (server.loadextension_queue) {
+        listIter li;
+        listNode *ln;
+        listRewind(server.loadextension_queue, &li);
+        while ((ln = listNext(&li))) {
+            sds path = listNodeValue(ln);
+            sds line = sdscatrepr(sdsnew("loadextension "), path, sdslen(path));
+            rewriteConfigRewriteLine(state, "loadextension", line, 1);
+        }
+    }
+    rewriteConfigMarkAsProcessed(state, "loadextension");
 
     /* Rewrite Sentinel config if in Sentinel mode. */
     if (server.sentinel_mode) rewriteConfigSentinelOption(state);

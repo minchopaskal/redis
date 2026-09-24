@@ -902,14 +902,14 @@ static void wasmSetReplyError(wasmHostCtx *ctx, sds reply, const char *fallback)
     }
 }
 
-static int32_t wasmBlobWrite(wasm_exec_env_t exec_env, int32_t key_ptr,
+static int32_t wasmBlobWriteWithExpiry(wasm_exec_env_t exec_env, int32_t key_ptr,
                              int32_t key_len, int32_t type_ptr, int32_t type_len,
-                             int32_t src, int32_t src_len)
+                             int32_t src, int32_t src_len, int64_t expire_at)
 {
     wasmHostCtx *ctx;
     sds key, type;
     void *payload_data;
-    if (src < 0 || src_len < 0 ||
+    if (src < 0 || src_len < 0 || expire_at < 0 ||
         wasmGetBlobLookupArgs(exec_env, key_ptr, key_len, type_ptr, type_len,
                               &ctx, &key, &type) != C_OK)
         return -1;
@@ -929,16 +929,18 @@ static int32_t wasmBlobWrite(wasm_exec_env_t exec_env, int32_t key_ptr,
     decrRefCount(blob_object);
     sdsfree(key);
 
-    robj **argv = zmalloc(sizeof(*argv) * 5);
+    int argc = expire_at ? 6 : 5;
+    robj **argv = zmalloc(sizeof(*argv) * argc);
     argv[0] = createStringObject("RESTORE", 7);
     argv[1] = key_object;
-    argv[2] = createStringObject("0", 1);
+    argv[2] = createStringObjectFromLongLong(expire_at);
     argv[3] = createStringObject(dump, sdslen(dump));
     argv[4] = createStringObject("REPLACE", 7);
+    if (expire_at) argv[5] = createStringObject("ABSTTL", 6);
     sdsfree(dump);
 
     sds reply = NULL;
-    if (wasmRunRedisCommand(ctx, argv, 5, &reply) != C_OK)
+    if (wasmRunRedisCommand(ctx, argv, argc, &reply) != C_OK)
         return -1;
     if (!reply || sdslen(reply) == 0 || reply[0] == '-' || reply[0] == '!') {
         wasmSetReplyError(ctx, reply, "Failed writing WASM blob");
@@ -947,6 +949,11 @@ static int32_t wasmBlobWrite(wasm_exec_env_t exec_env, int32_t key_ptr,
     }
     sdsfree(reply);
     return 0;
+}
+
+static int32_t wasmBlobWrite(wasm_exec_env_t env, int32_t key, int32_t klen,
+                             int32_t type, int32_t tlen, int32_t src, int32_t len) {
+    return wasmBlobWriteWithExpiry(env, key, klen, type, tlen, src, len, 0);
 }
 
 #pragma GCC diagnostic push
@@ -968,6 +975,7 @@ static NativeSymbol wasmNativeSymbols[] = {
     {"blob_len", wasmBlobLen, "(iiii)i", NULL},
     {"blob_read", wasmBlobRead, "(iiiiiii)i", NULL},
     {"blob_write", wasmBlobWrite, "(iiiiii)i", NULL},
+    {"blob_write_expire", wasmBlobWriteWithExpiry, "(iiiiiiI)i", NULL},
 };
 #pragma GCC diagnostic pop
 

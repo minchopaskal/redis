@@ -123,6 +123,7 @@ int luaEngineInitEngine(void);
 int wasmEngineInitEngine(void);
 #endif
 int functionsInit(void);
+void functionsLoadExtensions(void);
 void functionsFree(functionsLibCtx *lib_ctx, dict *engs);
 
 void createFunctionDumpPayload(rio *payload);
