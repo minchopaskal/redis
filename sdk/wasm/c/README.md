@@ -4,6 +4,12 @@
 Functions ABI. It requires Clang with the `wasm32-unknown-unknown` target and
 does not depend on WASI or a guest libc.
 
+For direct Redis commands, call
+`redis_wasm_create_command(name, export_name, arity, numkeys)` during `redis_init`.
+It also registers an FCALL function. Arity includes the command name (negative
+means minimum); the first `numkeys` arguments are keys. See `extensions/gcra`
+for a rate-limiter example using this API.
+
 ```sh
 make -C sdk/wasm/c
 (printf '#!wasm name=cexample\n'; cat sdk/wasm/c/example/c-list.wasm) |

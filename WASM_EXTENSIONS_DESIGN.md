@@ -78,6 +78,7 @@ status_reply(ptr, len)
 error_reply(ptr, len)
 
 register_function(name, nlen, export, elen) -> i32   ;; load time only
+create_command(name, nlen, export, elen, arity, numkeys) -> i32 ;; also registers FCALL function
 blob_register(type, tlen) -> i32                     ;; load time only
 blob_len(key, klen, type, tlen) -> i32
 blob_read(key, klen, type, tlen, dst, cap, offset) -> i32
@@ -155,6 +156,14 @@ Zero disables expiry; negative expiration values fail before writing.
 directives load raw binaries after dataset recovery. SHA-256-derived library
 names make identical persisted libraries idempotent; conflicting exports abort
 startup. See `extensions/README.md` and the C GCRA extension in `extensions/gcra`.
+
+**Direct commands.** `create_command` explicitly declares a function's command
+arity and fixed leading-key count. Commands share FCALL's executor while keeping
+their original argument vector for ACLs, cluster routing, monitoring and stats.
+Publishing/removing command entries follows the active Functions context and
+successful library transactions. Small immutable descriptors and ACL identities
+remain until shutdown for queued-call safety. See `extensions/README.md` for
+the PoC's signature and registry limits.
 
 **Other integration points.**
 

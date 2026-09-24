@@ -37,6 +37,7 @@
  * -------------------------------------------------------------------------- */
 
 #include "server.h"
+#include "functions.h"
 #include "cluster.h"
 #include "cluster_asm.h"
 #include "slowlog.h"
@@ -1344,8 +1345,10 @@ int RM_CreateCommand(RedisModuleCtx *ctx, const char *name, RedisModuleCmdFunc c
     if (!isCommandNameValid(name))
         return REDISMODULE_ERR;
 
-    /* Check if the command name is busy. */
-    if (lookupCommandByCString(name) != NULL)
+    /* WASM commands retain their ACL identities across library unloads. */
+    struct redisCommand *original = ACLLookupCommand(name);
+    if (lookupCommandByCString(name) != NULL ||
+        (original && original->proc == functionDirectCommand))
         return REDISMODULE_ERR;
 
     sds declared_name = sdsnew(name);

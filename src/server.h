@@ -3735,6 +3735,7 @@ int ACLAuthenticateUser(client *c, robj *username, robj *password, robj **err);
 int checkModuleAuthentication(client *c, robj *username, robj *password, robj **err);
 void addAuthErrReply(client *c, robj *err);
 unsigned long ACLGetCommandID(sds cmdname);
+struct redisCommand *ACLLookupCommand(const char *name);
 void ACLClearCommandID(void);
 user *ACLGetUserByName(const char *name, size_t namelen);
 /* ACL LOAD owner-resolution, exported for the Pub/Sub provenance reconciliation

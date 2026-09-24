@@ -49,6 +49,13 @@ REDIS_WASM_IMPORT("register_function")
 int32_t redis_wasm_host_register_function(const uint8_t *name, int32_t name_len,
                                           const uint8_t *export_name,
                                           int32_t export_len);
+/* Arity includes the command name; a negative arity sets the minimum.
+ * The first numkeys arguments are keys. Also registers the FCALL function. */
+REDIS_WASM_IMPORT("create_command")
+int32_t redis_wasm_host_create_command(const uint8_t *name, int32_t name_len,
+                                       const uint8_t *export_name, int32_t export_len,
+                                       int32_t arity, int32_t numkeys);
+
 REDIS_WASM_IMPORT("blob_register")
 int32_t redis_wasm_host_blob_register(const uint8_t *type, int32_t type_len);
 REDIS_WASM_IMPORT("blob_len")
@@ -138,6 +145,15 @@ static inline int32_t redis_wasm_register_blob_type(const char *type) {
     uint32_t len = 0;
     while (type[len]) len++;
     return redis_wasm_host_blob_register((const uint8_t *)type, len);
+}
+
+static inline int32_t redis_wasm_create_command(const char *name, const char *export_name,
+                                                int32_t arity, int32_t numkeys) {
+    uint32_t nlen = 0, elen = 0;
+    while (name[nlen]) nlen++;
+    while (export_name[elen]) elen++;
+    return redis_wasm_host_create_command((const uint8_t *)name, nlen,
+                                          (const uint8_t *)export_name, elen, arity, numkeys);
 }
 
 static inline int32_t redis_wasm_blob_read(redis_wasm_slice key,

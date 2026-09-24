@@ -746,6 +746,24 @@ static int32_t wasmRegisterFunction(wasm_exec_env_t exec_env, int32_t name_ptr,
     return 0;
 }
 
+static int32_t wasmCreateCommand(wasm_exec_env_t env, int32_t name_ptr, int32_t name_len,
+                                 int32_t export_ptr, int32_t export_len, int32_t arity, int32_t numkeys) {
+    if (wasmRegisterFunction(env, name_ptr, name_len, export_ptr, export_len) != 0)
+        return -1;
+    wasmHostCtx *ctx = wasmGetHostCtx(env);
+    void *name_data;
+    if (wasmGetGuestBuffer(env, name_ptr, name_len, &name_data) != C_OK) return -1;
+    sds name = sdsnewlen(name_data, name_len);
+    sds err = NULL;
+    int result = functionLibDeclareCommand(ctx->li, name, arity, numkeys, &err);
+    sdsfree(name);
+    if (result != C_OK) {
+        wasmSetLastErrorSds(ctx, err);
+        return -1;
+    }
+    return 0;
+}
+
 static int wasmValidBlobTypeName(sds name) {
     if (sdslen(name) == 0)
         return C_ERR;
@@ -976,6 +994,7 @@ static NativeSymbol wasmNativeSymbols[] = {
     {"blob_read", wasmBlobRead, "(iiiiiii)i", NULL},
     {"blob_write", wasmBlobWrite, "(iiiiii)i", NULL},
     {"blob_write_expire", wasmBlobWriteWithExpiry, "(iiiiiiI)i", NULL},
+    {"create_command", wasmCreateCommand, "(iiiiii)i", NULL},
 };
 #pragma GCC diagnostic pop
 

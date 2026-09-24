@@ -8386,6 +8386,14 @@ int main(int argc, char **argv) {
         moduleLoadInternalModules();
         moduleLoadFromQueue();
     }
+    /* Reserve extension command identities before resolving named ACL rules.
+     * Discard this initial library context so RDB/AOF recovery can load its
+     * persisted libraries normally. The configured files are reconciled again
+     * after recovery, before accepting clients. */
+    if (!server.sentinel_mode && server.loadextension_queue) {
+        functionsLoadExtensions();
+        functionsLibCtxClear(functionsLibCtxGetCurrent());
+    }
     ACLLoadUsersAtStartup();
     initListeners();
     if (server.cluster_enabled) {
