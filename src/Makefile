@@ -435,6 +435,17 @@ endif
 
 .PHONY: all
 
+ifeq ($(BUILD_WASM),yes)
+# Run after dependency cleanup, which also removes generated extensions.
+# Order-only keeps the recursive build from forcing a redis-server relink.
+$(REDIS_SERVER_NAME): | wasm_extensions
+
+wasm_extensions: .make-prerequisites
+	$(MAKE) -C ../extensions
+
+.PHONY: wasm_extensions
+endif
+
 module_tests: $(REDIS_SERVER_NAME)
 	$(MAKE) -C ../tests/modules
 
@@ -526,6 +537,7 @@ commands.c: $(COMMANDS_DEF_FILENAME).def
 clean:
 	rm -rf $(REDIS_SERVER_NAME) $(REDIS_SENTINEL_NAME) $(REDIS_CLI_NAME) $(REDIS_BENCHMARK_NAME) $(REDIS_CHECK_RDB_NAME) $(REDIS_CHECK_AOF_NAME) *.o *.gcda *.gcno *.gcov redis.info lcov-html Makefile.dep *.so
 	rm -f $(DEP)
+	$(MAKE) -C ../extensions clean
 	-(cd ../tests/modules && $(MAKE) clean)
 
 .PHONY: clean

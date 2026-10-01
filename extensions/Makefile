@@ -1,11 +1,14 @@
-# Guests are checked in; rebuilding them requires a wasm32-capable Clang.
-EXTENSIONS = gcra
+# Each source directory provides a Makefile that writes its .wasm into this dir.
+EXTENSIONS := $(patsubst %/Makefile,%,$(wildcard */Makefile))
+CLEAN_TARGETS := $(addsuffix .clean,$(EXTENSIONS))
 
-.PHONY: all clean $(EXTENSIONS)
+.PHONY: all clean $(EXTENSIONS) $(CLEAN_TARGETS)
 all: $(EXTENSIONS)
 
 $(EXTENSIONS):
 	$(MAKE) -C $@
 
-clean:
-	$(foreach extension,$(EXTENSIONS),$(MAKE) -C $(extension) clean;)
+clean: $(CLEAN_TARGETS)
+
+$(CLEAN_TARGETS):
+	$(MAKE) -C $(patsubst %.clean,%,$@) clean

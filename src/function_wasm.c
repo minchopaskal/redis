@@ -620,6 +620,12 @@ static int unpackCommand(wasm_exec_env_t exec_env, uint32_t offset, uint32_t len
     }
     data += 4;
     len -= 4;
+    /* Every argument needs at least its four-byte length prefix. Bound the
+     * allocation and cleanup work by the supplied buffer before allocating. */
+    if (count > len / 4) {
+        *err = sdsnew("malformed packed command buffer");
+        return C_ERR;
+    }
     robj **objects = zcalloc(sizeof(*objects) * count);
     for (uint32_t i = 0; i < count; i++) {
         if (len < 4) goto malformed;

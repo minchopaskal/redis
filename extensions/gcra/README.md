@@ -12,8 +12,9 @@ redis-cli GCRA rate:user:123 10 5 1
 redis-cli GCRA rate:user:123 10 5 1 TOKENS 3
 ```
 
-The checked-in binary lives at `extensions/gcra.wasm`. Rebuild it with
-`make -C extensions WASM_CC=clang` after editing the source. Set
+The WASM-enabled Redis build compiles this source into `extensions/gcra.wasm`.
+It requires a wasm32-capable Clang and matching `wasm-ld`; use `WASM_CC` to select
+the compiler. `make -C extensions` builds only the extensions. Set
 `extension-dir ""` to disable autoload; explicit `loadextension` remains
 supported. GCRA is an ordinary entry in the generic autoload directory, not a
 special case in the loader. See

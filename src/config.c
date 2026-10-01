@@ -26,7 +26,7 @@
 #include <ctype.h>
 #include <arpa/inet.h>
 
-/* Extension binaries ship with the source tree. */
+/* WASM-enabled builds compile extensions into this source-tree directory. */
 #ifdef BUILD_WASM
 #define REDIS_EXTENSION_DIR "./extensions"
 #else

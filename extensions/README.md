@@ -2,14 +2,16 @@
 
 Extensions are compiled guests loaded by Redis Functions.
 
-Build Redis with `make -j BUILD_WASM=yes`. The compiled extensions ship alongside
-their source, so building Redis does not require a WASM compiler.
+Build Redis and its extensions with `make -j BUILD_WASM=yes`. Extension binaries
+are generated from source and are not checked in. WASM-enabled builds require
+CMake for WAMR and a wasm32-capable Clang with its matching `wasm-ld` linker.
+Non-WASM builds do not compile extensions or require the WASM toolchain.
 
 ## Extension autoload
 
 WASM-enabled Redis automatically loads all top-level `.wasm` files from
 `./extensions` at startup, in bytewise filename order independent of locale.
-GCRA ships as `extensions/gcra.wasm`, with its source under `extensions/gcra/`.
+GCRA compiles to `extensions/gcra.wasm`, with its source under `extensions/gcra/`.
 The loader has no GCRA-specific logic and does not scan subdirectories.
 No guest byte array or binary is embedded in redis-server.
 
@@ -20,9 +22,14 @@ make -j BUILD_WASM=yes
 ./src/redis-server
 ```
 
-Rebuild extensions after editing their source with
-`make -C extensions WASM_CC=clang` (Clang must include the wasm32 linker).
-Their Makefiles write the binaries directly into `extensions/`.
+Subsequent builds recompile extensions when their sources change. To build only
+the extensions, run `make -C extensions`. The build discovers immediate
+subdirectories containing a `Makefile`; each writes its binaries directly into
+`extensions/`. `make clean` removes those generated binaries.
+
+Override `WASM_CC` to select Clang, and `WASM_CFLAGS` / `WASM_LDFLAGS` to customize
+guest compiler and linker flags. These are separate from Redis's native flags.
+For example, `make -j BUILD_WASM=yes WASM_CC=/path/to/clang`.
 
 The startup-only `extension-dir` setting accepts a relative or absolute directory,
 or `""` to disable automatic loading. Relative paths resolve against Redis's

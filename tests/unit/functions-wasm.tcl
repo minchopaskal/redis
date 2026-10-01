@@ -105,6 +105,34 @@ start_server {tags {"scripting wasm"}} {
         assert_equal {wasm-value} [r get wasm-key]
     }
 
+    test {WASM FUNCTION - packed command counts are bounded before allocation} {
+        r function load [sdk_wasm_payload tests/assets/wasm/packed-command.wasm packed]
+        # INT_MAX with tiny buffers must not request billions of argv slots.
+        # Even one or two arguments require enough bytes for their lengths.
+        foreach hex {ffffff7f ffffff7f00000000 01000000 0200000000000000} {
+            assert_error {*malformed packed command buffer*} {
+                r fcall packed_call 0 [binary format H* $hex]
+            }
+            assert_equal PONG [r ping]
+        }
+        # Counts that pass the bound still need valid lengths and no trailing
+        # bytes. Both paths must release any argument objects already created.
+        foreach hex {010000000400000050494e 020000000400000050494e4701000000 010000000400000050494e4700} {
+            assert_error {*malformed packed command buffer*} {
+                r fcall packed_call 0 [binary format H* $hex]
+            }
+        }
+        assert_equal PONG [r fcall packed_call 0 [binary format H* 010000000400000050494e47]]
+        # Exactly enough space for one empty argument passes unpacking and
+        # reaches command lookup, rather than being rejected as malformed.
+        assert_error {*Unknown Redis command called from script*} {
+            r fcall packed_call 0 [binary format H* 0100000000000000]
+        }
+        # Zero-length arguments are valid: ["ECHO", ""].
+        assert_equal {} [r fcall packed_call 0 [binary format H* 02000000040000004543484f00000000]]
+        r function delete packed
+    }
+
     test {WASM FUNCTION - guest error replies reach the caller} {
         catch {r fcall failure 0} err
         assert_match {*wasm failure*} $err

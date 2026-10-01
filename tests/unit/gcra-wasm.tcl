@@ -20,7 +20,7 @@ file mkdir "$default_dir/extensions"
 file copy $gcra_extension "$default_dir/extensions/gcra.wasm"
 start_server [list tags {wasm scripting external:skip} omit {extension-dir} \
     overrides [list dir $default_dir]] {
-    test {WASM autoload - default directory loads shipped extensions without configuration} {
+    test {WASM autoload - default directory loads built extensions without configuration} {
         assert_equal ./extensions [lindex [r config get extension-dir] 1]
         assert_equal 1 [llength [r function list]]
         assert_equal 0 [lindex [r GCRA rl:default 0 1 600] 0]

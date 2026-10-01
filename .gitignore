@@ -41,6 +41,7 @@ Makefile.dep
 .ccls
 .ccls-cache/*
 compile_commands.json
+extensions/*.wasm
 redis.code-workspace
 
 # External bundled modules — cloned (not git submodules) into modules/<name>/src/
