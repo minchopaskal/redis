@@ -2,13 +2,46 @@
 
 Extensions are compiled guests loaded by Redis Functions.
 
-Build Redis with `make BUILD_WASM=yes`. Build the C GCRA rate limiter with
-`make -C extensions/gcra WASM_CC=clang` (Clang must include the wasm32 linker).
+Build Redis with `make -j BUILD_WASM=yes`. The compiled extensions ship alongside
+their source, so building Redis does not require a WASM compiler.
 
-Configure one or more raw WASM files using absolute paths in redis.conf:
+## Extension autoload
+
+WASM-enabled Redis automatically loads all top-level `.wasm` files from
+`./extensions` at startup, in bytewise filename order independent of locale.
+GCRA ships as `extensions/gcra.wasm`, with its source under `extensions/gcra/`.
+The loader has no GCRA-specific logic and does not scan subdirectories.
+No guest byte array or binary is embedded in redis-server.
+
+From the repository root:
+
+```sh
+make -j BUILD_WASM=yes
+./src/redis-server
+```
+
+Rebuild extensions after editing their source with
+`make -C extensions WASM_CC=clang` (Clang must include the wasm32 linker).
+Their Makefiles write the binaries directly into `extensions/`.
+
+The startup-only `extension-dir` setting accepts a relative or absolute directory,
+or `""` to disable automatic loading. Relative paths resolve against Redis's
+working directory (`dir`, which defaults to the directory where Redis starts).
+An empty directory is valid. Missing or unreadable
+directories and invalid extensions abort startup. The `.wasm` suffix is
+case-sensitive; other files and subdirectories are skipped. Symlinks to regular
+files are supported; broken links and other non-regular `.wasm` entries fail.
+Directory entries load before explicit `loadextension` directives.
+Sentinel skips autoload. Non-WASM builds default to an empty directory setting
+and reject nonempty values. Install extension files in an administrator-owned
+directory; replacing the bytes changes both the code and its blob owner hash.
+
+## Additional extensions
+
+Configure one or more additional raw WASM files using absolute paths in redis.conf:
 
 ```conf
-loadextension /absolute/path/to/extensions/gcra/gcra.wasm
+loadextension /absolute/path/to/extensions/gcra.wasm
 ```
 
 Redis registers these after loading RDB/AOF and before accepting clients.
@@ -18,8 +51,9 @@ before RDB/AOF recovery; only the final reconciled libraries execute requests.
 Library names are `wasm_<SHA-256 of module bytes>`. Identical persisted libraries
 and duplicate directives are idempotent. Missing/invalid files or conflicting
 function names fail startup. `CONFIG REWRITE` retains the directives; runtime
-`CONFIG SET loadextension` is not supported. Builds without WASM and Sentinel
-reject the directive.
+`CONFIG SET loadextension` is not supported. `CONFIG REWRITE` also retains
+`extension-dir`, which cannot be changed at runtime. Builds without WASM and
+Sentinel reject `loadextension`.
 
 Keep the configuration and binaries on every restart. Preloading itself is not
 appended to an existing AOF; AOF rewrites and RDB saves include the library.
@@ -54,5 +88,6 @@ attempts that passed signature validation. A queued call whose function has been
 removed reports an error. Re-registering the same name/signature calls the current
 function, as FCALL does.
 
-Configure `loadextension` on restart when persisted ACL rules explicitly name an
-extension command: its command identity must exist before ACL files are loaded.
+Keep the extension in the autoload directory, or configure `loadextension` on
+restart when persisted ACL rules explicitly name an extension command: its
+command identity must exist before ACL files are loaded.

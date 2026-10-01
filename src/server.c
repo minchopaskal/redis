@@ -8390,7 +8390,8 @@ int main(int argc, char **argv) {
      * Discard this initial library context so RDB/AOF recovery can load its
      * persisted libraries normally. The configured files are reconciled again
      * after recovery, before accepting clients. */
-    if (!server.sentinel_mode && server.loadextension_queue) {
+    if (!server.sentinel_mode &&
+        (sdslen(server.extension_dir) || server.loadextension_queue)) {
         functionsLoadExtensions();
         functionsLibCtxClear(functionsLibCtxGetCurrent());
     }

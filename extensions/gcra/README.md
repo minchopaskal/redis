@@ -5,11 +5,19 @@ algorithm runs inside WAMR, including weighted requests and burst calculation.
 It registers the Redis function `GCRA` and the blob type `gcra_v1`.
 
 ```sh
-make -C extensions/gcra WASM_CC=clang
-# After starting Redis with loadextension configured:
+make -j BUILD_WASM=yes
+./src/redis-server
+# In another terminal:
 redis-cli GCRA rate:user:123 10 5 1
 redis-cli GCRA rate:user:123 10 5 1 TOKENS 3
 ```
+
+The checked-in binary lives at `extensions/gcra.wasm`. Rebuild it with
+`make -C extensions WASM_CC=clang` after editing the source. Set
+`extension-dir ""` to disable autoload; explicit `loadextension` remains
+supported. GCRA is an ordinary entry in the generic autoload directory, not a
+special case in the loader. See
+[extension autoload](../README.md#extension-autoload).
 
 Arguments are `max_burst tokens_per_period period [TOKENS count]` after the
 single key. Burst capacity is `max_burst + 1`; cost defaults to one. Period is

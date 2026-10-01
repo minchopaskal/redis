@@ -16,6 +16,8 @@
 #include "adlist.h"
 #include "atomicvar.h"
 #include "sha256.h"
+#include <dirent.h>
+#include <sys/stat.h>
 
 #define LOAD_TIMEOUT_MS 500
 
@@ -24,62 +26,107 @@
  * idempotent; conflicting function names fail startup rather than replacing
  * code that owns existing blobs. Configuration must remain available on each
  * restart, including when the current AOF predates this extension. */
+static void functionsLoadExtension(const char *path) {
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        serverLog(LL_WARNING, "Cannot load extension %s: %s", path, strerror(errno));
+        exit(1);
+    }
+    sds binary = sdsempty();
+    char buffer[8192];
+    size_t n;
+    while ((n = fread(buffer, 1, sizeof(buffer), fp))) {
+        if (sdslen(binary) + n > 16 * 1024 * 1024) {
+            serverLog(LL_WARNING, "Extension %s exceeds 16 MiB", path);
+            fclose(fp);
+            exit(1);
+        }
+        binary = sdscatlen(binary, buffer, n);
+    }
+    int failed = ferror(fp);
+    fclose(fp);
+    if (failed || sdslen(binary) < 8 || memcmp(binary, "\0asm\1\0\0\0", 8)) {
+        serverLog(LL_WARNING, "Cannot read valid WASM extension %s", path);
+        exit(1);
+    }
+    SHA256_CTX ctx;
+    unsigned char digest[SHA256_BLOCK_SIZE];
+    sha256_init(&ctx);
+    sha256_update(&ctx, (unsigned char *)binary, sdslen(binary));
+    sha256_final(&ctx, digest);
+    sds name = sdsnew("wasm_");
+    for (size_t i = 0; i < sizeof(digest); i++)
+        name = sdscatprintf(name, "%02x", digest[i]);
+    sds code = sdscatprintf(sdsempty(), "#!wasm name=%s\n", name);
+    code = sdscatlen(code, binary, sdslen(binary));
+    sdsfree(binary);
+    dictEntry *entry = dictFind(functionsLibGet(), name);
+    functionLibInfo *existing = entry ? dictGetVal(entry) : NULL;
+    sds err = NULL;
+    sds loaded_name = NULL;
+    if (existing ? sdscmp(existing->code, code) != 0 :
+        (loaded_name = functionsCreateWithLibraryCtx(code, 0, &err,
+            functionsLibCtxGetCurrent(), LOAD_TIMEOUT_MS)) == NULL) {
+        serverLog(LL_WARNING, "Cannot load extension %s: %s", path,
+                  err ? err : "persisted library content conflicts with extension");
+        exit(1);
+    }
+    serverLog(LL_NOTICE, "Loaded extension %s as %s", path, name);
+    sdsfree(err);
+    sdsfree(loaded_name);
+    sdsfree(code);
+    sdsfree(name);
+}
+
+static int functionsExtensionFilter(const struct dirent *entry) {
+    size_t len = strlen(entry->d_name);
+    return len >= 5 && !strcmp(entry->d_name + len - 5, ".wasm");
+}
+
+/* Unlike alphasort, bytewise ordering does not depend on the server locale. */
+static int functionsExtensionCompare(const struct dirent **a, const struct dirent **b) {
+    return strcmp((*a)->d_name, (*b)->d_name);
+}
+
+static void functionsLoadExtensionDirectory(const char *directory) {
+    struct dirent **entries;
+    int count = scandir(directory, &entries, functionsExtensionFilter, functionsExtensionCompare);
+    if (count == -1) {
+        serverLog(LL_WARNING, "Cannot scan extension directory %s: %s", directory, strerror(errno));
+        exit(1);
+    }
+    for (int i = 0; i < count; i++) {
+        sds path = sdscatprintf(sdsempty(), "%s/%s", directory, entries[i]->d_name);
+        zlibc_free(entries[i]); /* scandir uses the system allocator. */
+        struct stat st;
+        if (stat(path, &st) == -1) {
+            serverLog(LL_WARNING, "Cannot stat extension %s: %s", path, strerror(errno));
+            exit(1);
+        }
+        /* Do not recurse, even into directories whose names end in .wasm. */
+        if (S_ISDIR(st.st_mode)) {
+            sdsfree(path);
+            continue;
+        }
+        if (!S_ISREG(st.st_mode)) {
+            serverLog(LL_WARNING, "Extension %s is not a regular file", path);
+            exit(1);
+        }
+        functionsLoadExtension(path);
+        sdsfree(path);
+    }
+    zlibc_free(entries);
+}
+
 void functionsLoadExtensions(void) {
+    if (sdslen(server.extension_dir))
+        functionsLoadExtensionDirectory(server.extension_dir);
     if (!server.loadextension_queue) return;
     listIter iter;
     listNode *node;
     listRewind(server.loadextension_queue, &iter);
     while ((node = listNext(&iter))) {
-        sds path = listNodeValue(node);
-        FILE *fp = fopen(path, "rb");
-        if (!fp) {
-            serverLog(LL_WARNING, "Cannot load extension %s: %s", path, strerror(errno));
-            exit(1);
-        }
-        sds binary = sdsempty();
-        char buffer[8192];
-        size_t n;
-        while ((n = fread(buffer, 1, sizeof(buffer), fp))) {
-            if (sdslen(binary) + n > 16 * 1024 * 1024) {
-                serverLog(LL_WARNING, "Extension %s exceeds 16 MiB", path);
-                fclose(fp);
-                exit(1);
-            }
-            binary = sdscatlen(binary, buffer, n);
-        }
-        int failed = ferror(fp);
-        fclose(fp);
-        if (failed || sdslen(binary) < 8 || memcmp(binary, "\0asm\1\0\0\0", 8)) {
-            serverLog(LL_WARNING, "Cannot read valid WASM extension %s", path);
-            exit(1);
-        }
-        SHA256_CTX ctx;
-        unsigned char digest[SHA256_BLOCK_SIZE];
-        sha256_init(&ctx);
-        sha256_update(&ctx, (unsigned char *)binary, sdslen(binary));
-        sha256_final(&ctx, digest);
-        sds name = sdsnew("wasm_");
-        for (size_t i = 0; i < sizeof(digest); i++)
-            name = sdscatprintf(name, "%02x", digest[i]);
-        sds code = sdscatprintf(sdsempty(), "#!wasm name=%s\n", name);
-        code = sdscatlen(code, binary, sdslen(binary));
-        sdsfree(binary);
-        dictEntry *entry = dictFind(functionsLibGet(), name);
-        functionLibInfo *existing = entry ? dictGetVal(entry) : NULL;
-        sds err = NULL;
-        sds loaded_name = NULL;
-        if (existing ? sdscmp(existing->code, code) != 0 :
-            (loaded_name = functionsCreateWithLibraryCtx(code, 0, &err,
-                functionsLibCtxGetCurrent(), LOAD_TIMEOUT_MS)) == NULL) {
-            serverLog(LL_WARNING, "Cannot load extension %s: %s", path,
-                      err ? err : "persisted library content conflicts with extension");
-            exit(1);
-        }
-        serverLog(LL_NOTICE, "Loaded extension %s as %s", path, name);
-        sdsfree(err);
-        sdsfree(loaded_name);
-        sdsfree(code);
-        sdsfree(name);
+        functionsLoadExtension(listNodeValue(node));
     }
 }
 

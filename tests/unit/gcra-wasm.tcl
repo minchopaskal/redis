@@ -1,13 +1,84 @@
 # The fixture is built from extensions/gcra/gcra.c with its Makefile.
 start_server {tags {"wasm scripting external:skip"}} {
-    if {![dict exists [r function stats] engines WASM]} { return }
+    if {![dict exists [r function stats] engines WASM]} {
+        test {GCRA autoload - non-WASM builds reject a nonempty extension-dir} {
+            set failed [catch {exec src/redis-server --extension-dir /tmp 2>@1} output]
+            assert_equal 1 $failed
+            assert_match {*extension-dir requires BUILD_WASM=yes*} $output
+        }
+        return
+    }
+    test {WASM GCRA - empty extension-dir disables autoload} {
+        assert_equal {} [r function list]
+        assert_equal {{}} [r command info GCRA]
+    }
 }
-set gcra_extension [file normalize extensions/gcra/gcra.wasm]
+set gcra_extension [file normalize extensions/gcra.wasm]
+set gcra_dir [file dirname $gcra_extension]
+set default_dir [file normalize [tmpdir wasm-default]]
+file mkdir "$default_dir/extensions"
+file copy $gcra_extension "$default_dir/extensions/gcra.wasm"
+start_server [list tags {wasm scripting external:skip} omit {extension-dir} \
+    overrides [list dir $default_dir]] {
+    test {WASM autoload - default directory loads shipped extensions without configuration} {
+        assert_equal ./extensions [lindex [r config get extension-dir] 1]
+        assert_equal 1 [llength [r function list]]
+        assert_equal 0 [lindex [r GCRA rl:default 0 1 600] 0]
+        r config rewrite
+        restart_server 0 true false
+        assert_equal 0 [lindex [r GCRA rl:default-restart 0 1 600] 0]
+    }
+}
+start_server [list tags {wasm scripting external:skip} \
+    overrides [list dir $default_dir extension-dir extensions]] {
+    test {WASM autoload - a relative directory override is accepted} {
+        assert_equal extensions [lindex [r config get extension-dir] 1]
+        assert_equal 0 [lindex [r GCRA rl:relative 0 1 600] 0]
+    }
+}
+test {WASM autoload - invalid directories and binaries fail startup} {
+    set tempdir [file normalize [tmpdir gcra-autoload-invalid]]
+    # Missing directories and non-directory paths are errors, not empty scans.
+    foreach invalid_dir [list "$tempdir/missing" [file normalize extensions/gcra/README.md]] {
+        set failed [catch {exec src/redis-server --port 0 --unixsocket "$tempdir/redis.sock" \
+            --dir $tempdir --save "" --extension-dir $invalid_dir 2>@1} output]
+        assert_equal 1 $failed
+        assert_match {*Cannot scan extension directory*} $output
+    }
+    file copy [file normalize extensions/gcra/README.md] "$tempdir/invalid.wasm"
+    set failed [catch {exec src/redis-server --port 0 --unixsocket "$tempdir/redis.sock" \
+        --dir $tempdir --save "" --extension-dir $tempdir 2>@1} output]
+    assert_equal 1 $failed
+    assert_match {*Cannot read valid WASM extension*invalid.wasm*} $output
+
+    set fp [open "$tempdir/nul.conf" w]
+    puts $fp "extension-dir \"$gcra_dir\\x00suffix\""
+    close $fp
+    set failed [catch {exec src/redis-server "$tempdir/nul.conf" 2>@1} output]
+    assert_equal 1 $failed
+    assert_match {*extension-dir must not contain NUL bytes*} $output
+}
+
+set empty_dir [file normalize [tmpdir wasm-empty]]
+start_server [list tags {wasm scripting external:skip} overrides [list extension-dir $empty_dir]] {
+    test {WASM autoload - an empty directory is valid and does not require GCRA} {
+        assert_equal {} [r function list]
+        assert_equal {{}} [r command info GCRA]
+    }
+}
+test {WASM autoload - special files fail without blocking} {
+    set tempdir [file normalize [tmpdir wasm-fifo]]
+    exec mkfifo "$tempdir/pipe.wasm"
+    set failed [catch {exec src/redis-server --port 0 --unixsocket "$tempdir/redis.sock" \
+        --dir $tempdir --save "" --extension-dir $tempdir 2>@1} output]
+    assert_equal 1 $failed
+    assert_match {*Extension*pipe.wasm is not a regular file*} $output
+}
 test {WASM GCRA - invalid startup files fail clearly} {
     set tempdir [file normalize [tmpdir gcra-startup]]
     foreach path [list "$tempdir/missing.wasm" [file normalize extensions/gcra/README.md]] {
         set failed [catch {exec src/redis-server --port 0 --unixsocket "$tempdir/redis.sock" \
-            --dir $tempdir --save "" --loadextension $path 2>@1} output]
+            --dir $tempdir --save "" --extension-dir "" --loadextension $path 2>@1} output]
         assert_equal 1 $failed
         assert_match {*extension*} $output
     }
@@ -22,11 +93,16 @@ test {WASM GCRA - invalid startup files fail clearly} {
     puts -nonewline $fp $bytes
     close $fp
     set failed [catch {exec src/redis-server --port 0 --unixsocket "$tempdir/redis.sock" \
-        --dir $tempdir --save "" --loadextension $gcra_extension --loadextension $changed 2>@1} output]
+        --dir $tempdir --save "" --extension-dir $gcra_dir --loadextension $changed 2>@1} output]
     assert_equal 1 $failed
     assert_match {*already exists*} $output
 }
-start_server [list tags {wasm scripting external:skip} overrides [list loadextension $gcra_extension]] {
+start_server [list tags {wasm scripting external:skip} overrides [list extension-dir $gcra_dir]] {
+    test {WASM GCRA - autoload exposes GCRA without loadextension} {
+        assert_equal 1 [llength [r function list]]
+        assert_equal $gcra_dir [lindex [r config get extension-dir] 1]
+        assert_error {*immutable*} {r config set extension-dir ""}
+    }
     test {WASM GCRA - preloaded function consumes burst then rejects} {
         assert_equal {0 3 2 -1 60} [r GCRA rl:burst 2 1 60]
         assert_equal {0 3 1 -1 120} [r GCRA rl:burst 2 1 60]
@@ -110,6 +186,7 @@ start_server [list tags {wasm scripting external:skip} overrides [list loadexten
     test {WASM GCRA - CONFIG REWRITE retains preload configuration} {
         assert_equal OK [r config rewrite]
         restart_server 0 true false
+        assert_equal $gcra_dir [lindex [r config get extension-dir] 1]
         assert_equal 1 [llength [r function list]]
         assert_equal 0 [lindex [r GCRA rl:rewrite 0 1 60] 0]
     }
@@ -137,7 +214,59 @@ start_server [list tags {wasm scripting external:skip} overrides [list loadexten
     }
 }
 
-start_server [list tags {wasm scripting external:skip} overrides [list loadextension $gcra_extension appendonly yes aof-use-rdb-preamble no]] {
+set installed_dir "[file normalize [tmpdir gcra-installed]]/extensions with spaces"
+file mkdir $installed_dir
+# Create files in reverse order; neither creation order nor a special GCRA
+# basename should affect discovery. Ordering is bytewise, not case-insensitive.
+file copy $gcra_extension "$installed_dir/z-limit.wasm"
+file copy [file normalize tests/assets/wasm/functions-poc.wasm] "$installed_dir/a-functions.wasm"
+file copy [file normalize tests/assets/wasm/commands.wasm] "$installed_dir/B-commands.wasm"
+file link -symbolic "$installed_dir/duplicate.wasm" "$installed_dir/a-functions.wasm"
+file copy [file normalize extensions/gcra/README.md] "$installed_dir/ignored.txt"
+file copy [file normalize extensions/gcra/README.md] "$installed_dir/ignored.WASM"
+file mkdir "$installed_dir/nested.wasm"
+file copy [file normalize extensions/gcra/README.md] "$installed_dir/nested.wasm/invalid.wasm"
+start_server [list tags {wasm scripting external:skip} overrides [list extension-dir "\"$installed_dir\""] \
+    config_lines [list loadextension $gcra_extension loadextension $gcra_extension \
+        loadextension [file normalize tests/assets/wasm/integration.wasm]]] {
+    test {WASM autoload - multiple extensions load in bytewise filename order} {
+        assert_equal 4 [llength [r function list]]
+        assert_equal {hello from wasm} [r fcall hello 0]
+        assert_equal OK [r wasm_zero]
+        assert_equal OK [r abi_init]
+        set loaded {}
+        foreach line [split [exec cat [srv 0 stdout]] "\n"] {
+            if {[regexp {Loaded extension (.*) as wasm_[0-9a-f]+} $line -> filename]} {
+                lappend loaded [file tail $filename]
+            }
+        }
+        assert_equal {B-commands.wasm a-functions.wasm duplicate.wasm z-limit.wasm} [lrange $loaded 0 3]
+    }
+    test {WASM autoload - duplicate and additional loadextension directives survive CONFIG REWRITE} {
+        assert_equal 0 [lindex [r GCRA rl:installed 0 1 600] 0]
+        r config rewrite
+        restart_server 0 true false
+        assert_equal $installed_dir [lindex [r config get extension-dir] 1]
+        assert_equal 4 [llength [r function list]]
+        assert_equal {hello from wasm} [r fcall hello 0]
+        assert_equal OK [r wasm_zero]
+        assert_equal OK [r abi_init]
+        assert_equal 0 [lindex [r GCRA rl:installed-restart 0 1 600] 0]
+    }
+}
+
+start_server [list tags {wasm scripting external:skip} overrides [list loadextension $gcra_extension]] {
+    test {WASM GCRA - explicit loadextension still works with autoload disabled} {
+        assert_equal {} [lindex [r config get extension-dir] 1]
+        assert_equal 0 [lindex [r GCRA rl:explicit 0 1 600] 0]
+        r config rewrite
+        restart_server 0 true false
+        assert_equal 1 [llength [r function list]]
+        assert_equal 0 [lindex [r GCRA rl:explicit-restart 0 1 600] 0]
+    }
+}
+
+start_server [list tags {wasm scripting external:skip} overrides [list extension-dir $gcra_dir appendonly yes aof-use-rdb-preamble no]] {
     test {WASM GCRA - AOF restart restores state with configured extension} {
         assert_equal 0 [lindex [r GCRA rl:aof 0 1 600] 0]
         restart_server 0 true false
@@ -149,7 +278,7 @@ start_server [list tags {wasm scripting external:skip} overrides [list loadexten
     }
 }
 
-start_server [list tags {wasm scripting external:skip} overrides [list loadextension $gcra_extension]] {
+start_server [list tags {wasm scripting external:skip} overrides [list extension-dir $gcra_dir]] {
     start_server {tags {wasm scripting external:skip}} {
         test {WASM GCRA - module and state replicate} {
             r replicaof [srv -1 host] [srv -1 port]

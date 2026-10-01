@@ -182,8 +182,15 @@ and client tracking, and propagates a normal RESTORE effect to replicas/AOF.
 `RESTORE ... REPLACE ABSTTL`, applying state and expiry in the same command.
 Zero disables expiry; negative expiration values fail before writing.
 
-**Startup extensions.** Repeatable `loadextension /absolute/path/module.wasm`
-directives load raw binaries after dataset recovery. SHA-256-derived library
+**Startup extensions.** WASM-enabled builds autoload all top-level `.wasm` files
+from `./extensions` in bytewise filename order, without scanning subdirectories.
+GCRA ships as `extensions/gcra.wasm` alongside its source in `extensions/gcra/`;
+`make -C extensions` rebuilds the guests into the top-level directory.
+The immutable `extension-dir` setting overrides the directory; relative paths
+resolve against Redis's working directory (`dir`), and an empty value disables
+autoload. No bytes are
+embedded in Redis. Repeatable `loadextension /absolute/path/module.wasm`
+directives load additional raw binaries after dataset recovery. SHA-256-derived library
 names make identical persisted libraries idempotent; conflicting exports abort
 startup. See `extensions/README.md` and the C GCRA extension in `extensions/gcra`.
 

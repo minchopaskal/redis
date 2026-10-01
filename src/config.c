@@ -26,6 +26,13 @@
 #include <ctype.h>
 #include <arpa/inet.h>
 
+/* Extension binaries ship with the source tree. */
+#ifdef BUILD_WASM
+#define REDIS_EXTENSION_DIR "./extensions"
+#else
+#define REDIS_EXTENSION_DIR ""
+#endif
+
 /*-----------------------------------------------------------------------------
  * Config file name-value maps.
  *----------------------------------------------------------------------------*/
@@ -2420,6 +2427,20 @@ static int isValidActiveDefrag(int val, const char **err) {
     return 1;
 }
 
+static int isValidExtensionDir(sds val, const char **err) {
+    if (!sdslen(val)) return 1;
+#ifndef BUILD_WASM
+    *err = "extension-dir requires BUILD_WASM=yes";
+    return 0;
+#else
+    if (strlen(val) != sdslen(val)) {
+        *err = "extension-dir must not contain NUL bytes";
+        return 0;
+    }
+    return 1;
+#endif
+}
+
 static int isValidDBfilename(char *val, const char **err) {
     if (!pathIsBaseName(val)) {
         *err = "dbfilename can't be a path, just a filename";
@@ -3450,6 +3471,7 @@ standardConfig static_configs[] = {
     createStringConfig("locale-collate", NULL, MODIFIABLE_CONFIG, ALLOW_EMPTY_STRING, server.locale_collate, "", NULL, updateLocaleCollate),
 
     /* SDS Configs */
+    createSDSConfig("extension-dir", NULL, IMMUTABLE_CONFIG, ALLOW_EMPTY_STRING, server.extension_dir, REDIS_EXTENSION_DIR, isValidExtensionDir, NULL),
     createSDSConfig("masterauth", NULL, MODIFIABLE_CONFIG | SENSITIVE_CONFIG, EMPTY_STRING_IS_NULL, server.masterauth, NULL, NULL, NULL),
     createSDSConfig("requirepass", NULL, MODIFIABLE_CONFIG | SENSITIVE_CONFIG, EMPTY_STRING_IS_NULL, server.requirepass, NULL, NULL, updateRequirePass),
 
