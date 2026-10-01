@@ -10,32 +10,32 @@ type treeNode struct {
 	Right *treeNode
 }
 
-//export redis_abi_version
-func redisABIVersion() int32 {
-	return rediswasm.ABIVersion
-}
+//export redis_wasm_abi_version_0_1_0
+func redisWasmABIVersion() {}
 
-//export redis_init
-func redisInit() int32 {
+// TinyGo supplies _initialize to set up the runtime before Redis calls main.
+//
+//export main
+func redisMain(_ int32, _ int32) int32 {
 	var err error
 	binaryTreeType, err = rediswasm.RegisterBlobType("binary_tree")
 	if err != nil {
-		return 1
+		panic(err)
 	}
 	if err := rediswasm.RegisterFunction("go_set", "go_set"); err != nil {
-		return 1
+		panic(err)
 	}
 	if err := rediswasm.RegisterFunction("go_get", "go_get"); err != nil {
-		return 1
+		panic(err)
 	}
 	if err := rediswasm.RegisterFunction("tree_create", "tree_create"); err != nil {
-		return 1
+		panic(err)
 	}
 	if err := rediswasm.RegisterFunction("tree_insert", "tree_insert"); err != nil {
-		return 1
+		panic(err)
 	}
 	if err := rediswasm.RegisterFunction("tree_contains", "tree_contains"); err != nil {
-		return 1
+		panic(err)
 	}
 	return 0
 }

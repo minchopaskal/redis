@@ -5,6 +5,10 @@ on top of the C ABI. `T` must be trivially copyable. Because blob ownership is
 the exact module hash, a binary with a different C++ ABI or structure layout
 cannot claim the stored value.
 
+The example exports the void `redis_wasm_abi_version_0_1_0` marker and registers
+its type and functions in `_initialize`, trapping on registration errors. The
+marker is never called. See the C SDK README for the startup contract.
+
 ```sh
 make -C sdk/wasm/cpp
 (printf '#!wasm name=cppexample\n'; \

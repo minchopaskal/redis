@@ -9,12 +9,17 @@ The initial implementation is intentionally narrower than the complete design:
 - Build with `BUILD_WASM=yes`. WAMR 2.4.5 is vendored in `deps/wamr` and built
   as a classic-interpreter-only static library. The runtime uses a 64 MiB
   Redis-owned pool, each module is capped at 128 64-KiB pages (8 MiB), load
-  execution is capped at 10 million instructions, and calls at 100 million.
-- A module must export `memory`, `redis_abi_version() -> i32` (returning `1`),
-  and `redis_init() -> i32` (returning `0` on success). Registered function
-  exports have the signature `() -> i32`, where zero means success. If a
-  module exports `_initialize() -> void` (as TinyGo reactor modules do), Redis
-  invokes it once before the ABI and registration exports.
+  each startup call is capped at 10 million instructions, and callbacks at
+  100 million.
+- A module must export `memory` and the void marker
+  `redis_wasm_abi_version_0_1_0() -> void`. Redis detects the ABI by the export
+  name and never calls the marker. Startup follows the Proxy-Wasm integration
+  contract: `_initialize() -> void`, then optional `main(i32, i32) -> i32`
+  with two zero arguments and an ignored result; otherwise `_start() -> void`
+  when `_initialize` is absent. At least one of `_initialize` or `_start` is
+  required. All startup exports run in the registration-only context with
+  instruction metering. Registered callbacks still have signature
+  `() -> i32`, where zero means success.
 - Packed input and command buffers are little-endian: a `u32` item count,
   followed by repeated `u32 byte_length` and raw byte payload pairs. Invocation
   input contains keys first, followed by arguments; `keys_count()` identifies
@@ -29,7 +34,7 @@ The initial implementation is intentionally narrower than the complete design:
   current flagless WASM functions are rejected by `FCALL_RO`.
 - `OBJ_WASM` stores the binary 32-byte SHA-256 digest of the exact WASM module,
   a registered type name, and an opaque payload. Named types contain letters,
-  numbers, or underscores and are registered during `redis_init`. Blob access
+  numbers, or underscores and are registered during module startup. Blob access
   is restricted to the exact module digest/type pair.
 - Function libraries retain their original binary payload through RDB and
   `FUNCTION DUMP`/`RESTORE`. A replica loading such a library must also have
@@ -52,9 +57,32 @@ Building on Functions rather than a new command family means the following alrea
 - **Recursion protection:** `EVAL`, `FCALL` and `FUNCTION LOAD` are already flagged `NOSCRIPT`, so a guest cannot re-enter the engine.
 - **Observability:** the outer `FCALL` and every command the guest issues appear in `commandstats`, `errorstats`, `slowlog` and latency tracking.
 
-At load the host instantiates the module once in a registration-only context and calls its exported `redis_init`, which declares each callable function via `register_function`. The host resolves those export names once at load, so `FCALL` dispatch is a direct call into the resolved export. WASM functions declare no script flags in v1 (there is no `no-writes` / `allow-oom` equivalent yet).
+At load the host validates the ABI marker and selected startup signatures before
+instantiation. Initialization follows the
+[Proxy-Wasm v0.2.1 integration contract](https://github.com/proxy-wasm/spec/blob/main/abi-versions/v0.2.1/README.md#integration),
+with an independently versioned Redis ABI (currently 0.1.0); Redis does not
+implement the proxy host API.
+When `_initialize` is exported, Redis calls it once per instance, followed by
+`main(0, 0)` if exported. In this case `_start` is ignored. Without `_initialize`,
+Redis calls `_start` and ignores `main`. These are exported functions, not a
+WebAssembly start section. Toolchains that generate runtime initialization
+should export it as `_initialize` and put registration in `main`; freestanding
+guests may register directly in `_initialize` or `_start`.
 
-**OPEN:** whether the guest must export an ABI version that the host validates at load.
+Startup declares callable functions via `register_function` or `create_command`
+and types via `blob_register`. The host resolves callback exports at load, so
+`FCALL` dispatch is a direct call into the resolved export. Registration imports
+report errors to the guest; guests must trap on fatal startup errors. A trap
+aborts loading and discards partial registrations, preserving the previous
+library on failed replacement. A nonzero `main` result is deliberately ignored.
+WASM functions declare no script flags yet (there is no `no-writes` /
+`allow-oom` equivalent).
+
+This replaces the old return-value version query and Redis-specific init export;
+there is no legacy fallback. Rebuild existing extensions and SDK examples before
+loading them with this engine, including libraries persisted in RDB or AOF.
+Rebuilding changes the module SHA-256 owner, so old blobs require deliberate
+migration or expiry; a rebuilt module cannot silently claim them.
 
 ## 2. Bare-minimum host API
 
@@ -87,8 +115,10 @@ blob_write_expire(key, klen, type, tlen, src, slen, expire_at_ms: i64) -> i32
 
 ;; guest exports
 memory                                   ;; exported linear memory
-redis_abi_version() -> i32
-redis_init() -> i32                      ;; registration only
+redis_wasm_abi_version_0_1_0() -> void     ;; marker only, never called
+_initialize() -> void                    ;; preferred startup, registration only
+main(unused: i32, unused: i32) -> i32     ;; optional, only after _initialize; result ignored
+_start() -> void                         ;; fallback, only without _initialize
 <one export per registered function>() -> i32
 ```
 

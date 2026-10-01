@@ -4,8 +4,6 @@ package rediswasm
 
 import "unsafe"
 
-const ABIVersion int32 = 1
-
 type Error string
 
 func (e Error) Error() string { return string(e) }
@@ -224,7 +222,7 @@ func LastError() string {
 	return string(message)
 }
 
-// RegisterFunction registers a no-argument i32 callback during redis_init.
+// RegisterFunction registers a no-argument i32 callback during module startup.
 func RegisterFunction(name, exportName string) error {
 	nameBytes := []byte(name)
 	exportBytes := []byte(exportName)
@@ -243,7 +241,7 @@ func RegisterFunction(name, exportName string) error {
 	return nil
 }
 
-// RegisterBlobType declares a named opaque type during redis_init.
+// RegisterBlobType declares a named opaque type during module startup.
 func RegisterBlobType(name string) (BlobType, error) {
 	value := []byte(name)
 	length, err := checkedLength(len(value))

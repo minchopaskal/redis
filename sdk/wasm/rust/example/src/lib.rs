@@ -3,7 +3,7 @@
 use core::panic::PanicInfo;
 use redis_wasm::{
     blob_read, blob_write, error, parse_i32, read_input, register_blob_type, register_function,
-    reply_integer, status, Slice, ABI_VERSION,
+    reply_integer, status, Slice,
 };
 
 const TYPE_NAME: &str = "rust_hashmap";
@@ -96,28 +96,15 @@ fn find_insert_slot(payload: &[u8], key: i32) -> Option<(usize, bool)> {
 }
 
 #[no_mangle]
-pub extern "C" fn redis_abi_version() -> i32 {
-    ABI_VERSION
-}
+pub extern "C" fn redis_wasm_abi_version_0_1_0() {}
 
 #[no_mangle]
-pub extern "C" fn redis_init() -> i32 {
-    if register_blob_type(TYPE_NAME).is_err() {
-        return 1;
-    }
-    if register_function("rust_map_create", "rust_map_create").is_err() {
-        return 2;
-    }
-    if register_function("rust_map_set", "rust_map_set").is_err() {
-        return 3;
-    }
-    if register_function("rust_map_get", "rust_map_get").is_err() {
-        return 4;
-    }
-    if register_function("rust_map_len", "rust_map_len").is_err() {
-        return 5;
-    }
-    0
+pub extern "C" fn _initialize() {
+    register_blob_type(TYPE_NAME).unwrap();
+    register_function("rust_map_create", "rust_map_create").unwrap();
+    register_function("rust_map_set", "rust_map_set").unwrap();
+    register_function("rust_map_get", "rust_map_get").unwrap();
+    register_function("rust_map_len", "rust_map_len").unwrap();
 }
 
 #[no_mangle]

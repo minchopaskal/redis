@@ -43,7 +43,9 @@ be reused directly.
 
 Run `./runtest --single unit/gcra-wasm --clients 1` with a WASM-enabled build.
 
-`gcraInit()` calls `redis_wasm_create_command("GCRA", "GCRA", -5, 1)`.
+`gcraInitialize()`, exported as `_initialize() -> void`, calls
+`redis_wasm_create_command("GCRA", "GCRA", -5, 1)` and traps on registration errors.
+The void `redis_wasm_abi_version_0_1_0` export declares the ABI; Redis never calls it.
 This declares at least five command arguments (including GCRA), with one
 leading key, and registers the same callback for FCALL. Loading fails if a
 built-in or module command already owns the name GCRA.

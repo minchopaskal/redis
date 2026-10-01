@@ -8,6 +8,9 @@
  */
 
 #include "functions.h"
+#ifdef BUILD_WASM
+#include "function_wasm.h"
+#endif
 #include "sds.h"
 #include "dict.h"
 #include "adlist.h"

@@ -148,16 +148,15 @@ static unsigned gcraFormatInteger(uint8_t *dst, int64_t value) {
     return p;
 }
 
-REDIS_WASM_EXPORT("redis_abi_version")
-int32_t gcraAbiVersion(void) {
-    return REDIS_WASM_ABI_VERSION;
-}
+REDIS_WASM_EXPORT(REDIS_WASM_ABI_MARKER)
+void gcraAbiVersion(void) {}
 
-REDIS_WASM_EXPORT("redis_init")
-int32_t gcraInit(void) {
-    if (redis_wasm_register_blob_type("gcra_v1") != REDIS_WASM_OK) return 1;
-    if (redis_wasm_create_command("GCRA", "GCRA", -5, 1) != REDIS_WASM_OK) return 1;
-    return 0;
+REDIS_WASM_EXPORT("_initialize")
+void gcraInitialize(void) {
+    if (redis_wasm_register_blob_type("gcra_v1") != REDIS_WASM_OK)
+        __builtin_trap();
+    if (redis_wasm_create_command("GCRA", "GCRA", -5, 1) != REDIS_WASM_OK)
+        __builtin_trap();
 }
 
 /* GCRA key max_burst tokens_per_period period [TOKENS count].

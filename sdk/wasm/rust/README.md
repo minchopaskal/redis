@@ -12,6 +12,10 @@ make -C sdk/wasm/rust
   src/redis-cli -x FUNCTION LOAD
 ```
 
+The example exports the void marker `redis_wasm_abi_version_0_1_0`, which Redis
+never calls. Registration runs in `_initialize() -> void`; errors panic through
+the example's trapping panic handler, aborting the library load.
+
 The example implements a fixed-capacity, open-addressed hash map with
 multiplicative hashing and linear probing. Its slot array is serialized into a
 `rust_hashmap` blob.

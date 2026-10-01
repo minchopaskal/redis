@@ -56,22 +56,19 @@ static int validate_list(uint8_t *buffer, uint32_t len, uint32_t *count_out,
     return REDIS_WASM_OK;
 }
 
-REDIS_WASM_EXPORT("redis_abi_version")
-int32_t redis_abi_version(void) {
-    return REDIS_WASM_ABI_VERSION;
-}
+REDIS_WASM_EXPORT(REDIS_WASM_ABI_MARKER)
+void redisWasmAbiVersion(void) {}
 
-REDIS_WASM_EXPORT("redis_init")
-int32_t redis_init(void) {
+REDIS_WASM_EXPORT("_initialize")
+void listInitialize(void) {
     if (redis_wasm_register_blob_type((const char *)list_type_name) != 0)
-        return 1;
+        __builtin_trap();
     if (redis_wasm_register_function("c_list_create", "c_list_create") != 0)
-        return 2;
+        __builtin_trap();
     if (redis_wasm_register_function("c_list_push", "c_list_push") != 0)
-        return 3;
+        __builtin_trap();
     if (redis_wasm_register_function("c_list_len", "c_list_len") != 0)
-        return 4;
-    return 0;
+        __builtin_trap();
 }
 
 REDIS_WASM_EXPORT("c_list_create")

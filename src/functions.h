@@ -122,9 +122,6 @@ int functionLibDeclareCommand(functionLibInfo *li, sds name, int arity, int numk
 void functionDirectCommand(client *c);
 
 int luaEngineInitEngine(void);
-#ifdef BUILD_WASM
-int wasmEngineInitEngine(void);
-#endif
 int functionsInit(void);
 void functionsLoadExtensions(void);
 void functionsFree(functionsLibCtx *lib_ctx, dict *engs);

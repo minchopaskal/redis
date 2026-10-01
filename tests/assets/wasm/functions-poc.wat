@@ -31,10 +31,9 @@
   (data (i32.const 460)
     "\03\00\00\00\03\00\00\00SET\08\00\00\00wasm-key\0a\00\00\00wasm-value")
 
-  (func (export "redis_abi_version") (result i32)
-    i32.const 1)
+  (func (export "redis_wasm_abi_version_0_1_0"))
 
-  (func (export "redis_init") (result i32)
+  (func (export "_initialize")
     i32.const 0 i32.const 5 i32.const 5 i32.const 8 call $register_function drop
     i32.const 32 i32.const 3 i32.const 35 i32.const 6 call $register_function drop
     i32.const 64 i32.const 9 i32.const 73 i32.const 6 call $register_function drop
@@ -44,8 +43,7 @@
     i32.const 192 i32.const 10 i32.const 202 i32.const 13 call $register_function drop
     i32.const 240 i32.const 5 i32.const 245 i32.const 8 call $register_function drop
     i32.const 600 i32.const 4 i32.const 604 i32.const 7 call $register_function drop
-    i32.const 630 i32.const 7 i32.const 637 i32.const 10 call $register_function drop
-    i32.const 0)
+    i32.const 630 i32.const 7 i32.const 637 i32.const 10 call $register_function drop)
 
   (func (export "hello_fn") (result i32)
     i32.const 300 i32.const 15 call $status_reply

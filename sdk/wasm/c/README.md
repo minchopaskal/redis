@@ -5,10 +5,16 @@ Functions ABI. It requires Clang with the `wasm32-unknown-unknown` target and
 does not depend on WASI or a guest libc.
 
 For direct Redis commands, call
-`redis_wasm_create_command(name, export_name, arity, numkeys)` during `redis_init`.
+`redis_wasm_create_command(name, export_name, arity, numkeys)` during startup.
 It also registers an FCALL function. Arity includes the command name (negative
 means minimum); the first `numkeys` arguments are keys. See `extensions/gcra`
 for a rate-limiter example using this API.
+
+Export a `() -> void` function using `REDIS_WASM_EXPORT(REDIS_WASM_ABI_MARKER)`;
+the marker's name declares the ABI version, and Redis never calls it. The example
+registers its type and functions in `_initialize() -> void`, trapping on errors.
+Redis calls optional `main(i32, i32) -> i32` after `_initialize`, or falls back to
+`_start() -> void` only if `_initialize` is absent. The `main` result is ignored.
 
 ```sh
 make -C sdk/wasm/c

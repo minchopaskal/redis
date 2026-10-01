@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define REDIS_WASM_ABI_VERSION 1
+#define REDIS_WASM_ABI_MARKER "redis_wasm_abi_version_0_1_0"
 #define REDIS_WASM_OK 0
 #define REDIS_WASM_ERR (-1)
 #define REDIS_WASM_BUFFER_TOO_SMALL (-2)
