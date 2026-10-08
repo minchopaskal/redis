@@ -141,6 +141,7 @@ lua: .make-prerequisites
 
 ifeq ($(uname_S),Darwin)
 WAMR_PLATFORM=darwin
+WAMR_ARCH_FLAGS=-DCMAKE_OSX_ARCHITECTURES=$(uname_M)
 else
 WAMR_PLATFORM=linux
 endif
@@ -153,19 +154,37 @@ else
 WAMR_TARGET=X86_64
 endif
 
+WASM_EXECUTION?=interp
+ifeq ($(WASM_EXECUTION),fast-jit)
+WAMR_FAST_JIT=1
+WAMR_INSTRUCTION_METERING=0
+else
+WAMR_FAST_JIT=0
+WAMR_INSTRUCTION_METERING=1
+endif
+
 wamr: .make-prerequisites
+ifeq (,$(filter $(WASM_EXECUTION),interp fast-jit))
+	$(error Unsupported WASM_EXECUTION=$(WASM_EXECUTION))
+endif
+ifeq ($(WAMR_FAST_JIT),1)
+ifneq ($(WAMR_TARGET),X86_64)
+	$(error WAMR Fast JIT requires an x86-64 build; use WASM_EXECUTION=interp on this architecture)
+endif
+endif
 	@printf '%b %b\n' $(MAKECOLOR)MAKE$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR)
 	cmake -S wamr/product-mini/platforms/$(WAMR_PLATFORM) -B wamr/build-redis \
+		$(WAMR_ARCH_FLAGS) \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_C_COMPILER="$(CC)" \
 		-DCMAKE_C_FLAGS="$(DEPS_CFLAGS)" \
 		-DWAMR_BUILD_TARGET="$(WAMR_TARGET)" \
 		-DWAMR_BUILD_INTERP=1 \
 		-DWAMR_BUILD_FAST_INTERP=0 \
-		-DWAMR_BUILD_INSTRUCTION_METERING=1 \
+		-DWAMR_BUILD_INSTRUCTION_METERING=$(WAMR_INSTRUCTION_METERING) \
 		-DWAMR_BUILD_AOT=0 \
 		-DWAMR_BUILD_JIT=0 \
-		-DWAMR_BUILD_FAST_JIT=0 \
+		-DWAMR_BUILD_FAST_JIT=$(WAMR_FAST_JIT) \
 		-DWAMR_BUILD_LIBC_BUILTIN=0 \
 		-DWAMR_BUILD_LIBC_WASI=0 \
 		-DWAMR_BUILD_SIMD=0 \
