@@ -40,6 +40,8 @@ endif
 DEPENDENCY_TARGETS=hiredis linenoise lua hdr_histogram fpconv xxhash tre
 NODEPS:=clean distclean
 BUILD_WASM?=no
+WASM_EXECUTION?=interp
+WASM_METERING?=fuel
 
 # Default settings
 STD=-pedantic -DREDIS_STATIC=''
@@ -281,9 +283,60 @@ FINAL_CFLAGS+= -I../deps/hiredis -I../deps/linenoise -I../deps/lua/src -I../deps
 
 WAMR_SERVER_LIB=
 ifeq ($(BUILD_WASM),yes)
-	DEPENDENCY_TARGETS+=wamr
 	FINAL_CFLAGS+=-DBUILD_WASM=1 -I../deps/wamr/core/iwasm/include
 	WAMR_SERVER_LIB=../deps/wamr/build-redis/libiwasm.a
+	FINAL_CFLAGS+=-DWASM_EXECUTION_$(subst -,_,$(WASM_EXECUTION))=1
+ifeq (,$(filter $(WASM_METERING),fuel epoch))
+$(error Unsupported WASM_METERING=$(WASM_METERING); use fuel or epoch)
+endif
+	FINAL_CFLAGS+=-DWASM_METERING_$(WASM_METERING)=1
+ifeq (,$(filter $(WASM_EXECUTION),interp fast-jit))
+$(error Unsupported WASM_EXECUTION=$(WASM_EXECUTION); use interp or fast-jit)
+endif
+ifeq ($(uname_S),Darwin)
+	WAMR_PLATFORM=darwin
+	WAMR_ARCH_FLAGS=-DCMAKE_OSX_ARCHITECTURES=$(uname_M)
+else ifeq ($(uname_S),Linux)
+	WAMR_PLATFORM=linux
+else ifeq ($(uname_S),FreeBSD)
+	WAMR_PLATFORM=freebsd
+else
+$(error BUILD_WASM is unsupported on $(uname_S))
+endif
+ifneq (,$(findstring -m32,$(CFLAGS)))
+	WAMR_TARGET=X86_32
+else ifneq (,$(filter arm64 aarch64,$(uname_M)))
+	WAMR_TARGET=AARCH64
+else ifneq (,$(filter x86_64 amd64,$(uname_M)))
+	WAMR_TARGET=X86_64
+else ifneq (,$(filter i386 i486 i586 i686,$(uname_M)))
+	WAMR_TARGET=X86_32
+else
+$(error BUILD_WASM is unsupported on $(uname_M))
+endif
+ifeq ($(WASM_EXECUTION),fast-jit)
+ifneq ($(WAMR_TARGET),X86_64)
+$(error WAMR Fast JIT requires an x86-64 build; use WASM_EXECUTION=interp)
+endif
+	WAMR_FAST_JIT=1
+	WAMR_INSTRUCTION_METERING=0
+ifeq ($(uname_S),Darwin)
+	FINAL_LIBS+=-lc++
+else
+	FINAL_LIBS+=-lstdc++
+endif
+else
+	WAMR_FAST_JIT=0
+	WAMR_INSTRUCTION_METERING=1
+endif
+ifeq ($(WASM_METERING),epoch)
+	WAMR_INSTRUCTION_METERING=0
+endif
+
+# Configure the unmodified runtime here rather than changing the dependency
+# Makefile. Track runtime inputs and the archive so changes rebuild and relink.
+wamr_source_files = $(foreach dir,$(1),$(wildcard $(dir)/*.c $(dir)/*.cpp $(dir)/*.h $(dir)/*.S $(dir)/*.s $(dir)/*.in $(dir)/*.cmake $(dir)/CMakeLists.txt) $(call wamr_source_files,$(wildcard $(dir)/*/)))
+WAMR_SOURCE_FILES := $(call wamr_source_files,../deps/wamr/core ../deps/wamr/build-scripts ../deps/wamr/product-mini/platforms/$(WAMR_PLATFORM))
 endif
 
 # Determine systemd support and/or build preference (defaulting to auto-detection)
@@ -411,7 +464,10 @@ REDIS_SERVER_NAME=redis-server$(PROG_SUFFIX)
 REDIS_SENTINEL_NAME=redis-sentinel$(PROG_SUFFIX)
 REDIS_SERVER_OBJ=threads_mngr.o memory_prefetch.o adlist.o quicklist.o ae.o anet.o dict.o ebuckets.o eventnotifier.o iothread.o mstr.o entry.o kvstore.o fwtree.o estore.o server.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort.o zipmap.o sha1.o ziplist.o release.o networking.o util.o object.o db.o replication.o rdb.o t_string.o t_list.o t_set.o t_zset.o t_hash.o t_array.o sparsearray.o config.o aof.o pubsub.o multi.o debug.o sort.o intset.o syncio.o cluster.o cluster_asm.o cluster_legacy.o cluster_slot_stats.o crc16.o endianconv.o slowlog.o eval.o bio.o rio.o rand.o memtest.o syscheck.o crcspeed.o crccombine.o crc64.o bitops.o sentinel.o notify.o setproctitle.o blocked.o hyperloglog.o latency.o sparkline.o redis-check-rdb.o redis-check-aof.o geo.o lazyfree.o module.o evict.o expire.o geohash.o geohash_helper.o childinfo.o defrag.o siphash.o rax.o t_stream.o listpack.o localtime.o lolwut.o lolwut5.o lolwut6.o lolwut8.o acl.o tracking.o socket.o tls.o sha256.o timeout.o setcpuaffinity.o monotonic.o mt19937-64.o resp_parser.o call_reply.o script_lua.o script.o functions.o function_lua.o commands.o strl.o connection.o unix.o logreqres.o keymeta.o chk.o hotkeys.o gcra.o vector.o fast_float_strtod.o client_comp.o
 ifeq ($(BUILD_WASM),yes)
-	REDIS_SERVER_OBJ+=function_wasm.o
+	REDIS_SERVER_OBJ+=function_wasm.o wasm_meter.o
+ifeq ($(WASM_METERING),epoch)
+	REDIS_SERVER_OBJ+=wasm_epoch.o
+endif
 endif
 REDIS_CLI_NAME=redis-cli$(PROG_SUFFIX)
 REDIS_CLI_OBJ=anet.o adlist.o dict.o redis-cli.o zmalloc.o release.o ae.o redisassert.o crcspeed.o crccombine.o crc64.o siphash.o crc16.o monotonic.o cli_common.o mt19937-64.o strl.o cli_commands.o
@@ -448,6 +504,8 @@ persist-settings: distclean
 	echo BUILD_TLS=$(BUILD_TLS) >> .make-settings
 	echo BUILD_COMPRESSION=$(BUILD_COMPRESSION) >> .make-settings
 	echo BUILD_WASM=$(BUILD_WASM) >> .make-settings
+	echo WASM_EXECUTION=$(WASM_EXECUTION) >> .make-settings
+	echo WASM_METERING=$(WASM_METERING) >> .make-settings
 	echo USE_SYSTEMD=$(USE_SYSTEMD) >> .make-settings
 	echo CFLAGS=$(CFLAGS) >> .make-settings
 	echo LDFLAGS=$(LDFLAGS) >> .make-settings
@@ -472,9 +530,38 @@ ifneq ($(strip $(PREV_FINAL_LDFLAGS)), $(strip $(FINAL_LDFLAGS)))
 .make-prerequisites: persist-settings
 endif
 
+ifeq ($(BUILD_WASM),yes)
+$(WAMR_SERVER_LIB): Makefile .make-prerequisites $(WAMR_SOURCE_FILES)
+	cmake -S ../deps/wamr/product-mini/platforms/$(WAMR_PLATFORM) -B ../deps/wamr/build-redis \
+		$(WAMR_ARCH_FLAGS) \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_C_COMPILER="$(CC)" \
+		-DCMAKE_C_FLAGS="$(CFLAGS)" \
+		-DCMAKE_CXX_COMPILER="$(CXX)" \
+		-DCMAKE_CXX_FLAGS="$(CXXFLAGS)" \
+		-DWAMR_BUILD_TARGET="$(WAMR_TARGET)" \
+		-DWAMR_BUILD_INTERP=1 \
+		-DWAMR_BUILD_FAST_INTERP=0 \
+		-DWAMR_BUILD_INSTRUCTION_METERING=$(WAMR_INSTRUCTION_METERING) \
+		-DWAMR_BUILD_AOT=0 \
+		-DWAMR_BUILD_JIT=0 \
+		-DWAMR_BUILD_FAST_JIT=$(WAMR_FAST_JIT) \
+		-DWAMR_BUILD_LIBC_BUILTIN=0 \
+		-DWAMR_BUILD_LIBC_WASI=0 \
+		-DWAMR_BUILD_SIMD=0 \
+		-DWAMR_BUILD_REF_TYPES=0 \
+		-DWAMR_BUILD_MULTI_MODULE=0 \
+		-DWAMR_BUILD_LIB_PTHREAD=0
+	+cmake --build ../deps/wamr/build-redis --target vmlib
+	@touch $@
+
+wamr: $(WAMR_SERVER_LIB)
+.PHONY: wamr
+endif
+
 # redis-server
-$(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ) $(REDIS_VEC_SETS_OBJ)
-	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/hdr_histogram/libhdrhistogram.a ../deps/fpconv/libfpconv.a ../deps/xxhash/libxxhash.a ../deps/tre/libtre.a $(WAMR_SERVER_LIB) $(FINAL_LIBS)
+$(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ) $(REDIS_VEC_SETS_OBJ) $(WAMR_SERVER_LIB)
+	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/hdr_histogram/libhdrhistogram.a ../deps/fpconv/libfpconv.a ../deps/xxhash/libxxhash.a ../deps/tre/libtre.a $(FINAL_LIBS)
 
 # redis-sentinel
 $(REDIS_SENTINEL_NAME): $(REDIS_SERVER_NAME)

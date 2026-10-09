@@ -19,10 +19,17 @@
 #include "function_wasm.h"
 #include "sha256.h"
 #include "wasm_export.h"
+#include "wasm_meter.h"
+#ifdef WASM_METERING_epoch
+#include "wasm_epoch.h"
+#endif
 
 #include <limits.h>
 #include <stdint.h>
 #include <string.h>
+#ifdef WASM_METERING_epoch
+#include <time.h>
+#endif
 
 #define WASM_ENGINE_NAME "WASM"
 #define WASM_ABI_PREFIX "redis_wasm_abi_version_"
@@ -49,6 +56,8 @@ typedef struct wasmLibraryCtx {
     sds name;
     sds blob_owner;
     dict *blob_types;
+    void *fuel;
+    void *fuel_exhausted;
     size_t refs;
 } wasmLibraryCtx;
 
@@ -95,6 +104,40 @@ typedef struct wasmRespParser {
  * process-wide signal/allocator state is not safely reinitializable, so keep
  * the runtime alive and only recreate the Redis engine wrapper. */
 static wasmEngineCtx *wasm_global_ctx;
+
+#ifdef WASM_METERING_epoch
+/* Injected probes read the monotonic clock on the executing Redis thread.
+ * There is no epoch timer thread or shared clock state to restart after fork.
+ * Keep the invocation deadline thread-local and restore it after each call. */
+static __thread uint64_t wasm_epoch_deadline;
+
+static uint64_t wasmEpochNow(int round_up) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t)now.tv_sec * 1000 +
+           ((uint64_t)now.tv_nsec + (round_up ? 999999 : 0)) / 1000000;
+}
+
+static uint64_t wasmEpochArm(uint64_t timeout) {
+    uint64_t previous = wasm_epoch_deadline;
+    uint64_t now = wasmEpochNow(1);
+    wasm_epoch_deadline = timeout > UINT64_MAX - now ? UINT64_MAX : now + timeout;
+    return previous;
+}
+
+static int wasmEpochExpired(void) {
+    return !wasm_epoch_deadline || wasmEpochNow(0) >= wasm_epoch_deadline;
+}
+
+static int32_t wasmEpochPoll(wasm_exec_env_t exec_env) {
+    if (wasmEpochExpired()) {
+        wasm_runtime_set_exception(wasm_runtime_get_module_inst(exec_env),
+                                   "epoch deadline exceeded");
+        return 0;
+    }
+    return WASM_EPOCH_POLL_STRIDE;
+}
+#endif
 
 static dictType wasmBlobTypeDictType = {
     .hashFunction = dictSdsHash,
@@ -540,9 +583,30 @@ static int callNoArgsI32(wasmLibraryCtx *library, wasm_function_inst_t function,
 {
     wasm_val_t wasm_result = {.kind = WASM_I32};
     wasm_runtime_clear_exception(library->instance);
-    wasm_runtime_set_instruction_count_limit(library->exec_env, instruction_limit);
-    if (!wasm_runtime_call_wasm_a(library->exec_env, function, 1, &wasm_result, 0, NULL)) {
+#ifdef WASM_METERING_epoch
+    UNUSED(instruction_limit);
+    uint64_t previous_deadline = wasmEpochArm((uint64_t)server.wasm_epoch_timeout_ms);
+#else
+    uint64_t fuel = instruction_limit;
+    uint32_t exhausted = 0;
+    memcpy(library->fuel, &fuel, sizeof(fuel));
+    memcpy(library->fuel_exhausted, &exhausted, sizeof(exhausted));
+#endif
+    int success = wasm_runtime_call_wasm_a(library->exec_env, function, 1, &wasm_result, 0, NULL);
+#ifdef WASM_METERING_epoch
+    /* Also reject finite paths that complete between sampled guest probes. */
+    if (success && wasmEpochExpired()) {
+        wasm_runtime_set_exception(library->instance, "epoch deadline exceeded");
+        success = 0;
+    }
+    wasm_epoch_deadline = previous_deadline;
+#endif
+    if (!success) {
         const char *exception = wasm_runtime_get_exception(library->instance);
+#ifndef WASM_METERING_epoch
+        memcpy(&exhausted, library->fuel_exhausted, sizeof(exhausted));
+        if (exhausted) exception = "instruction limit exceeded";
+#endif
         *err = sdscatprintf(sdsempty(), "%s", exception ? exception : "unknown WebAssembly trap");
         return C_ERR;
     }
@@ -556,12 +620,24 @@ static int wasmCallStartup(wasmLibraryCtx *library, const char *name, sds *err) 
     wasm_val_t args[2] = {{.kind = WASM_I32, .of.i32 = 0}, {.kind = WASM_I32, .of.i32 = 0}};
     wasm_val_t result = {.kind = WASM_I32};
     wasm_runtime_clear_exception(library->instance);
-    wasm_runtime_set_instruction_count_limit(library->exec_env, WASM_LOAD_INSTRUCTION_LIMIT);
-    if (!wasm_runtime_call_wasm_a(library->exec_env, function, is_main ? 1 : 0,
-                                is_main ? &result : NULL, is_main ? 2 : 0,
-                                is_main ? args : NULL))
-    {
+    /* Keep one shared budget/deadline for implicit startup, constructors and
+     * both explicit startup exports. */
+    int success = wasm_runtime_call_wasm_a(library->exec_env, function, is_main ? 1 : 0,
+                                          is_main ? &result : NULL, is_main ? 2 : 0,
+                                          is_main ? args : NULL);
+#ifdef WASM_METERING_epoch
+    if (success && wasmEpochExpired()) {
+        wasm_runtime_set_exception(library->instance, "epoch deadline exceeded");
+        success = 0;
+    }
+#endif
+    if (!success) {
         const char *exception = wasm_runtime_get_exception(library->instance);
+#ifndef WASM_METERING_epoch
+        uint32_t exhausted;
+        memcpy(&exhausted, library->fuel_exhausted, sizeof(exhausted));
+        if (exhausted) exception = "instruction limit exceeded";
+#endif
         wasmHostCtx *ctx = wasmGetHostCtx(library->exec_env);
         *err = sdscatprintf(sdsempty(), "Error running WebAssembly %s: %s", name,
                            exception ? exception : "unknown WebAssembly trap");
@@ -1041,6 +1117,9 @@ static int32_t wasmBlobWrite(wasm_exec_env_t env, int32_t key, int32_t klen,
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
 static NativeSymbol wasmNativeSymbols[] = {
+#ifdef WASM_METERING_epoch
+    {WASM_EPOCH_POLL, wasmEpochPoll, "()i", NULL},
+#endif
     {"log", wasmLog, "(iii)", NULL},
     {"input_len", wasmInputLen, "()i", NULL},
     {"input_read", wasmInputRead, "(ii)i", NULL},
@@ -1073,15 +1152,24 @@ static int wasmEngineCreate(void *engine_ctx, functionLibInfo *li, sds blob,
                             size_t timeout, sds *err)
 {
     UNUSED(engine_ctx);
+#ifdef WASM_METERING_epoch
+    uint64_t previous_deadline = 0;
+    int deadline_armed = 0;
+#else
     UNUSED(timeout);
+#endif
     const unsigned char *bytes = (unsigned char *)blob;
     size_t length = sdslen(blob);
     if (length && bytes[0] == '\n') {
         bytes++;
         length--;
     }
-    if (length > UINT32_MAX || length < 8) {
+    if (length > WASM_METER_MAX_INPUT || length < 8) {
         *err = sdsnew("Invalid WebAssembly module");
+        return C_ERR;
+    }
+    if (memcmp(bytes, "\0asm\1\0\0\0", 8)) {
+        *err = sdsnew("Error loading WebAssembly module: invalid magic or version");
         return C_ERR;
     }
 
@@ -1108,6 +1196,34 @@ static int wasmEngineCreate(void *engine_ctx, functionLibInfo *li, sds blob,
         goto error;
     }
 
+    /* Validate original indices before appending private meter state/imports.
+     * Otherwise an invalid guest index could become a reference to meter state.
+     * The loader may rewrite its input, so inject from the untouched blob. */
+    uint8_t *metered = NULL;
+    size_t metered_length = 0;
+#ifdef WASM_METERING_epoch
+    int injected = wasmEpochInject(bytes, length, &metered, &metered_length,
+                                    error_buf, sizeof(error_buf));
+#else
+    int injected = wasmMeterInject(bytes, length, WASM_LOAD_INSTRUCTION_LIMIT,
+                                    &metered, &metered_length, error_buf, sizeof(error_buf));
+#endif
+    if (!injected) {
+        *err = sdscatprintf(sdsempty(), "Error metering WebAssembly module: %s", error_buf);
+        goto error;
+    }
+    wasm_runtime_unload(library->module);
+    sdsfree(library->binary);
+    library->binary = sdsnewlen(metered, metered_length);
+    zlibc_free(metered);
+    library->module = wasm_runtime_load((uint8_t *)library->binary,
+                                        (uint32_t)sdslen(library->binary),
+                                        error_buf, sizeof(error_buf));
+    if (!library->module) {
+        *err = sdscatprintf(sdsempty(), "Error loading metered WebAssembly module: %s", error_buf);
+        goto error;
+    }
+
     const char *entrypoint;
     int has_main;
     if (wasmValidateIntegration(library->module, &entrypoint, &has_main, err) != C_OK)
@@ -1118,12 +1234,38 @@ static int wasmEngineCreate(void *engine_ctx, functionLibInfo *li, sds blob,
         .host_managed_heap_size = 0,
         .max_memory_pages = WASM_MAX_MEMORY_PAGES,
     };
+#ifdef WASM_METERING_epoch
+    /* Instantiation may execute an implicit start function and constructors.
+     * Arm first; its native probes use TLS even before user_data is installed. */
+    uint64_t load_timeout = timeout ? timeout :
+        (server.busy_reply_threshold > 0 ? (uint64_t)server.busy_reply_threshold :
+                                         (uint64_t)server.wasm_epoch_timeout_ms);
+    previous_deadline = wasmEpochArm(load_timeout);
+    deadline_armed = 1;
+#endif
     library->instance = wasm_runtime_instantiate_ex(library->module, &args,
                                                      error_buf, sizeof(error_buf));
     if (!library->instance) {
         *err = sdscatprintf(sdsempty(), "Error instantiating WebAssembly module: %s", error_buf);
         goto error;
     }
+#ifdef WASM_METERING_epoch
+    if (wasmEpochExpired()) {
+        *err = sdsnew("Error instantiating WebAssembly module: epoch deadline exceeded");
+        goto error;
+    }
+#else
+    wasm_global_inst_t fuel_global, exhausted_global;
+    if (!wasm_runtime_get_export_global_inst(library->instance, WASM_METER_FUEL, &fuel_global) ||
+        !wasm_runtime_get_export_global_inst(library->instance, WASM_METER_EXHAUSTED, &exhausted_global) ||
+        fuel_global.kind != WASM_I64 || !fuel_global.is_mutable ||
+        exhausted_global.kind != WASM_I32 || !exhausted_global.is_mutable) {
+        *err = sdsnew("Missing WebAssembly instruction meter");
+        goto error;
+    }
+    library->fuel = fuel_global.global_data;
+    library->fuel_exhausted = exhausted_global.global_data;
+#endif
     wasm_memory_inst_t memory = wasm_runtime_lookup_memory(library->instance, "memory");
     if (!memory) {
         *err = sdsnew("WebAssembly module must export memory as 'memory'");
@@ -1153,10 +1295,16 @@ static int wasmEngineCreate(void *engine_ctx, functionLibInfo *li, sds blob,
     wasmHostCtxFree(&host_ctx);
     wasm_runtime_set_user_data(library->exec_env, NULL);
     if (result != C_OK) goto error;
+#ifdef WASM_METERING_epoch
+    wasm_epoch_deadline = previous_deadline;
+#endif
     wasmLibraryRelease(library); /* Registered functions now own the library. */
     return C_OK;
 
 error:
+#ifdef WASM_METERING_epoch
+    if (deadline_armed) wasm_epoch_deadline = previous_deadline;
+#endif
     wasmLibraryRelease(library);
     return C_ERR;
 }
@@ -1272,7 +1420,11 @@ int wasmEngineInitEngine(void) {
         init_args.native_module_name = "redis";
         init_args.native_symbols = wasmNativeSymbols;
         init_args.n_native_symbols = sizeof(wasmNativeSymbols) / sizeof(wasmNativeSymbols[0]);
+#ifdef WASM_EXECUTION_fast_jit
+        init_args.running_mode = Mode_Fast_JIT;
+#else
         init_args.running_mode = Mode_Interp;
+#endif
         if (!wasm_runtime_full_init(&init_args)) {
             serverLog(LL_WARNING, "Failed initializing WAMR");
             zfree(ctx->pool);

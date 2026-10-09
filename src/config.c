@@ -3563,6 +3563,9 @@ standardConfig static_configs[] = {
 
     /* Long Long configs */
     createLongLongConfig("busy-reply-threshold", "lua-time-limit", MODIFIABLE_CONFIG, 0, LONG_MAX, server.busy_reply_threshold, 5000, INTEGER_CONFIG, NULL, NULL),/* milliseconds */
+#ifdef WASM_METERING_epoch
+    createLongLongConfig("wasm-epoch-timeout-ms", NULL, MODIFIABLE_CONFIG, 1, LONG_MAX, server.wasm_epoch_timeout_ms, 1000, INTEGER_CONFIG, NULL, NULL), /* milliseconds */
+#endif
     createLongLongConfig("cluster-node-timeout", NULL, MODIFIABLE_CONFIG, 0, LLONG_MAX, server.cluster_node_timeout, 15000, INTEGER_CONFIG, NULL, NULL),
     createLongLongConfig("cluster-ping-interval", NULL, MODIFIABLE_CONFIG | HIDDEN_CONFIG, 0, LLONG_MAX, server.cluster_ping_interval, 0, INTEGER_CONFIG, NULL, NULL),
     createLongLongConfig("cluster-slot-migration-handoff-max-lag-bytes", NULL, MODIFIABLE_CONFIG, 0, LLONG_MAX, server.asm_handoff_max_lag_bytes, 1*1024*1024, MEMORY_CONFIG, NULL, NULL), /* 1MB */

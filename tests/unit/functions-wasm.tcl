@@ -24,6 +24,13 @@ proc sdk_wasm_payload {path name} {
     return "#!wasm name=$name\n$module"
 }
 
+proc wasm_termination_error {} {
+    if {[llength [r config get wasm-epoch-timeout-ms]]} {
+        return {epoch deadline exceeded}
+    }
+    return instruction
+}
+
 # Redirect an integration fixture export to another exported function (or
 # memory, for wrong-kind tests). A '-' hides the export without resizing the
 # binary. This keeps tests independent of a locally installed WAT compiler.
@@ -119,9 +126,10 @@ start_server {tags {"scripting wasm"}} {
         assert_match {*WebAssembly function*returned 7*} $return_err
     }
 
-    test {WASM FUNCTION - instruction metering terminates runaway guests} {
+    test {WASM FUNCTION - metering terminates runaway guests and allows recovery} {
         catch {r fcall spin 0} err
-        assert_match {*WebAssembly function*trapped*instruction*} $err
+        assert_match "*WebAssembly function*trapped*[wasm_termination_error]*" $err
+        assert_equal {hello from wasm} [r fcall hello 0]
     }
 
     test {WASM FUNCTION - RESP3-only raw reply is rejected for RESP2 clients} {
@@ -222,7 +230,7 @@ start_server {tags {"scripting wasm"}} {
             set overrides {}
             if {$entrypoint eq "_start"} {set overrides {_initialize -}}
             set suffix [expr {$entrypoint eq "main" ? "main" : "void"}]
-            foreach {target error} [list trap_$suffix unreachable spin_$suffix instruction] {
+            foreach {target error} [list trap_$suffix unreachable spin_$suffix [wasm_termination_error]] {
                 assert_error "*Error running WebAssembly $entrypoint*$error*" {
                     r function load [wasm_integration_payload [concat $overrides [list $entrypoint $target]]]
                 }
