@@ -1,10 +1,48 @@
 # Fuel instrumentation: preservation argument and limits
 
 This is a manual correctness argument and audit record, **not a formal proof of
-the C implementation**. Regression tests and validating the generated module
-do not establish semantic equivalence for all inputs. The reviewed
-`src/wasm_meter.c` has SHA-256
+the C implementation**. The proof-oriented refactor now has a
+[Lean proof project and concrete output checks](proof/README.md); its precise
+proof boundary is documented there. Regression tests and validating the
+generated module do not establish semantic equivalence for all inputs. The
+pre-refactor `src/wasm_meter.c` reviewed in this original audit has SHA-256
 `b9f88dc576c15fc853dffb2c69ab69258f5f9176b72dc9c183ef87019281496d`.
+
+## Implementation structure after the refactor
+
+The optimized instruction sequences are retained. Function processing now has
+three explicit stages in `src/wasm_meter_body.h`:
+
+```text
+original bytes -> decoded instructions -> typed emission plan -> emitted bytes
+                  decodeBody             planBody / planClone   emitPlan
+```
+
+`src/wasm_meter_plan.h` defines the complete emission vocabulary: copying
+original spans, declaring private state, charging/publishing/reloading fuel,
+checking entry, remapping branches, returning, dispatching clones, and the cold
+exhaustion exit. Analysis reads decoded records; the emitter encodes named
+operations without making optimization or placement decisions. A bounded sink
+passes at most 1,024 operations at a time to the emitter, avoiding an unbounded
+whole-function plan allocation. Decoded instruction records remain proportional
+to input size and add load-time memory/work; they do not change guest execution.
+
+Every consuming operation identifies the original bytes it replaces. These
+spans partition the original function body in order; private operations consume
+no original bytes. An optional audit callback records actual emitted spans from
+the production code path. It is compiled out of normal builds.
+
+The independent receipt checker binds those records to the original and emitted
+module files, validates function/global/local namespaces, and checks original
+instruction and branch/call contexts. A Lean reference encoder checks the actual
+bytes of each named operation and recovery of the original source spans.
+Generated small certificates additionally use `by decide`, so Lean's kernel
+checks concrete output rather than only running an executable checker.
+
+These layers make the proof obligations inspectable. They do not turn the
+Python Wasm parser, the C planner, or WAMR into formally verified components.
+The control-flow model and the scope of actual graph certificates are described
+in the proof project's README.
 
 ## The claim that needs proving
 
@@ -81,7 +119,8 @@ Wasm abstract-machine approach described in the
 
 ### Private state and unchanged indices
 
-`analyze`, `globals`, `functionSection`, and `code` append state and functions.
+`decodeBody`, `globals`, `functionSection`, and `code` locate or append private
+state and functions.
 Existing local, global, type, function, export, start and element references keep
 their original meanings. Original validation must happen **before** appending:
 otherwise an invalid index could become a valid reference to private state.
@@ -111,7 +150,7 @@ mapped(d) = d       when d < D - 1
 mapped(d) = d + 1   when d = D - 1  (the function label)
 ```
 
-`branchTarget` applies this to `br`, `br_if` and every `br_table` target.
+The `BranchRemap` emitter applies this to `br`, `br_if` and every `br_table` target.
 The original branch condition/index and branch arguments are untouched.
 Publishing before a possible function exit is stack-neutral, including when a
 conditional branch falls through. The final function `end` becomes a publish
@@ -244,7 +283,10 @@ To claim a proof of the implementation, the missing work includes:
 4. Explicit resource and host assumptions, plus continued differential testing
    of the actual WAMR execution path to detect implementation mistakes.
 
-Decoding into an explicit instruction/control-flow representation and applying
-small named passes would make these obligations easier to review than the
-current interleaved scanning, optimization and byte emission. Neither that
-refactor nor an independent checked validator is implemented by this document.
+The refactor now separates decoded instructions, placement and typed emission,
+and includes an independent receipt checker and a Lean reference encoder. The
+Lean core proves erasure and checked control-flow simulation, with a separate
+private-edge progress condition. Completing the remaining obligations means
+connecting every supported Wasm transformation, especially interprocedural calls,
+to that semantic model; the existence of these checks is not a claim that this
+last connection has been proved universally.

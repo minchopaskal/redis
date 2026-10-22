@@ -5,11 +5,22 @@ These checks are regression evidence, not a proof of equivalence. See
 preservation contract, concrete resource-limit differences, and outstanding
 proof obligations.
 
+The [Lean proof project](proof/README.md) checks the semantic core and concrete
+emission receipts. Lean is optional verification tooling; Redis and WAMR builds
+do not depend on it.
+
 Run after building Redis with stock WAMR FastJIT:
 
 ```sh
 python3 tests/unit/wasm-meter/run.py
 ```
+
+To compare the refactor's actual output against an earlier injector, retain that
+revision's `wasm_meter.c` and pass `--baseline-source PATH`. The runner compares
+complete output bytes and failure behavior across fixtures and a deterministic
+generated corpus. `--compare-only` runs this stage without the FastJIT suite.
+The default run also compares original and injected executions directly,
+including results, memory, exported globals, host traces, and ordinary traps.
 
 The runner needs a C compiler, Python 3 and WABT's `wat2wasm`. It builds only a
 small standalone verifier in a temporary directory and links the existing WAMR

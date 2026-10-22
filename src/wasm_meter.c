@@ -1,5 +1,6 @@
 /* Copyright (c) 2026 Redis Ltd. Licensed under RSALv2, SSPLv1, or AGPLv3. */
 #include "wasm_meter.h"
+#include "wasm_meter_plan.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -55,6 +56,7 @@ typedef struct { uint8_t *p; size_t len, cap; int bad; } buffer;
 typedef struct { const uint8_t *p; size_t len; unsigned id; } section;
 typedef struct { uint32_t cost, clone, calls; } fixed_call;
 typedef struct {
+    const uint8_t *input;
     uint32_t *params, *functions;
     fixed_call *fixed;
     uint32_t type_count, function_count, import_functions, clone_count;
@@ -168,14 +170,6 @@ static void entryCheck(buffer *b, const meter *m, unsigned depth) {
     emit(b, 0x42); emit(b, 0);         /* i64.const 0 */
     emit(b, 0x57);                    /* i64.le_s */
     emit(b, 0x0d); leb(b, depth, 0);  /* br_if exhaustion */
-}
-
-static void branchTarget(reader *r, buffer *out, unsigned depth) {
-    uint32_t target = u32(r);
-    if (target >= depth) r->bad = 1;
-    /* The extra block sits immediately inside the original function label. */
-    if (target == depth - 1) target++;
-    leb(out, target, 0);
 }
 
 static void types(reader *r, signatures *s) {
@@ -385,276 +379,8 @@ static void functionSection(buffer *out, const section *original, const signatur
     emitSection(out, 3, &b);
     free(b.p);
 }
-/* A linear if/else with equally costly arms has a constant cost regardless
- * of its condition. Fold the whole diamond into the surrounding segment,
- * avoiding fuel-local spills at the if and its merge. Reject nested control,
- * calls and explicit traps; ordinary trapping instructions retain the same
- * deferred-accounting behavior as any other straight-line segment. */
-static int equalIf(reader *r, uint32_t *cost) {
-    reader scan = *r;
-    uint32_t then_cost = 0, arm_cost = 0;
-    int have_else = 0;
-    while (scan.p < scan.end && !scan.bad) {
-        unsigned op = byte(&scan);
-        arm_cost++;
-        if (op == 0x05) {
-            if (have_else) return 0;
-            have_else = 1;
-            then_cost = arm_cost;
-            arm_cost = 0;
-        } else if (op == 0x0b) {
-            if (!have_else || then_cost != arm_cost) return 0;
-            *r = scan;
-            *cost = arm_cost; /* one arm plus its else/end delimiter */
-            return 1;
-        } else if (op == 0x02 || instruction(&scan, op)) return 0;
-    }
-    return 0;
-}
-/* Append fuel after all original parameters and locals. */
-static int analyze(reader r, uint32_t params, meter *m) {
-    uint32_t count = u32(&r);
-    uint64_t locals = params;
-    for (uint32_t i = 0; i < count && !r.bad; i++) { locals += u32(&r); byte(&r); }
-    if (r.bad || locals >= UINT32_MAX || count == UINT32_MAX) return 0;
-    m->local = (uint32_t)locals;
-    return 1;
-}
-/* Check every possible loop backedge, including br_if fallthrough and mixed
- * br_table targets. Function-label exits still publish the local balance. */
-static int branchCheck(reader r, unsigned op, unsigned depth,
-                       const unsigned *labels, int *exits) {
-    uint32_t n = op == 0x0e ? u32(&r) : 0;
-    int check = 0;
-    *exits = 0;
-    for (uint32_t i = 0; i <= n && !r.bad; i++) {
-        uint32_t target = u32(&r);
-        if (target >= depth) return 1; /* branchTarget rejects it later */
-        if (target == depth - 1) *exits = 1;
-        if (labels[depth - 1 - target] == 0x03) check = 1;
-    }
-    return check;
-}
-/* A straight-line header ending in a forward br_if has the same cost on every
- * entry. Prepay it at initial entry and the backedge rather than updating fuel
- * in the header. Only select bodies with one or more equal-cost linear if/else
- * arms, otherwise straight-line code and a final unconditional br 0. Their
- * constant cost already needs just one body debit, but their control-flow joins
- * force FastJIT to reload the header's fuel-local update. Simple linear loops
- * can retain that value already and do not benefit reliably from this change.
- *
- * The backedge compares against -prefix, preserving its original check point:
- * charging the next prefix must not cause earlier exhaustion. The header then
- * consumes that credit before its forward branch. Reject calls, other control
- * boundaries, plain blocks and nested loops. Lookahead therefore does not
- * recursively scan whole loop subtrees. */
-static uint32_t loopPrefix(reader r, unsigned depth, const unsigned *labels,
-                           const uint8_t **prefix_end) {
-    reader header = r;
-    uint32_t cost = 0;
-    const uint8_t *end = NULL;
-    while (header.p < header.end && !header.bad) {
-        const uint8_t *opcode = header.p;
-        unsigned op = byte(&header);
-        int boundary = instruction(&header, op);
-        cost++;
-        if (op == 0x02 || header.bad) return 0;
-        if (!boundary) continue;
-        if (op != 0x0d) return 0;
-        reader target = {opcode + 1, header.p, 0};
-        uint32_t label = u32(&target);
-        /* depth is the label count before adding this loop. Label 0 is the
-         * loop; label == depth is the implicit function label. */
-        if (target.bad || !label || label >= depth ||
-            labels[depth - label] == 0x03) return 0;
-        end = opcode;
-        break;
-    }
-    if (!end) return 0;
-    r = header;
-    int have_if = 0;
-    while (r.p < r.end && !r.bad) {
-        const uint8_t *opcode = r.p;
-        unsigned op = byte(&r);
-        int boundary = instruction(&r, op);
-        if (r.bad || op == 0x02) return 0;
-        if (op == 0x04) {
-            uint32_t arm_cost;
-            if (!equalIf(&r, &arm_cost)) return 0;
-            have_if = 1;
-        } else if (op == 0x0c) {
-            reader target = {opcode + 1, r.p, 0};
-            if (!have_if || u32(&target) != 0 || target.bad ||
-                r.p == r.end || *r.p != 0x0b) return 0;
-            *prefix_end = end;
-            return cost;
-        } else if (boundary) return 0;
-    }
-    return 0;
-}
-static void body(reader *r, buffer *out, uint32_t global, uint32_t params,
-                 const signatures *s) {
-    meter m = {.global = global};
-    if (!analyze(*r, params, &m)) { r->bad = 1; return; }
-    uint32_t count = u32(r);
-    const uint8_t *locals = r->p;
-    for (uint32_t i = 0; i < count && !r->bad; i++) { u32(r); byte(r); }
-    leb(out, count + 1, 0);
-    put(out, locals, r->p - locals);
-    emit(out, 1); emit(out, 0x7e); /* one i64 fuel local */
-    reload(out, &m);
-    emit(out, 0x02); emit(out, 0x40);       /* block exhaustion (void) */
-    entryCheck(out, &m, 0);
-    const uint8_t *start = r->p, *previous = NULL;
-    unsigned previous_op = 0;
-    unsigned labels[512] = {0}, depth = 1;
-    uint32_t prefixes[512] = {0};
-    const uint8_t *prefix_ends[512] = {0};
-    uint32_t cost = 0;
-    while (r->p < r->end && !r->bad) {
-        const uint8_t *opcode = r->p;
-        unsigned op = byte(r);
-        int boundary = instruction(r, op);
-        cost++;
-        uint32_t arm_cost;
-        if (op == 0x04 && equalIf(r, &arm_cost)) {
-            cost += arm_cost;
-            previous = NULL; /* the last original instruction was the if's end */
-            continue; /* the complete if/else leaves label depth unchanged */
-        }
-        if (boundary) {
-            uint32_t entering_prefix = 0;
-            const uint8_t *entering_end = NULL;
-            if (op == 0x03)
-                entering_prefix = loopPrefix(*r, depth, labels, &entering_end);
-            if (op == 0x0d && prefix_ends[depth - 1] == opcode)
-                cost -= prefixes[depth - 1];
-            int exits = 0;
-            int check = op == 0x11 || op == 0x00;
-            const fixed_call *callee = NULL;
-            uint32_t callee_type = 0;
-            if (op == 0x10) {
-                reader target = {opcode + 1, r->p, 0};
-                uint32_t index = u32(&target);
-                if (target.bad || index >= (uint64_t)s->import_functions + s->function_count) {
-                    r->bad = 1; break;
-                }
-                check = index < s->import_functions;
-                if (!check && s->fixed[index - s->import_functions].clone) {
-                    callee = &s->fixed[index - s->import_functions];
-                    callee_type = s->functions[index - s->import_functions];
-                }
-            }
-            if (op >= 0x0c && op <= 0x0e) {
-                reader targets = {opcode + 1, r->p, 0};
-                check = branchCheck(targets, op, depth, labels, &exits);
-            }
-            /* A debit between a comparison and its branch forces FastJIT to
-             * materialize a Boolean and compare it again. Keep the pair intact.
-             * The comparison's operands remain below our stack-neutral update. */
-            const uint8_t *debit = opcode;
-            if ((op == 0x0d || op == 0x04) && previous && previous >= start &&
-                previous_op >= 0x45 && previous_op <= 0x5a) debit = previous;
-            put(out, start, debit - start);
-            if (op == 0x0c && check && !exits) {
-                reader target = {opcode + 1, r->p, 0};
-                uint32_t backedge = u32(&target);
-                if (target.bad || backedge >= depth) { r->bad = 1; break; }
-                uint32_t prepaid = prefixes[depth - 1 - backedge];
-                charge(out, &m, cost + prepaid, -1, backedge, prepaid);
-                emit(out, 0x0c); leb(out, depth - 1, 0); /* br exhaustion */
-            } else {
-                if (cost || entering_prefix || check)
-                    charge(out, &m, cost + entering_prefix, check, depth - 1, 0);
-                put(out, debit, opcode - debit);
-                if (op == 0x0b && depth == 1) {
-                    publish(out, &m);
-                    emit(out, 0x0f);           /* return before cold exhaustion exit */
-                } else if (op == 0x0c || op == 0x0d || op == 0x0e) {
-                    reader targets = {opcode + 1, r->p, 0};
-                    if (exits) publish(out, &m);
-                    emit(out, op);
-                    if (op == 0x0e) {
-                        uint32_t n = u32(&targets);
-                        leb(out, n, 0);
-                        for (uint32_t i = 0; i <= n && !targets.bad; i++)
-                            branchTarget(&targets, out, depth);
-                    } else branchTarget(&targets, out, depth);
-                    if (targets.bad) r->bad = 1;
-                } else if (callee) {
-                    if (callee->calls) {
-                        /* The original signature supplies this if's block
-                         * parameters and results. Both arms consume the same
-                         * existing arguments, including mixed/multivalue types. */
-                        emit(out, 0x20); leb(out, m.local, 0);
-                        emit(out, 0x42); leb(out, callee->cost, 1);
-                        emit(out, 0x59); /* i64.ge_s: entire tree is funded */
-                        emit(out, 0x04); leb(out, callee_type, 1);
-                    } else entryCheck(out, &m, depth - 1);
-                    emit(out, 0x10); leb(out, callee->clone, 0);
-                    charge(out, &m, callee->cost, 0, 0, 0);
-                    if (callee->calls) {
-                        emit(out, 0x05); /* else: preserve low-fuel behavior */
-                        publish(out, &m);
-                        put(out, opcode, r->p - opcode);
-                        reload(out, &m);
-                        emit(out, 0x0b);
-                    }
-                } else if (op == 0x10 || op == 0x11 || op == 0x0f || op == 0x00) {
-                    publish(out, &m);
-                    put(out, opcode, r->p - opcode);
-                    if (op == 0x10 || op == 0x11) reload(out, &m);
-                } else put(out, opcode, r->p - opcode);
-            }
-            if (op == 0x03 && depth < 512) {
-                prefixes[depth] = entering_prefix;
-                prefix_ends[depth] = entering_end;
-            }
-            start = r->p; cost = 0;
-        }
-        if (op >= 0x02 && op <= 0x04) {
-            if (depth == 512) { r->bad = 1; break; }
-            if (op != 0x03) { prefixes[depth] = 0; prefix_ends[depth] = NULL; }
-            labels[depth++] = op;
-        }
-        if (op == 0x0b) {
-            if (!depth) { r->bad = 1; break; }
-            if (--depth == 0 && r->p != r->end) r->bad = 1;
-        }
-        previous = opcode;
-        previous_op = op;
-        if (out->bad) r->bad = 1;
-    }
-    if (depth != 0 || cost || r->p != r->end) r->bad = 1;
-    emit(out, 0x0b);                       /* end exhaustion block */
-    emit(out, 0x42); emit(out, 0);          /* saturate remaining fuel at zero */
-    emit(out, 0x24); leb(out, global, 0);
-    emit(out, 0x41); emit(out, 1);          /* i32.const 1 */
-    emit(out, 0x24); leb(out, global + 1, 0); /* global.set exhausted */
-    emit(out, 0x00); emit(out, 0x0b);       /* unreachable; end function */
-}
-/* A funded tree clone bypasses all nested meters. Its only edits are direct
- * calls to other selected clones; signatures, locals and other bytes stay put. */
-static void cloneBody(reader *r, buffer *out, const signatures *s) {
-    const uint8_t *start = r->p;
-    uint32_t locals = u32(r);
-    for (uint32_t i = 0; i < locals && !r->bad; i++) { u32(r); byte(r); }
-    while (r->p < r->end && !r->bad) {
-        const uint8_t *opcode = r->p;
-        unsigned op = byte(r);
-        instruction(r, op);
-        if (op != 0x10) continue;
-        reader target = {opcode + 1, r->p, 0};
-        uint32_t index = u32(&target);
-        if (target.bad || index < s->import_functions ||
-            index >= (uint64_t)s->import_functions + s->function_count ||
-            !s->fixed[index - s->import_functions].clone) { r->bad = 1; break; }
-        put(out, start, opcode - start);
-        emit(out, 0x10); leb(out, s->fixed[index - s->import_functions].clone, 0);
-        start = r->p;
-    }
-    put(out, start, r->p - start);
-}
+#include "wasm_meter_body.h"
+
 static void code(reader *r, buffer *out, uint32_t global, const signatures *s) {
     uint32_t count = u32(r);
     if (count != s->function_count) { r->bad = 1; return; }
@@ -667,7 +393,7 @@ static void code(reader *r, buffer *out, uint32_t global, const signatures *s) {
         if (r->bad) break;
         reader f = {start, start + len, 0};
         buffer b = {0};
-        body(&f, &b, global, s->params[s->functions[i]], s);
+        plannedBody(&f, &b, global, i, s, 0);
         if (f.bad || b.bad) r->bad = 1;
         else { leb(out, b.len, 0); put(out, b.p, b.len); }
         free(b.p);
@@ -682,15 +408,12 @@ static void code(reader *r, buffer *out, uint32_t global, const signatures *s) {
             skip(&copies, len);
             if (copies.bad) { r->bad = 1; break; }
             if (!s->fixed[i].clone || (s->fixed[i].calls != 0) != tree) continue;
-            if (!tree) { leb(out, len, 0); put(out, start, len); }
-            else {
-                reader f = {start, start + len, 0};
-                buffer b = {0};
-                cloneBody(&f, &b, s);
-                if (f.bad || b.bad) r->bad = 1;
-                else { leb(out, b.len, 0); put(out, b.p, b.len); }
-                free(b.p);
-            }
+            reader f = {start, start + len, 0};
+            buffer b = {0};
+            plannedBody(&f, &b, global, i, s, tree ? 2 : 1);
+            if (f.bad || b.bad) r->bad = 1;
+            else { leb(out, b.len, 0); put(out, b.p, b.len); }
+            free(b.p);
         }
     }
 }
@@ -725,7 +448,7 @@ int wasmMeterInject(const uint8_t *input, size_t length, uint64_t fuel,
     *output = NULL; *output_length = 0;
     const char *failure = "Invalid or unsupported Wasm for instruction metering";
     buffer result = {0};
-    signatures sig = {0};
+    signatures sig = {.input = input};
     section original_code = {0};
     if (length < 8 || length > WASM_METER_MAX_INPUT || fuel > INT64_MAX ||
         memcmp(input, "\0asm\1\0\0\0", 8)) goto fail;
