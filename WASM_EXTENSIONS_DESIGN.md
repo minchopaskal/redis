@@ -11,6 +11,12 @@ The initial implementation is intentionally narrower than the complete design:
   Redis-owned pool, each module is capped at 128 64-KiB pages (8 MiB), load
   each startup call is capped at 10 million instructions, and callbacks at
   100 million.
+- `WASM_METERING=epoch` selects time-based interruption independently of fuel.
+  Injected loop/call checkpoints read the monotonic clock on the executing
+  Redis thread, with no additional epoch timer thread. Invocations use
+  `wasm-epoch-timeout-ms` (default 1000 ms); startup hooks share the load
+  deadline. Interruption is cooperative and cannot preempt compilation or a
+  Redis host command already executing.
 - A module must export `memory` and the void marker
   `redis_wasm_abi_version_0_1_0() -> void`. Redis detects the ABI by the export
   name and never calls the marker. Startup follows the Proxy-Wasm integration

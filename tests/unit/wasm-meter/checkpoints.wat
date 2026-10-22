@@ -1,0 +1,35 @@
+;; Copyright (c) 2026 Redis Ltd. Licensed under RSALv2, SSPLv1, or AGPLv3.
+;; Explicit reduced-checkpoint semantics. Costs include original opcodes only;
+;; function-entry checks are free, and finite tails may publish negative fuel.
+(module
+  (type $unary (func (param i32) (result i32)))
+  (import "env" "observe" (func $observe (type $unary)))
+  (table 2 funcref)
+  (elem (i32.const 0) $leaf $observe)
+  (global $progress (export "progress") (mut i32) (i32.const 0))
+  (func $leaf (export "leaf") (type $unary)
+    local.get 0 i32.const 1 i32.add)
+  (func $middle (export "middle") (type $unary)
+    local.get 0 call $leaf i32.const 2 i32.mul)
+  (func (export "outer") (type $unary)
+    local.get 0 call $middle i32.const 3 i32.add)
+  (func $effect_leaf (export "effect_leaf") (type $unary)
+    global.get $progress i32.const 1 i32.add global.set $progress
+    local.get 0 i32.const 1 i32.add)
+  (func (export "effect_twice") (type $unary)
+    local.get 0 call $effect_leaf call $effect_leaf)
+  (func (export "indirect_leaf") (type $unary)
+    local.get 0 i32.const 0 call_indirect (type $unary))
+  (func (export "direct_host_after_debt") (type $unary)
+    local.get 0 call $leaf call $observe)
+  (func (export "indirect_host_after_debt") (type $unary)
+    local.get 0 call $leaf i32.const 1 call_indirect (type $unary))
+  (func (export "indirect_host") (type $unary)
+    local.get 0 i32.const 1 call_indirect (type $unary))
+  (func (export "unreachable_after_debt") (param i32)
+    local.get 0 call $leaf drop unreachable)
+  (func (export "mixed_exit") (param $choose i32) (result i32)
+    i32.const 77 loop $again (param i32) (result i32)
+      local.get $choose br_table $again 1
+    end)
+)
